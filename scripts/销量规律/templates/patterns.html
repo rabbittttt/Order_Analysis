@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>鸿蒙智行销量预测规律研究</title>
+  <style>__PATTERNS_CSS__</style>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#overview" aria-label="鸿蒙智行销量规律分析首页">
+        <span class="brand-mark" aria-hidden="true">H</span>
+        <span class="brand-copy"><strong>鸿蒙智行</strong><small>销量预测规律研究</small></span>
+      </a>
+      <div class="topbar-meta">
+        <span class="offline-badge"><span class="status-dot"></span>本地离线分析</span>
+        <a id="excelTopLink" class="header-excel" href="鸿蒙智行销量规律分析.xlsx" download>下载 Excel</a><span id="generatedAt" class="generated-at"></span>
+      </div>
+    </header>
+
+    <aside class="sidebar" aria-label="分析导航">
+      <div class="sidebar-label">分析工作台</div>
+      <nav class="main-nav" role="tablist" aria-label="分析页面">
+        <button class="nav-item is-active" id="nav-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-panel="overview">
+          <span class="nav-icon" aria-hidden="true">▦</span><span>概览</span>
+        </button>
+        <button class="nav-item" id="nav-patterns" role="tab" aria-selected="false" aria-controls="panel-patterns" data-panel="patterns">
+          <span class="nav-icon" aria-hidden="true">⌁</span><span>规律探索</span>
+        </button>
+        <button class="nav-item" id="nav-forecast" role="tab" aria-selected="false" aria-controls="panel-forecast" data-panel="forecast">
+          <span class="nav-icon" aria-hidden="true">↗</span><span>预测试算与回测</span>
+        </button>
+        <button class="nav-item" id="nav-evidence" role="tab" aria-selected="false" aria-controls="panel-evidence" data-panel="evidence">
+          <span class="nav-icon" aria-hidden="true">≡</span><span>证据明细</span>
+        </button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-method">
+        <span class="method-mark" aria-hidden="true">i</span>
+        <div><strong>预测辅助口径</strong><p>净大定与锁单分开分析；规律仅用于提出预测假设，是否有效以留出回测为准。</p></div>
+      </div>
+      <div class="sidebar-foot">数据保留在本机 · 无网络请求</div>
+    </aside>
+
+    <main class="workspace">
+      <section class="page-heading">
+        <div>
+          <div class="eyebrow">SALES PATTERN LAB</div>
+          <h1 id="pageTitle">销量规律概览</h1>
+          <p id="pageDescription">先确认口径与样本范围，再查看可用于预测的历史信号。</p>
+        </div>
+        <div id="sourceBadge" class="source-badge"></div>
+      </section>
+
+      <section class="metric-control" aria-label="销量口径">
+        <div class="metric-control-copy">
+          <span class="control-label">分析口径</span>
+          <strong id="metricSourceLabel">净大定 · 源字段留存大定</strong>
+        </div>
+        <div class="segmented metric-switch" role="group" aria-label="切换销量指标">
+          <button type="button" class="metric-option is-selected" data-metric="留存大定" aria-pressed="true">净大定</button>
+          <button type="button" class="metric-option" data-metric="交车锁单" aria-pressed="false">锁单</button>
+        </div>
+        <div class="metric-separation"><span aria-hidden="true">↔</span> 两种口径分别计算，不相加</div>
+      </section>
+
+      <section class="filterbar" aria-label="全局筛选">
+        <div class="filter-title"><span class="filter-glyph" aria-hidden="true">⌕</span>分析范围</div>
+        <label class="filter-field"><span>车型分类</span><select id="categoryFilter" aria-label="按车型分类筛选"></select></label>
+        <label class="filter-field"><span>车型</span><select id="modelFilter" aria-label="按车型筛选"></select></label>
+        <label class="filter-field"><span>销售阶段</span><select id="stageFilter" aria-label="按销售阶段筛选"></select></label>
+        <label class="filter-field date-field"><span>开始日期</span><input type="date" id="dateStart" aria-label="开始日期"></label>
+        <span class="date-separator" aria-hidden="true">至</span>
+        <label class="filter-field date-field"><span>结束日期</span><input type="date" id="dateEnd" aria-label="结束日期"></label>
+        <button type="button" id="resetFilters" class="button button-quiet reset-button">重置</button>
+      </section>
+      <div id="rangeNotice" class="range-notice" role="status" aria-live="polite"></div>
+
+      <section id="panel-overview" class="page-panel" role="tabpanel" aria-labelledby="nav-overview">
+        <div class="kpi-grid" id="overviewKpis"></div>
+
+        <section class="card trend-card">
+          <div class="card-heading">
+            <div><span class="section-kicker">实际观测</span><h2>销量走势</h2><p class="card-subtitle">按当前口径、车型和阶段聚合；缺失日期不补零。</p></div>
+            <div class="chart-controls">
+              <label class="compact-select"><span>周期</span><select id="trendGrain"><option value="日">日</option><option value="周">周</option><option value="月" selected>月</option><option value="年">年</option></select></label>
+              <label class="toggle-control"><input type="checkbox" id="compareMetrics"><span class="toggle-ui"></span><span>对照另一口径</span></label>
+            </div>
+          </div>
+          <div id="trendLegend" class="chart-legend"></div>
+          <div id="trendCharts" class="trend-grid"></div>
+          <div id="trendCaption" class="chart-caption"></div>
+        </section>
+
+        <div class="overview-grid">
+          <section class="card">
+            <div class="card-heading compact-heading"><div><span class="section-kicker">历史周期变化</span><h2>本周期相对前一周期</h2><p id="ratioSubtitle" class="card-subtitle"></p></div></div>
+            <div id="ratioSummary" class="ratio-summary"></div>
+            <div id="ratioDescription" class="note-line"></div>
+          </section>
+          <section class="card">
+            <div class="card-heading compact-heading"><div><span class="section-kicker">车型差异</span><h2 id="groupCompareTitle">车型观测对比</h2><p class="card-subtitle">按所选时间窗汇总；车型覆盖变化会影响合计。</p></div></div>
+            <div id="modelCompare" class="bar-list"></div>
+          </section>
+        </div>
+
+        <section class="card">
+          <div class="card-heading compact-heading">
+            <div><span class="section-kicker">规律线索</span><h2>当前筛选下的历史信号</h2><p class="card-subtitle">按可用样本重算；样本数是车型周期记录，不等同于独立实验次数。</p></div>
+            <button type="button" class="text-button" data-go="patterns">查看完整规律 <span aria-hidden="true">→</span></button>
+          </div>
+          <div id="overviewSignals" class="signal-grid"></div>
+        </section>
+        <div id="overviewCoverage" class="coverage-strip"></div>
+      </section>
+
+      <section id="panel-patterns" class="page-panel" role="tabpanel" aria-labelledby="nav-patterns" hidden>
+        <div class="subnav" role="tablist" aria-label="规律类别">
+          <button class="subnav-item is-active" data-pattern="months" aria-selected="true">月度变化</button>
+          <button class="subnav-item" data-pattern="week">周内与月末</button>
+          <button class="subnav-item" data-pattern="holiday">节假日</button>
+          <button class="subnav-item" data-pattern="cycles">周期比例</button>
+        </div>
+        <div class="pattern-intro" id="patternIntro"></div>
+        <div class="pattern-kpis" id="patternKpis"></div>
+        <div class="pattern-panels" id="patternPanels"></div>
+      </section>
+
+      <section id="panel-forecast" class="page-panel" role="tabpanel" aria-labelledby="nav-forecast" hidden>
+        <div class="forecast-warning"><span class="warning-icon" aria-hidden="true">!</span><span>历史规律是预测输入的候选假设。P25/P75表示历史波动范围，不是预测区间；不同规律可能重叠，本页不会自动连乘系数。</span></div>
+        <div class="forecast-layout">
+          <div class="forecast-main">
+            <section class="card forecast-profile-card">
+              <div class="card-heading"><div><span class="section-kicker">同车型留出验证</span><h2>历史预测回测</h2><p class="card-subtitle">仅匹配相同车型、口径、阶段、批次/来源和预测周期。</p></div></div>
+              <div class="forecast-controls">
+                <label class="filter-field"><span>验证车型</span><select id="forecastModel"></select></label>
+                <label class="filter-field"><span>预测周期</span><select id="forecastGrain"><option value="日">日</option><option value="周">周</option><option value="月">月</option></select></label>
+                <label class="filter-field"><span>批次 / 来源</span><select id="forecastProfile"></select></label>
+              </div>
+              <div id="forecastKpis" class="forecast-kpis"></div>
+              <div id="forecastProfileNote" class="forecast-note"></div>
+              <div id="backtestChart" class="backtest-chart"></div>
+              <div class="table-wrap" id="backtestTableWrap"></div>
+            </section>
+          </div>
+          <aside class="forecast-aside">
+            <section class="card trial-card">
+              <div class="card-heading compact-heading"><div><span class="section-kicker">单一倍率试算</span><h2>快速场景试算</h2><p class="card-subtitle">填写可比基准，只应用一个倍率。</p></div></div>
+              <label class="input-choice"><input type="radio" name="trialMode" value="daily" checked><span>参考日均 × 预测天数</span></label>
+              <label class="input-choice"><input type="radio" name="trialMode" value="period"><span>上期总量</span></label>
+              <label class="trial-field"><span id="trialBaseLabel">参考日均（辆 / 日）</span><input type="number" min="0" step="any" id="trialBase" inputmode="decimal" placeholder="输入可比基准"></label>
+              <label class="trial-field" id="trialDaysField"><span>预测天数</span><input type="number" min="1" step="1" id="trialDays" value="30" inputmode="numeric"></label>
+              <label class="trial-field"><span id="trialFactorLabel">日均倍率</span><div class="factor-input"><input type="number" min="0" step="0.01" id="trialFactor" value="1" inputmode="decimal"><span>×</span></div></label>
+              <div id="trialResult" class="trial-result"><span>试算结果</span><strong>—</strong><small>输入基准后计算</small></div>
+              <p class="trial-footnote">试算是用户设定的情景值，不是系统预测承诺。请勿把重叠的周内、月度、节日规律连乘。</p>
+            </section>
+          </aside>
+        </div>
+        <div id="forecastEmpty" class="empty-state" hidden></div>
+      </section>
+
+      <section id="panel-evidence" class="page-panel" role="tabpanel" aria-labelledby="nav-evidence" hidden>
+        <section class="card evidence-card">
+          <div class="card-heading evidence-heading">
+            <div><span class="section-kicker">可追溯数据</span><h2>筛选后证据明细</h2><p class="card-subtitle">逐日记录按当前筛选展示；支持搜索、分页和当前筛选导出。</p></div>
+            <div class="evidence-actions"><label class="search-field"><span class="visually-hidden">搜索记录</span><input id="evidenceSearch" type="search" placeholder="搜索车型、日期、阶段、来源…" autocomplete="off"></label><button type="button" id="exportCsv" class="button button-primary">导出当前筛选 CSV</button></div>
+          </div>
+          <div class="evidence-mode" role="group" aria-label="证据类型">
+            <button type="button" class="evidence-mode-item is-active" data-evidence="daily" aria-pressed="true">逐日观测</button>
+            <button type="button" class="evidence-mode-item" data-evidence="lags" aria-pressed="false">净大定→锁单相关</button>
+          </div>
+          <div class="table-meta" id="evidenceMeta"></div>
+          <div class="table-wrap" id="evidenceTableWrap"></div>
+          <div class="table-footer"><span id="evidencePageInfo"></span><div class="pagination"><button type="button" id="prevPage" class="button button-quiet">上一页</button><button type="button" id="nextPage" class="button button-quiet">下一页</button></div></div>
+        </section>
+      </section>
+
+      <footer class="page-footer">
+        <span id="footerSource"></span>
+        <a id="excelLink" class="footer-link" href="鸿蒙智行销量规律分析.xlsx" download>打开 Excel 报告</a><button type="button" class="footer-link" data-go="evidence">查看数据覆盖与明细</button>
+      </footer>
+    </main>
+  </div>
+  <script id="patterns-data" type="application/json">__PATTERNS_DATA__</script>
+  <script>__PATTERNS_JS__</script>
+</body>
+</html>

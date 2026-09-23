@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>鸿蒙智行订单分析汇总</title>
+  <style>__DASHBOARD_CSS__</style>
+</head>
+<body>
+  <a class="skip-link" href="#page">跳到主要内容</a>
+  <header class="topbar">
+    <div class="brand"><img class="brand-mark" src="__BRAND_LOGO__" alt="" aria-hidden="true"><div><strong>鸿蒙智行订单分析汇总</strong></div></div>
+    <div class="topbar-main">
+      <div class="topbar-end">
+        <div class="top-actions"><span id="updatedAt"></span></div>
+        <section class="filters" id="filters" aria-label="看板筛选条件">
+          <label><span class="sr-only">分析主体</span><select id="subjectSelect" aria-label="分析主体"></select></label>
+          <div class="filter-group" role="group" aria-label="时间粒度"><div class="segments" id="grainSelect"></div></div>
+          <label class="period-field"><span class="sr-only">分析周期</span><select id="periodSelect" aria-label="分析周期"></select></label>
+        </section>
+      </div>
+    </div>
+    <div class="quick-generation-filter" id="quickGenerations" role="group" aria-label="新车型快捷选择"><span>新车型</span><div class="quick-generation-list" id="quickGenerationList"></div></div>
+  </header>
+  <div class="app-shell">
+    <aside class="module-bar">
+      <nav class="module-nav" id="moduleNav" aria-label="分析看板标签"></nav>
+    </aside>
+    <main class="workspace">
+      <section id="page" tabindex="-1"></section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <div class="page-loading" id="pageStatus" role="status" aria-live="polite"></div>
+  <script>window.DASHBOARD_DATA_B64="__DASHBOARD_DATA__";</script>
+  <script>window.DASHBOARD_RAW_B64=__DASHBOARD_RAW__;</script>
+  <script>__DASHBOARD_JS__</script>
+</body>
+</html>

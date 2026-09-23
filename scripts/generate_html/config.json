@@ -1,0 +1,54 @@
+{
+  // 看板标题：浏览器标签页与页面头部显示的名称
+  "title": "鸿蒙智行订单分析汇总",
+  // 图表渲染模式：
+  //   generated = 用内置 SVG 根据图表数据重绘（推荐，支持周期切换与数据标签）
+  //   original  = 嵌入 Excel 中的原始图表图片
+  "chart_render_mode": "generated",
+  // 运行 main.py 时，是否先根据 input_file/销量预测输入文件/小订及首销数据整理.xlsx
+  // 自动刷新鸿蒙智行销量数据汇总.xlsx，包含历史参考和当前订单；false 时可单独运行刷新脚本。
+  "refresh_sales_forecast_data_before_build": true,
+  // 销量预测阶段判定日期：留空使用运行当天；填写 YYYY-MM-DD 可复盘指定日期的阶段状态。
+  // 仅影响阶段判断、已发生/未来日期切分和预测窗口，不改写原始订单数据。
+  "forecast_as_of_date": "",
+  // 构建清单：off=不输出（推荐），compact=紧凑JSON，full=缩进格式。
+  // 不影响最终HTML和运行日志。
+  "build_manifest_mode": "off",
+  // 左侧导航标签顺序，对应 modules/ 目录下的模块 id；
+  // raw（底表中心）固定排在最后，任何主体都可用
+  "module_order": [
+    "overview",
+    "sales_forecast",
+    "cancellation",
+    "launch_rhythm",
+    "conversion",
+    "sku",
+    "small_order_mix",
+    "order_mix",
+    "lock_mix",
+    "option_fee",
+    "generic",
+    "raw"
+  ],
+  // 各模块在页面导航栏上的显示名称
+  "module_labels": {
+    "overview": "订单总览",
+    "sales_forecast": "销量预测",
+    "order_mix": "大定选配",
+    "lock_mix": "锁单选配",
+    "small_order_mix": "小订选配",
+    "conversion": "订单7级转化",
+    "option_fee": "选配金",
+    "sku": "SKU收敛",
+    "launch_rhythm": "首销节奏",
+    "cancellation": "小订节奏",
+    "generic": "导入分析",
+    "raw": "底表中心"
+  },
+  // 时间粒度切换按钮的显示名称
+  "grain_labels": {
+    "day": "日",
+    "week": "周",
+    "month": "月"
+  }
+}

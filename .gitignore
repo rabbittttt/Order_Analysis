@@ -1,0 +1,31 @@
+# Business data and generated reports stay on each computer.
+input_file/
+output_file/
+analysis_outputs/
+*.xlsx
+*.xlsm
+*.xls
+*.csv
+*.db
+*.db-journal
+*.log
+*.zip
+
+# Local environments and caches.
+.venv/
+venv/
+.idea/
+.vscode/
+.codex/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+**/node_modules/
+scripts/generate_html/backup/
+scripts/generate_html/outputs/
+
+# Secrets and local settings.
+.env
+.env.*
+*.pem
+*.key
