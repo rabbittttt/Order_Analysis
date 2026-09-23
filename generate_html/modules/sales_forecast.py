@@ -22,7 +22,7 @@ from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, input_path, open
 LOGGER = logging.getLogger(__name__)
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FORECAST_INPUT_ROOT = PROJECT_ROOT / "input_file" / "销量预测输入文件"
 RAW_FORECAST_DATA = FORECAST_INPUT_ROOT / "小订及首销数据整理.xlsx"
 MODEL_MASTER_PATH = FORECAST_INPUT_ROOT / "车型基本信息.xlsx"

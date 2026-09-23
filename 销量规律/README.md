@@ -11,21 +11,23 @@
 运行环境：Python 3.10+、openpyxl。不依赖 Node.js、私有包、Microsoft Excel 或网络服务。
 
 必需文件及目录结构：
-    订单分析/
-      scripts/
-        销量规律/
-          analyze_sales_patterns.py
-          export_excel_openpyxl.py
-          report_rules.py
-          forecast_insights.py
-          export_html.py
-          templates/
-            patterns.html
-            patterns.css
-            patterns.js
-          report_config.json
-        generate_html/core/china_calendar.py
-      output_file/鸿蒙智行销量数据汇总.xlsx
+
+```text
+Order_Analysis/
+  销量规律/
+    analyze_sales_patterns.py
+    export_excel_openpyxl.py
+    report_rules.py
+    forecast_insights.py
+    export_html.py
+    templates/
+      patterns.html
+      patterns.css
+      patterns.js
+    report_config.json
+  generate_html/core/china_calendar.py
+  output_file/鸿蒙智行销量数据汇总.xlsx
+```
 
 上面列出的分析、导出模块、配置和 templates 中的三个文件均为必需文件，迁移到内网时一起复制并保留目录结构。requirements.txt 与本说明可选复制。原 .mjs、node_modules、ZIP、缓存和测试文件均不是运行必需文件。
 
@@ -64,7 +66,7 @@ report_config.json：
 
 控制台日志带时间戳并立即刷新，包含两种预测口径、输入与两个输出路径、日期范围、车型/观测数量、分阶段耗时、滚动回测、各工作表行数和网页导出进度。超过10000行的表会分批报告进度，保存失败给出明确原因。
 
-测试（项目根目录）：python -m unittest discover -s scripts/销量规律 -p "test*.py"
+测试（项目根目录）：python -m unittest discover -s 销量规律 -p "test*.py"
 
 ## 交互网页与预测参考
 

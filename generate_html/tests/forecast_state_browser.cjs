@@ -1,6 +1,6 @@
 // Browser regression for local drafts and external forecast merge/replace.
 const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
-const root=path.resolve(__dirname,'../../..'),{chromium}=require(path.join(root,'.test_runtime/node_modules/playwright'));
+const root=path.resolve(__dirname,'../..'),{chromium}=require(path.join(root,'.test_runtime/node_modules/playwright'));
 const file=process.env.FORECAST_STATE_HTML||path.join(root,'analysis_outputs/ui_ux_audit_20260922/preview.html');
 const out=path.join(root,'analysis_outputs/forecast_compact_20260923');fs.mkdirSync(out,{recursive:true});
 const target='问界 M9 2026款',report={checks:[],errors:[],layout:[]},check=(name,value)=>{assert(value,name);report.checks.push(name);console.log('PASS',name);};

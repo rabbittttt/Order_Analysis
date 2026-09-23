@@ -1,7 +1,7 @@
 // Visit every module with an available subject, in desktop and mobile viewports.
 // This is a visual/rendering smoke audit, not exhaustive data validation.
 const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
-const root=path.resolve(__dirname,'../../..'),out=path.join(root,'analysis_outputs/ui_ux_audit_20260922');
+const root=path.resolve(__dirname,'../..'),out=path.join(root,'analysis_outputs/ui_ux_audit_20260922');
 const {chromium}=require(path.join(root,'.test_runtime/node_modules/playwright'));
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'}),report=[];
@@ -36,4 +36,3 @@ const {chromium}=require(path.join(root,'.test_runtime/node_modules/playwright')
   console.log(JSON.stringify({modules:modules.length,overflow},null,2));assert.equal(overflow.length,0);
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1});
-

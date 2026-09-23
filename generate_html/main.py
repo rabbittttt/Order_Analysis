@@ -26,6 +26,7 @@ from modules.registry import MODULES
 
 
 ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = ROOT.parent
 AUTO_OPEN_HTML = True
 LOGGER = logging.getLogger("order_analysis")
 BUILD_DIAGNOSTICS: list[str] = []
@@ -395,11 +396,11 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate the HarmonyOS Auto order dashboard.")
-    parser.add_argument("--input", type=Path, default=Path(r"D:\05 AI脚本\PythonProject\订单分析\output_file"))
+    parser.add_argument("--input", type=Path, default=PROJECT_ROOT / "output_file")
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(r"D:\05 AI脚本\PythonProject\订单分析\output_file\鸿蒙智行订单分析汇总.html"),
+        default=PROJECT_ROOT / "output_file" / "鸿蒙智行订单分析汇总.html",
     )
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")

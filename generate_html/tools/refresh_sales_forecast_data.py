@@ -30,7 +30,7 @@ from core.model_identity import model_key, usable_attribute
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, write_summary_snapshot, summary_scope
 from core.excel import grain_from_sheet
 
-PROJECT_ROOT = ROOT.parents[2]
+PROJECT_ROOT = GENERATE_HTML_ROOT.parent
 FORECAST_INPUT_ROOT = PROJECT_ROOT / "input_file" / "销量预测输入文件"
 DEFAULT_SOURCE = FORECAST_INPUT_ROOT / "小订及首销数据整理.xlsx"
 DEFAULT_OUTPUT = PROJECT_ROOT / "output_file" / SUMMARY_NAME

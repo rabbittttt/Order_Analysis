@@ -2,6 +2,9 @@
 input_file/
 output_file/
 analysis_outputs/
+output/
+outputs/
+销量规律/excel_preview/
 *.xlsx
 *.xlsm
 *.xls
@@ -21,8 +24,10 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 **/node_modules/
-scripts/generate_html/backup/
-scripts/generate_html/outputs/
+generate_html/backup/
+generate_html/outputs/
+.test_runtime/
+.test_outputs/
 
 # Secrets and local settings.
 .env

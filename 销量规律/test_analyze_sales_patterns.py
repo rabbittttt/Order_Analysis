@@ -231,10 +231,10 @@ class SalesPatternTests(unittest.TestCase):
     def test_main_preflight_names_missing_input_without_touching_output(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
-            script=root/'scripts'/'sales'/'analyze_sales_patterns.py'
+            script=root/'sales'/'analyze_sales_patterns.py'
             script.parent.mkdir(parents=True)
             required=[
-                root/'scripts'/'generate_html'/'core'/'china_calendar.py',
+                root/'generate_html'/'core'/'china_calendar.py',
                 script.with_name('export_excel_openpyxl.py'),
                 script.with_name('report_config.json'),
                 script.with_name('report_rules.py'),
@@ -252,10 +252,10 @@ class SalesPatternTests(unittest.TestCase):
     def test_main_refuses_input_that_is_the_output_target(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
-            script=root/'scripts'/'sales'/'analyze_sales_patterns.py'
+            script=root/'sales'/'analyze_sales_patterns.py'
             script.parent.mkdir(parents=True)
             for path in (
-                root/'scripts'/'generate_html'/'core'/'china_calendar.py',
+                root/'generate_html'/'core'/'china_calendar.py',
                 script.with_name('export_excel_openpyxl.py'),
                 script.with_name('report_config.json'),
                 script.with_name('report_rules.py'),

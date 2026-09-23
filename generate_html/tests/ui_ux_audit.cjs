@@ -2,7 +2,7 @@
 // UI_AUDIT_FINAL=1 tests the official generated page; otherwise rebuild a preview
 // from the immutable audit baseline and current templates (same data, new UI).
 const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
-const root=path.resolve(__dirname,'../../..'),templates=path.join(root,'scripts/generate_html/templates');
+const root=path.resolve(__dirname,'../..'),templates=path.join(root,'generate_html/templates');
 const output=path.join(root,'analysis_outputs/ui_ux_audit_20260922');
 const baseline=path.join(output,'baseline.html'),preview=path.join(output,'preview.html');
 const {chromium}=require(path.join(root,'.test_runtime/node_modules/playwright'));

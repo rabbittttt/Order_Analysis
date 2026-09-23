@@ -1,5 +1,5 @@
 const fs=require('fs'),path=require('path'),zlib=require('zlib'),assert=require('assert');
-const root=path.resolve(__dirname,'../../..');
+const root=path.resolve(__dirname,'../..');
 const testOutputRoot=path.join(root,'.test_outputs','forecast_bridge_validation');
 const {chromium}=require(path.join(root,'.test_runtime/node_modules/playwright'));
 const templates=path.resolve(__dirname,'../templates');

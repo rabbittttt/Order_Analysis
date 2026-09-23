@@ -18,6 +18,8 @@
 
 ## 运行
 
+以下命令在 `generate_html` 文件夹中运行。数据目录按本文件夹的上一级（仓库根目录）定位。
+
 ```powershell
 python main.py
 ```
@@ -31,23 +33,23 @@ python main.py --no-open
 指定输入输出：
 
 ```powershell
-python main.py --input "D:\05 AI脚本\PythonProject\订单分析\output_file" --output "D:\05 AI脚本\PythonProject\订单分析\output_file\鸿蒙智行订单分析汇总.html" --check
+python main.py --input "..\output_file" --output "..\output_file\鸿蒙智行订单分析汇总.html" --check
 ```
 
 ### 刷新销量预测二次处理数据
 
-原始历史数据、传播名—代际名映射和二次处理文件统一放在 `input_file\销量预测输入文件`；刷新脚本放在 `scripts\generate_html\tools`。在 PyCharm 中直接运行：
+原始历史数据、传播名—代际名映射和二次处理文件统一放在仓库根目录的 `input_file\销量预测输入文件`；刷新脚本放在 `generate_html\tools`。在 `generate_html` 文件夹中运行，或在 PyCharm 中直接运行该脚本：
 
 如需按历史时点复盘销量预测，可在 `config.json` 的 `forecast_as_of_date` 填写 `YYYY-MM-DD`；留空则使用运行当天。该配置只改变阶段判定及已发生/未来日期切分，不修改原始订单数据。
 
 ```powershell
-python "D:\05 AI脚本\PythonProject\订单分析\scripts\generate_html\tools\refresh_sales_forecast_data.py"
+python tools/refresh_sales_forecast_data.py
 ```
 
 刷新脚本检查历史文件、车型基本信息、当前订单文件清单与修改时间、转换代码及汇总日期。新增、删除或更新当前订单文件、修改复盘日期或跨日运行都会重新汇总；依赖未变化时跳过。需要无条件重建时使用：
 
 ```powershell
-python "D:\05 AI脚本\PythonProject\订单分析\scripts\generate_html\tools\refresh_sales_forecast_data.py" --force
+python tools/refresh_sales_forecast_data.py --force
 ```
 
 脚本读取历史整理表、车型基本信息，以及当前订单目录中的《首销期订单节奏》《小订退订分析》《小订选配比例分析》《锁单选配比例分析》，生成 `output_file\鸿蒙智行销量数据汇总.xlsx`。汇总将当前阶段并入车型基本信息，将历史小订与当前小订退订合并为统一逐日表；同车型同日期的小订按《小订选配比例分析》代际by天→《小订退订分析》分时汇总→历史小订by天的顺序读取可用值。数据来源目录对应原始文件和汇总位置。网页销量预测统一从汇总文件读取，继续按原有阶段优先级逐字段回退。空值、真实0、日期和数值格式保持原义。
@@ -70,13 +72,13 @@ python "D:\05 AI脚本\PythonProject\订单分析\scripts\generate_html\tools\re
 
 输出文件：
 
-- `D:\05 AI脚本\PythonProject\订单分析\output_file\鸿蒙智行订单分析汇总.html`：最终网页
-- `D:\05 AI脚本\PythonProject\订单分析\output_file\build_manifest.json`：可选的解析后页面数据；仅在 `build_manifest_mode` 设为 `compact` 或 `full` 时生成
-- `D:\05 AI脚本\PythonProject\订单分析\output_file\log\generate_html_YYYYMMDD_HHMMSS.log`：完整运行日志，包含文件读取、主体/模块映射、兼容处理、校验告警和错误堆栈；所有运行日志直接放在 `log` 目录，不再按运行创建子目录
+- `output_file\鸿蒙智行订单分析汇总.html`：最终网页（相对于仓库根目录）
+- `output_file\build_manifest.json`：可选的解析后页面数据；仅在 `build_manifest_mode` 设为 `compact` 或 `full` 时生成
+- `output_file\log\generate_html_YYYYMMDD_HHMMSS.log`：完整运行日志，包含文件读取、主体/模块映射、兼容处理、校验告警和错误堆栈；所有运行日志直接放在 `log` 目录，不再按运行创建子目录
 
 ## 依赖
 
-- Python 3.7+
+- Python 3.10+
 - openpyxl 3.x
 
 详细代码导航和 AI 修改规则见 `README_AI.md`。

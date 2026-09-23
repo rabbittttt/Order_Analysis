@@ -261,7 +261,8 @@ class SalesForecastStageTests(unittest.TestCase):
                 "原始表简称/别名": "R7 26款",
             }
             master = {"智界r72026": record, "r726": record}
-            with patch("modules.sales_forecast._read_model_master", return_value=master):
+            mapping = {name: record["订单分析代际名"] for name in master}
+            with patch("modules.sales_forecast._read_model_mapping", return_value=mapping), patch("modules.sales_forecast._read_model_master", return_value=master):
                 _, rows = _read_small_order_history(path)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["model"], "智界R7 2026款")
