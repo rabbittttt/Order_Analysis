@@ -6,6 +6,8 @@
 
 在 IDE 中直接运行 analyze_sales_patterns.py，程序参数留空。默认路径相对于项目目录确定，不依赖 IDE 工作目录。
 
+推荐放在 `订单分析/scripts/销量规律`。代码根目录名为 `scripts` 时，数据根目录取其上一级 `订单分析`；其他目录名称则以代码根目录作为数据根目录。日历模块始终从同级的 `generate_html/core` 读取。
+
 ## 运行与迁移
 
 运行环境：Python 3.10+、openpyxl。不依赖 Node.js、私有包、Microsoft Excel 或网络服务。
@@ -13,19 +15,20 @@
 必需文件及目录结构：
 
 ```text
-Order_Analysis/
-  销量规律/
-    analyze_sales_patterns.py
-    export_excel_openpyxl.py
-    report_rules.py
-    forecast_insights.py
-    export_html.py
-    templates/
-      patterns.html
-      patterns.css
-      patterns.js
-    report_config.json
-  generate_html/core/china_calendar.py
+订单分析/
+  scripts/
+    销量规律/
+      analyze_sales_patterns.py
+      export_excel_openpyxl.py
+      report_rules.py
+      forecast_insights.py
+      export_html.py
+      templates/
+        patterns.html
+        patterns.css
+        patterns.js
+      report_config.json
+    generate_html/core/china_calendar.py
   output_file/鸿蒙智行销量数据汇总.xlsx
 ```
 

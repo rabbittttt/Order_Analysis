@@ -1,7 +1,8 @@
 // Run after main.py to verify the real generated page at narrow widths.
 const path=require('path'),assert=require('assert'),fs=require('fs');
 const {pathToFileURL}=require('url');
-const root=path.resolve(__dirname,'../..');
+const codeRoot=path.resolve(__dirname,'../..');
+const root=path.basename(codeRoot).toLowerCase()==='scripts'?path.dirname(codeRoot):codeRoot;
 const {chromium}=require(path.join(root,'.test_runtime/node_modules/playwright'));
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'});

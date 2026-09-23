@@ -6,7 +6,8 @@ from pathlib import Path
 from statistics import mean, median
 import openpyxl
 SCRIPT_PATH=Path(__file__).resolve()
-ROOT=SCRIPT_PATH.parent.parent
+CODE_ROOT=SCRIPT_PATH.parent.parent
+ROOT=CODE_ROOT.parent if CODE_ROOT.name.lower() == 'scripts' else CODE_ROOT
 
 def log(message):
     print(f'[{datetime.now():%Y-%m-%d %H:%M:%S}] {message}',flush=True)
@@ -35,7 +36,7 @@ def group(rows,fields):
     return g
 
 def load_calendar(extra=None):
-    spec=importlib.util.spec_from_file_location('calendar_rules',ROOT/'generate_html/core/china_calendar.py')
+    spec=importlib.util.spec_from_file_location('calendar_rules',SCRIPT_PATH.parent.parent/'generate_html/core/china_calendar.py')
     m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     periods=dict(m.HOLIDAY_PERIODS); work=dict(m.ADJUSTED_WORKDAYS); sources=dict(m.SOURCE_URLS)
     periods[2021]=(('元旦','2021-01-01','2021-01-03'),('春节','2021-02-11','2021-02-17'),('清明节','2021-04-03','2021-04-05'),('劳动节','2021-05-01','2021-05-05'),('端午节','2021-06-12','2021-06-14'),('中秋节','2021-09-19','2021-09-21'),('国庆节','2021-10-01','2021-10-07'))
@@ -368,7 +369,7 @@ def main():
     src=a.input.resolve()
     final=(ROOT/'output_file'/'鸿蒙智行销量规律分析.xlsx').resolve()
     exporter=SCRIPT_PATH.with_name('export_excel_openpyxl.py')
-    calendar_path=ROOT/'generate_html'/'core'/'china_calendar.py'
+    calendar_path=SCRIPT_PATH.parent.parent/'generate_html'/'core'/'china_calendar.py'
     config_path=SCRIPT_PATH.with_name('report_config.json')
     rules_path=SCRIPT_PATH.with_name('report_rules.py')
     forecast_path=SCRIPT_PATH.with_name('forecast_insights.py')

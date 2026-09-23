@@ -1,3 +1,10 @@
+# This public repository only owns these paths under scripts/.
+/*
+!/generate_html/
+!/销量规律/
+!/README.md
+!/.gitignore
+
 # Business data and generated reports stay on each computer.
 input_file/
 output_file/

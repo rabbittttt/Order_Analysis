@@ -26,7 +26,8 @@ from modules.registry import MODULES
 
 
 ROOT = Path(__file__).resolve().parent
-PROJECT_ROOT = ROOT.parent
+CODE_ROOT = ROOT.parent
+PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
 AUTO_OPEN_HTML = True
 LOGGER = logging.getLogger("order_analysis")
 BUILD_DIAGNOSTICS: list[str] = []

@@ -18,7 +18,7 @@
 
 ## 运行
 
-以下命令在 `generate_html` 文件夹中运行。数据目录按本文件夹的上一级（仓库根目录）定位。
+以下命令在 `generate_html` 文件夹中运行。推荐路径为 `订单分析/scripts/generate_html`，默认数据根目录为 `订单分析`。代码仓库根目录名为 `scripts` 时取它的上一级作为数据根目录；其他目录名称则以代码仓库根目录作为数据根目录。
 
 ```powershell
 python main.py
@@ -33,12 +33,12 @@ python main.py --no-open
 指定输入输出：
 
 ```powershell
-python main.py --input "..\output_file" --output "..\output_file\鸿蒙智行订单分析汇总.html" --check
+python main.py --input "..\..\output_file" --output "..\..\output_file\鸿蒙智行订单分析汇总.html" --check
 ```
 
 ### 刷新销量预测二次处理数据
 
-原始历史数据、传播名—代际名映射和二次处理文件统一放在仓库根目录的 `input_file\销量预测输入文件`；刷新脚本放在 `generate_html\tools`。在 `generate_html` 文件夹中运行，或在 PyCharm 中直接运行该脚本：
+原始历史数据、传播名—代际名映射和二次处理文件统一放在数据根目录的 `input_file\销量预测输入文件`；刷新脚本放在 `generate_html\tools`。在 `generate_html` 文件夹中运行，或在 PyCharm 中直接运行该脚本：
 
 如需按历史时点复盘销量预测，可在 `config.json` 的 `forecast_as_of_date` 填写 `YYYY-MM-DD`；留空则使用运行当天。该配置只改变阶段判定及已发生/未来日期切分，不修改原始订单数据。
 
@@ -72,7 +72,7 @@ python tools/refresh_sales_forecast_data.py --force
 
 输出文件：
 
-- `output_file\鸿蒙智行订单分析汇总.html`：最终网页（相对于仓库根目录）
+- `output_file\鸿蒙智行订单分析汇总.html`：最终网页（以下均相对于数据根目录）
 - `output_file\build_manifest.json`：可选的解析后页面数据；仅在 `build_manifest_mode` 设为 `compact` 或 `full` 时生成
 - `output_file\log\generate_html_YYYYMMDD_HHMMSS.log`：完整运行日志，包含文件读取、主体/模块映射、兼容处理、校验告警和错误堆栈；所有运行日志直接放在 `log` 目录，不再按运行创建子目录
 
