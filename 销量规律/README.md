@@ -32,7 +32,7 @@
   output_file/鸿蒙智行销量数据汇总.xlsx
 ```
 
-上面列出的分析、导出模块、配置和 templates 中的三个文件均为必需文件，迁移到内网时一起复制并保留目录结构。requirements.txt 与本说明可选复制。原 .mjs、node_modules、ZIP、缓存和测试文件均不是运行必需文件。
+上面列出的分析、导出模块、配置和 templates 中的三个文件均为必需文件，迁移到内网时一起复制并保留目录结构。requirements.txt 与本说明可选复制。原 .mjs、node_modules、ZIP、缓存和整个 tests/ 目录均不是运行必需文件；迁移到内网或打包运行版本时可跳过。
 
 一次无参数执行会固定生成 output_file/鸿蒙智行销量规律分析.xlsx 和同目录的 鸿蒙智行销量规律分析.html。HTML 为单个离线文件，双击可在浏览器中打开；无需启动网站服务。单独分享 HTML 也可使用所有分析交互，若需要从网页下载 Excel，请把两个文件放在一起。分析证据只在内存传递，不生成单独的 JSON、Markdown、预览或日志文件；HTML 内嵌本次净大定和锁单的必要数据。Excel 与 HTML 均先安全写入各自的临时文件，成功后替换对应最终文件；某个文件保存失败时保留该文件上次成功结果，并删除本次创建的临时文件。若 HTML 保存失败而 Excel 已保存，控制台报错而不宣告全流程成功。不会清理整个目录。旧 --out 参数仅兼容接收并提示忽略；--input、--calendar 可选使用，日常运行不需要参数。
 
@@ -69,7 +69,17 @@ report_config.json：
 
 控制台日志带时间戳并立即刷新，包含两种预测口径、输入与两个输出路径、日期范围、车型/观测数量、分阶段耗时、滚动回测、各工作表行数和网页导出进度。超过10000行的表会分批报告进度，保存失败给出明确原因。
 
-测试（项目根目录）：python -m unittest discover -s 销量规律 -p "test*.py"
+测试脚本统一放在 `tests/`，只用于开发时检查计算口径、历史回测和导出功能。日常运行仍只执行 `analyze_sales_patterns.py`，不需要运行测试。
+
+开发测试（在 `scripts` 仓库根目录执行）：
+
+```powershell
+python -m unittest discover -s 销量规律/tests -p "test*.py"
+```
+
+若在上一级 `订单分析` 目录执行，将 `-s` 后的路径改为 `scripts/销量规律/tests`。也可以在 IDE 中直接运行任意一个 `tests/test_*.py`。
+
+`tests/test_report_grouping.mjs` 是旧版 JavaScript 分组模块的开发测试，按需用 `node --test 销量规律/tests/test_report_grouping.mjs` 运行；当前 Python 分析流程不依赖 Node.js。
 
 ## 交互网页与预测参考
 

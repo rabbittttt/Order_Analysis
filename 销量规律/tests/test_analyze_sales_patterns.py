@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 from statistics import mean
 
-spec=importlib.util.spec_from_file_location('sales_patterns',Path(__file__).with_name('analyze_sales_patterns.py'))
+spec=importlib.util.spec_from_file_location('sales_patterns',Path(__file__).resolve().parents[1] / 'analyze_sales_patterns.py')
 m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 
 def records(a,b,fn=lambda d:100):

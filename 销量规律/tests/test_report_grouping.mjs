@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chooseGrouping,reportSeries} from './report_grouping.mjs';
+import {chooseGrouping,reportSeries} from '../report_grouping.mjs';
 test('new source categories survive unchanged and grow beyond four groups',()=>{
  const models=Array.from({length:7},(_,i)=>({model:'全新车型'+i,segment:'内网档位'+i,brand:'单一品牌',energy:'未知动力'}));
  const g=chooseGrouping(models);assert.equal(g.dimension,'segment');assert.equal(g.categories.length,7);

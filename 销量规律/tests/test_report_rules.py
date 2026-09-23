@@ -2,7 +2,15 @@ import calendar
 import unittest
 from datetime import date
 
-from report_rules import build_rule_summary
+import importlib.util
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location(
+    "sales_rules_test", Path(__file__).resolve().parents[1] / "report_rules.py"
+)
+rules = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rules)
+build_rule_summary = rules.build_rule_summary
 
 
 def annual_comparison(model, year, metric="大定", stage="平销", cycle="平销", source="ERP",
