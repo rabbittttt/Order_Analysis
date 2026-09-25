@@ -748,6 +748,24 @@ class SubjectParsingTests(unittest.TestCase):
         self.assertEqual(brand_names, ["问界", "智界", "享界", "尊界", "尚界"])
         self.assertEqual(subjects[0].name, "鸿蒙智行")
 
+    def test_forecast_target_without_raw_sheet_is_in_generation_selector(self):
+        workbook = Workbook()
+        workbook.active.title = "尊界by周"
+        store = WorkbookStore(Path("."))
+        store.items = [WorkbookItem(Path("测试.xlsx"), workbook)]
+        subjects = discover_subjects(store, ["尊界 V680&V800", "享界 G9", "数据来源目录"])
+        generations = {item.name: item for item in subjects if item.type == "generation"}
+        self.assertEqual(generations["尊界 V680&V800"].parent, "尊界")
+        self.assertEqual(generations["享界 G9"].parent, "享界")
+        self.assertNotIn("数据来源目录", generations)
+
+    def test_combined_code_and_edition_are_generations_not_metric_labels(self):
+        for name in ("尊界 V680&V800", "尊界 S800典藏大观"):
+            self.assertTrue(is_valid_subject_name(name))
+            self.assertEqual(subject_type(name), "generation")
+        self.assertFalse(is_valid_subject_name("尊界交车锁单"))
+        self.assertEqual(subject_type("尊界交车锁单"), "brand")
+
     def test_select_retreat_groups_are_parsed(self):
         workbook = Workbook()
         sheet = workbook.active

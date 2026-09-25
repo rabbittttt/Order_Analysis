@@ -19,7 +19,7 @@ from core.china_calendar import PUBLISHED_YEARS
 from core.config import load_config
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook
-from core.forecast_summary import SUMMARY_NAME
+from core.forecast_summary import SUMMARY_NAME, read_summary_snapshot
 from core.renderer import b64gzip, render_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
@@ -81,6 +81,21 @@ def refresh_sales_forecast_data(config: dict[str, Any], input_dir: Path | None =
     if result.returncode:
         raise RuntimeError(f"销量预测二次处理刷新失败，退出码 {result.returncode}")
     LOGGER.info("销量预测二次处理刷新：完成")
+
+
+def forecast_target_names(summary_path: Path) -> list[str]:
+    """Use the refreshed forecast's own target list for subject discovery."""
+    if not summary_path.exists():
+        return []
+    workbook = load_workbook(summary_path, read_only=True, data_only=True)
+    try:
+        snapshot = read_summary_snapshot(workbook)
+    finally:
+        workbook.close()
+    if not snapshot:
+        return []
+    data = snapshot.get("views", {}).get("week", {}).get("pages", {}).get("预测方案", {}).get("workspace", {}).get("data", {})
+    return [str(item["name"]).strip() for item in data.get("targets", []) if item.get("name")]
 
 
 class LevelFormatter(logging.Formatter):
@@ -265,9 +280,10 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
         raise RuntimeError(f"没有成功读取任何Excel，无法生成看板：{details}")
     try:
         stage_started = perf_counter()
-        subjects = discover_subjects(store)
+        subjects = discover_subjects(store, forecast_target_names(input_dir / SUMMARY_NAME))
         discovery_seconds = perf_counter() - stage_started
-        LOGGER.info("已识别分析主体 %d 个: %s", len(subjects), "、".join(subject.name for subject in subjects))
+        LOGGER.info("已识别分析主体 %d 个", len(subjects))
+        LOGGER.debug("分析主体明细: %s", "、".join(subject.name for subject in subjects))
         dashboards: dict[str, Any] = {}
         capabilities: dict[str, set[str]] = {}
         runtime_warnings = list(store.load_errors)
@@ -311,6 +327,9 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
             LOGGER.warning("[\u914d\u7f6e\u6821\u9a8c] module_order \u672a\u914d\u7f6e\u5df2\u6ce8\u518c\u6a21\u5757: %s", "\u3001".join(missing_modules))
         set_capabilities(subjects, capabilities, configured_order)
         add_kpi_comparisons(dashboards)
+        if store.multi_source_groups:
+            LOGGER.info("多文件来源：%d类，共%d个文件匹配项参与合并；详细文件名可使用 --debug 查看",
+                        len(store.multi_source_groups), sum(store.multi_source_groups.values()))
         stage_started = perf_counter()
         # Add the consolidated forecast workbook only after subject/module builds,
         # so imported source tabs never create extra analysis subjects.

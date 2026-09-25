@@ -33,11 +33,11 @@ def is_valid_subject_name(name: str) -> bool:
         return True
     if re.fullmatch(r"[\u4e00-\u9fff]{1,3}界.+20\d{2}款(?:总计|汇总)?", value, flags=re.IGNORECASE):
         return True
-    # 代号型代际（无款号），例如“问界 F2N”
-    return bool(re.fullmatch(r"[\u4e00-\u9fff]{1,3}界[A-Za-z0-9]+", value))
+    # 代号型代际（无款号），含组合代号或版本名；中文指标名仍须排除。
+    return bool(re.fullmatch(r"[\u4e00-\u9fff]{1,3}界[A-Za-z0-9]+(?:[&+/][A-Za-z0-9]+)*(?:[\u4e00-\u9fff]{1,8})?", value))
 
 
-def discover_subjects(store: WorkbookStore) -> list[Subject]:
+def discover_subjects(store: WorkbookStore, forecast_targets: Iterable[str] = ()) -> list[Subject]:
     names: dict[str, str] = {"鸿蒙智行": "鸿蒙智行"}
     for _, sheet_name in store.all_sheet_names():
         subject = sheet_subject(sheet_name)
@@ -57,9 +57,19 @@ def discover_subjects(store: WorkbookStore) -> list[Subject]:
                     if key not in names or (" " in value and " " not in names[key]):
                         names[key] = value
 
+    # Forecast targets can exist before a raw by-day Sheet is available.
+    target_keys = set()
+    for value in forecast_targets:
+        name = clean_text(value)
+        if not re.match(r"^[\u4e00-\u9fff]{1,3}界.+", compact_text(name)):
+            continue
+        key = compact_text(name)
+        names[key] = name
+        target_keys.add(key)
+
     subjects = []
     for name in names.values():
-        kind = subject_type(name)
+        kind = "generation" if compact_text(name) in target_keys else subject_type(name)
         subjects.append(Subject(subject_id(name, kind), name, kind, subject_parent(name, kind)))
     rank = {"group": 0, "brand": 1, "generation": 2}
 

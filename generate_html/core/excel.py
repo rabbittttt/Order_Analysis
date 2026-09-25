@@ -185,7 +185,7 @@ def subject_type(name: str) -> str:
         return "group"
     if re.search(r"20\d{2}\s*款", name):
         return "generation"
-    if re.fullmatch(r"[\u4e00-\u9fff]{1,3}界\s*[A-Za-z0-9]+", compact_text(name)):
+    if re.fullmatch(r"[\u4e00-\u9fff]{1,3}界[A-Za-z0-9]+(?:[&+/][A-Za-z0-9]+)*(?:[\u4e00-\u9fff]{1,8})?", compact_text(name)):
         return "generation"
     return "brand"
 
@@ -456,9 +456,8 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 cell = target.cell(row, col, value[0])
                 cell.number_format, cell.data_type = value[1:3]
     target._source_matches = matches
-    if conflict_count:
-        LOGGER.warning("[多文件数值冲突] Sheet=%s | 共%d项 | 保留原文件顺序中首个非空值，其他文件仍保留为来源 | 示例=%s",
-                       target.title, conflict_count, "；".join(conflicts))
+    target._merge_conflict_count = conflict_count
+    target._merge_conflict_examples = conflicts
     return target
 
 
@@ -535,9 +534,8 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
                 cell = target.cell(row, col, value[0])
                 cell.number_format, cell.data_type = value[1:3]
     target._source_matches = matches
-    if conflict_count:
-        LOGGER.warning("[多文件数值冲突] Sheet=%s | 共%d项 | 保留首个非空值 | 示例=%s",
-                       target.title, conflict_count, "；".join(conflicts))
+    target._merge_conflict_count = conflict_count
+    target._merge_conflict_examples = conflicts
     return target
 
 
@@ -574,6 +572,8 @@ def _merge_option_fee(matches):
         _copy_cells(matches[0][1], target, row_end=first_period_row - 1)
     _copy_cells(merged, target, row_offset=first_period_row - 1)
     target._source_matches = matches
+    target._merge_conflict_count = merged._merge_conflict_count
+    target._merge_conflict_examples = merged._merge_conflict_examples
     return target
 
 
@@ -614,6 +614,7 @@ def _merge_partitioned(matches, *, horizontal):
     target = book.active
     target.title = matches[0][1].title
     offset = 0
+    conflict_count, conflict_examples = 0, []
     for title, parts in groups.items():
         if horizontal:
             first = parts[0][1]
@@ -622,13 +623,19 @@ def _merge_partitioned(matches, *, horizontal):
             if period_column is None:
                 return None
             merged = _merge_matrix(parts, 2, period_column - 1)
+            conflict_count += merged._merge_conflict_count
+            conflict_examples.extend(merged._merge_conflict_examples[:max(0, 3 - len(conflict_examples))])
             _copy_cells(merged, target, col_offset=offset)
             offset += merged.max_column + 1
         else:
             merged = _merge_matrix(parts, 2, 1)
+            conflict_count += merged._merge_conflict_count
+            conflict_examples.extend(merged._merge_conflict_examples[:max(0, 3 - len(conflict_examples))])
             _copy_cells(merged, target, row_offset=offset)
             offset += merged.max_row + 1
     target._source_matches = matches
+    target._merge_conflict_count = conflict_count
+    target._merge_conflict_examples = conflict_examples
     return target
 
 def merge_source_sheets(matches):
@@ -687,6 +694,7 @@ class WorkbookStore:
         self._combined_cache: dict[str, WorkbookItem] = {}
         self._source_aliases: dict[tuple[str, str], list[tuple[WorkbookItem, Any]]] = {}
         self._subject_sheets_cache: dict[tuple[Any, ...], list[tuple[WorkbookItem, Any]]] = {}
+        self.multi_source_groups: dict[str, int] = {}
 
     def load(self, exclude_names: Iterable[str] = (), *, data_only_view: bool = False) -> None:
         if not self.input_dir.exists():
@@ -695,6 +703,7 @@ class WorkbookStore:
         self._combined_cache.clear()
         self._source_aliases.clear()
         self._subject_sheets_cache.clear()
+        self.multi_source_groups.clear()
         excluded = set(exclude_names)
         paths = sorted(path for path in self.input_dir.glob("*.xlsx") if not path.name.startswith("~$") and path.name not in excluded)
         if not paths:
@@ -727,11 +736,20 @@ class WorkbookStore:
             for sheet in item.workbook.worksheets:
                 groups.setdefault(compact_text(sheet.title), []).append((item, sheet))
         sheets = []
+        conflict_count, conflict_sheets, conflict_examples = 0, 0, []
         for matches in groups.values():
             title = matches[0][1].title
             combined = merge_source_sheets(matches)
             if combined is not None:
                 sheets.append(combined[1])
+                merged = combined[1]
+                count = getattr(merged, "_merge_conflict_count", 0)
+                if count:
+                    conflict_count += count
+                    conflict_sheets += 1
+                    for example in getattr(merged, "_merge_conflict_examples", []):
+                        if len(conflict_examples) < 3:
+                            conflict_examples.append(f"{title}: {example}")
             else:
                 # Unknown layouts remain separate; consumers using all matching
                 # sheets or the raw centre still see every original.
@@ -742,7 +760,11 @@ class WorkbookStore:
                 self._source_aliases[(items[0].path.name, source_sheet.title)] = matches
         result = WorkbookItem(items[0].path, WorkbookView(sheets))
         self._combined_cache[keyword] = result
-        LOGGER.info("多文件来源: %s | 共%d个文件全部纳入: %s", keyword, len(items), "、".join(item.path.name for item in items))
+        self.multi_source_groups[keyword] = len(items)
+        LOGGER.debug("多文件来源: %s | 共%d个文件全部纳入: %s", keyword, len(items), "、".join(item.path.name for item in items))
+        if conflict_count:
+            LOGGER.warning("[多文件数值冲突] 类别=%s | %d个Sheet共%d项 | 保留原文件顺序中首个非空值，其他文件仍保留为来源 | 示例=%s",
+                           keyword, conflict_sheets, conflict_count, "；".join(conflict_examples))
         return result
 
     def expand_sources(self, sources):

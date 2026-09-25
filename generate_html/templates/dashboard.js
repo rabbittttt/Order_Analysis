@@ -304,7 +304,8 @@
     let subjects=DATA.subjects;
     if(state.module==="sales_forecast"){
       const owner=DATA.subjects.find(item=>item.modules.includes("sales_forecast")),board=owner?boardCache[`${owner.id}|sales_forecast`]:null,targetNames=(forecastDataFromBoard(board)?.targets||[]).map(item=>item.name);
-      subjects=DATA.subjects.filter(item=>item.type==="generation"&&targetNames.some(name=>sameForecastModel(item.name,name)));
+      const generations=DATA.subjects.filter(item=>item.type==="generation"),seen=new Set();
+      subjects=targetNames.map(name=>generations.find(item=>item.name.replace(/\s+/g,'')===String(name).replace(/\s+/g,''))||generations.find(item=>sameForecastModel(item.name,name))).filter(item=>item&&!seen.has(item.id)&&seen.add(item.id));
     }
     $("#subjectSelect").innerHTML=order.map(([type,label])=>`<optgroup label="${label}">${subjects.filter(item=>item.type===type).map(item=>`<option value="${item.id}">${esc(item.name)}</option>`).join("")}</optgroup>`).join("");
     $("#subjectSelect").value=state.subject;
