@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -684,6 +686,69 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertIn('grid-template-columns:repeat(7,minmax(0,1fr))', css)
         self.assertIn('grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:5px 7px', css)
         self.assertIn('grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:5px 6px', css)
+
+
+    def test_forecast_source_brief_stays_outside_collapsible_details(self):
+        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
+        header = script.split('<section class="forecast-target">', 1)[1].split('</section>', 1)[0]
+        for marker in ('data-forecast-source-brief', 'data-forecast-time-brief'):
+            self.assertLess(header.index(marker), header.index('<details class="forecast-source-details">'))
+        self.assertIn('<summary>来源与时间详情</summary>', header)
+        self.assertIn('data-forecast-day-source', header)
+        self.assertIn('data-forecast-time-summary', header)
+        self.assertGreaterEqual(script.count('refreshForecastHeaderBrief(root)'), 3)
+
+    def test_forecast_secondary_tabs_are_lightweight_and_keyboard_visible(self):
+        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
+        block = css.split('/* One stage entry point, followed by an aligned content-view switcher. */', 1)[1]
+        primary = re.search(r'\.forecast-stage-switcher button\[aria-pressed=true\]\{([^}]+)\}', block).group(1)
+        secondary = re.search(r'\.forecast-target-tabs button\[aria-selected=true\]\{([^}]+)\}', block).group(1)
+        self.assertIn('background:#0d63ce', primary)
+        self.assertIn('background:transparent', secondary)
+        self.assertIn('border-bottom-color:#0d63ce', secondary)
+        self.assertIn('border-left:1px solid #ccdae8', block)
+        self.assertIn('.forecast-target-tabs button:focus-visible', block)
+        self.assertIn('display:flex;flex-wrap:wrap;align-items:center', block)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for display formatter checks")
+    def test_forecast_source_brief_preserves_mixed_sources_errors_and_judgement_date(self):
+        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
+        helpers = script[script.index("  function forecastSourceBrief(text){"):
+                         script.index("  function showForecastStageSummary(")]
+        checks = r"""
+const assert=require('node:assert/strict');
+assert.equal(forecastSourceBrief('首销期已结束；主来源小订及首销数据整理（预测基准总表）；字段来源：首销日明细：小订及首销数据整理；总小订：小订及首销数据整理；分时进度：首销期订单节奏'),
+  '混合来源：整理表＋首销节奏');
+assert.equal(forecastSourceBrief('主来源小订及首销数据整理（预测基准总表）；字段来源：总小订：小订及首销数据整理'),
+  '来源：整理表');
+assert.equal(forecastSourceBrief('最终总小订取自小订及首销数据整理。逐日形状使用“小订by天”真实曲线。'),
+  '总小订：整理表');
+assert.equal(forecastSourceBrief('已发生4个完整日；分时累计仅作参考'), '实绩：4个完整日');
+assert.equal(forecastSourceBrief('主辅参考车型测算'), '参考测算');
+assert.equal(forecastSourceBrief('已结束日锁单缺失或异常（共490天）'), '数据缺失/异常');
+const source={textContent:'已结束日锁单缺失或异常（共490天）'},
+      time={textContent:'判定日期2026-09-23（数据生成于2026-09-22 09:57）；首销窗口2025-03-20 ~ 2025-05-06'},
+      brief={dataset:{}},date={};
+const nodes={'[data-forecast-day-source]':source,'[data-forecast-time-summary]':time,
+ '[data-forecast-source-brief]':brief,'[data-forecast-time-brief]':date};
+const root={querySelector:selector=>nodes[selector]};
+refreshForecastHeaderBrief(root);
+assert.equal(date.textContent,'判定日 2026-09-23');
+assert.equal(date.title,time.textContent);
+assert.equal(brief.title,source.textContent);
+assert.equal(brief.dataset.warning,'true');
+source.textContent='主辅参考车型测算';
+refreshForecastHeaderBrief(root);
+assert.equal(brief.dataset.warning,'false');
+assert.equal(brief.textContent,'参考测算');
+assert.equal(source.textContent,'主辅参考车型测算');
+assert.doesNotThrow(()=>refreshForecastHeaderBrief({querySelector:()=>null}));
+"""
+        result = subprocess.run(
+            [shutil.which("node"), "-e", helpers + checks],
+            capture_output=True, text=True, encoding="utf-8", timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 if __name__ == "__main__":
     unittest.main()

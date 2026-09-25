@@ -3469,8 +3469,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   grid-column:1/-1;grid-row:3;flex:1 1 100%;width:100%;
   display:flex;flex-wrap:wrap;align-items:center;gap:5px 12px;padding-top:3px;
 }
-.forecast-workspace.forecast-v2 .forecast-stage-switcher,
-.forecast-workspace.forecast-v2 .forecast-target-tabs{
+.forecast-workspace.forecast-v2 .forecast-stage-switcher{
   display:inline-flex;flex:0 0 auto;width:auto;align-items:center;
   gap:2px;margin:0;padding:2px;border:1px solid #ccdae8;
   border-radius:8px;background:#eaf1f8;box-shadow:none;
@@ -3481,15 +3480,39 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   border:1px solid transparent;border-radius:6px;background:transparent;color:#425c74;
   font:600 11px "Microsoft YaHei",sans-serif;line-height:1.4;box-shadow:none;
 }
-.forecast-workspace.forecast-v2 .forecast-stage-switcher button[aria-pressed=true],
-.forecast-workspace.forecast-v2 .forecast-target-tabs button[aria-selected=true]{
+.forecast-workspace.forecast-v2 .forecast-stage-switcher button[aria-pressed=true]{
   background:#0d63ce;border-color:#0d63ce;color:#fff;box-shadow:none;
 }
 .forecast-workspace.forecast-v2 .forecast-stage-switcher button:not([aria-pressed=true]):hover,
 .forecast-workspace.forecast-v2 .forecast-target-tabs button:not([aria-selected=true]):hover{
   background:#fff;color:#0c55b0;
 }
-.forecast-workspace.forecast-v2 .forecast-target-sources{margin-left:auto}
+
+.forecast-workspace.forecast-v2 .forecast-target-tabs{
+  display:inline-flex;flex:0 0 auto;align-items:center;gap:2px;width:auto;margin:0;
+  padding:0 0 0 9px;border:0;border-left:1px solid #ccdae8;border-radius:0;background:transparent;box-shadow:none;
+}
+.forecast-workspace.forecast-v2 .forecast-target-tabs button{
+  padding:5px 8px;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;
+}
+.forecast-workspace.forecast-v2 .forecast-target-tabs button[aria-selected=true]{
+  color:#0d63ce;background:transparent;border-bottom-color:#0d63ce;box-shadow:none;
+}
+.forecast-workspace.forecast-v2 .forecast-target-tabs button:focus-visible{
+  outline:2px solid #1677ff;outline-offset:2px;
+}
+.forecast-workspace.forecast-v2 .forecast-target-sources{
+  display:flex;flex:1 1 280px;flex-wrap:nowrap;align-items:center;gap:6px;margin-left:auto;min-width:0;
+}
+.forecast-workspace.forecast-v2 .forecast-stage-status{flex:0 0 auto;white-space:nowrap;font-size:11px}
+.forecast-source-brief{flex:0 1 auto;min-width:3em;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#50677f}
+.forecast-source-brief[data-warning=true]{color:#a34328}
+.forecast-time-brief{flex:0 0 auto;white-space:nowrap;font-size:10px;color:#50677f}
+.forecast-workspace.forecast-v2 .forecast-source-details{flex:0 0 auto}
+.forecast-workspace.forecast-v2 .forecast-source-details>summary{min-height:32px;padding:4px 0;font-size:11px;white-space:nowrap}
+.forecast-workspace.forecast-v2 .forecast-target-sources:has(.forecast-source-details[open]){flex-wrap:wrap}
+.forecast-workspace.forecast-v2 .forecast-source-details[open]{flex:1 1 100%}
+
 .forecast-workspace.forecast-v2 .forecast-result-actions{
   display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;margin:0;padding:0;
 }

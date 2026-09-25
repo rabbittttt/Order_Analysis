@@ -28,7 +28,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
 
 from core.model_identity import model_key, usable_attribute
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, write_summary_snapshot, summary_scope
-from core.excel import grain_from_sheet
+from core.excel import grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
@@ -1099,7 +1099,8 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         directory.append([kind, filename, sheet.title, name, sheet.max_row, sheet.max_column])
 
     for path, kind in [(source, "历史"), (mapping_path, "映射"), *[(path, "订单") for path in forecast_order_files(orders_dir)]]:
-        book = load_workbook(path, read_only=False, data_only=True)
+        book = (load_workbook(path, read_only=False, data_only=True) if preserve_layout
+                else load_data_workbook(path, orders_dir / ".cache" / "excel"))
         try:
             for sheet in book.worksheets:
                 if kind == "历史" and sheet.title not in {"车型汇总", "小订by天", "小订进度"}:
@@ -1137,7 +1138,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         ["预测参考区", "预测基准总表、D1_D2预测指标及首销参考曲线：保留首销预测现有参考数据和计算结果，首销预测继续读取这些既有口径。"],
         ["历史与资料区", "车型基本信息、小订及退订逐日和预测基准总表：用于名称映射、车型属性、当前阶段及历史小订/首销基准核对。"],
         ["来源说明", "本文件只保留预测所需的汇总结果，不复制原始订单Sheet，也不重复展示可由统一逐日表表达的明细；数据来源目录记录对应汇总位置。"],
-        ["取数规则", "按原有阶段优先级逐字段回退；只要后续优先级存在可用数据就继续取数，不因第一优先级缺失直接报错。"],
+        ["取数规则", "按原有阶段优先级逐字段回退；同类不同年份文件全部纳入，按车型、日期和指标合并，重叠不累加；冲突保留原文件排序下首个非空值并记录日志。"],
         ["首销数据说明", "首销逐日数据与首销参考曲线承担不同预测用途，虽然部分车型数值可能相同，本次不合并、不改取数来源。"],
         ["汇总日期", as_of_date or date.today().isoformat()],
         ["刷新签名", forecast_signature(source, mapping_path, orders_dir, as_of_date)],

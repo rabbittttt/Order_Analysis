@@ -317,11 +317,38 @@
     try{renderSubjectSelect();renderQuickGenerationLinks();renderNav();await renderFilters();if(revision===navigationRevision)await renderPage()}
     finally{clearTimeout(timer);if(revision===navigationRevision){page.setAttribute("aria-busy","false");status?.classList.remove("show")}}
   }
+  // Display-only summary of the existing explanation; never selects or changes data.
+  function forecastSourceBrief(text){
+    const value=String(text||''),short=name=>name.replaceAll('小订及首销数据整理','整理表').replaceAll('首销期订单节奏','首销节奏');
+    if(/缺失|异常|不可用|原始数据错误/.test(value))return '数据缺失/异常';
+    const main=value.match(/主来源([^，；（。]+)/)?.[1];
+    if(main){
+      const names=new Set([main]);
+      const fields=value.split('字段来源：')[1]||'';
+      fields.split('；').forEach(field=>{const match=field.match(/^(?:总小订|首销日明细|分时进度)：(.+)$/);if(match)names.add(match[1])});
+      return names.size>1?'混合来源：'+[...names].map(short).join('＋'):'来源：'+short(main);
+    }
+    const finalSmall=value.match(/最终总小订取自([^。；]+)/)?.[1];
+    if(finalSmall)return '总小订：'+short(finalSmall);
+    const completed=value.match(/已发生(\d+)个完整日/)?.[1];
+    if(completed)return '实绩：'+completed+'个完整日';
+    if(/主辅参考|参考最终小订/.test(value))return '参考测算';
+    if(/分时累计|分时进度/.test(value))return '分时实绩与估算';
+    return '依据：'+(value.split(/[。；]/)[0]||'待核对');
+  }
+  function refreshForecastHeaderBrief(root){
+    const source=root.querySelector('[data-forecast-day-source]')?.textContent||'';
+    const time=root.querySelector('[data-forecast-time-summary]')?.textContent||'';
+    const brief=root.querySelector('[data-forecast-source-brief]'),date=root.querySelector('[data-forecast-time-brief]');
+    if(brief){brief.textContent=forecastSourceBrief(source);brief.title=source;brief.dataset.warning=String(/缺失|异常|不可用|原始数据错误/.test(source));}
+    if(date){const day=time.match(/判定日期(\d{4}-\d{2}-\d{2})/)?.[1];date.textContent=day?'判定日 '+day:'判定日待核对';date.title=time;}
+  }
   function showForecastStageSummary(root,id){
     if(!root)return;
     const suffix=id.charAt(0).toUpperCase()+id.slice(1),label=forecastStages.find(item=>item.id===id)?.label||"销量预测",badge=root.querySelector('[data-forecast-current-day]'),source=root.querySelector('[data-forecast-day-source]');
     if(badge)badge.textContent=root.dataset[`forecastStatus${suffix}`]||`${label}状态判定中`;
     if(source)source.textContent=root.dataset[`forecastSource${suffix}`]||`正在检查${label}的时间阶段与数据来源`;
+    refreshForecastHeaderBrief(root);
   }
   function setForecastStageSummary(root,id,status,source){
     if(!root||!forecastStages.some(item=>item.id===id))return;
@@ -667,7 +694,7 @@
           <label>首销天数<input type="number" min="1" max="90" data-forecast-target="days" value="${fmt(target.launch_days)}"><small>天</small></label>
         </div></div>
         <span class="forecast-status confirmed" data-forecast-feedback role="status" aria-live="polite"><i></i><span>参数实时生效</span></span>
-        <div class="forecast-target-meta"><div class="forecast-stage-switcher" role="group" aria-label="选择预测阶段">${forecastStages.map(stage=>`<button type="button" data-forecast-stage-switch="${stage.id}" aria-pressed="${activeForecastStage===stage.id}">${stage.label}</button>`).join("")}</div><div class="forecast-tabs forecast-target-tabs" role="tablist" aria-label="预测内容"><button id="forecast-tab-result" class="${activeForecastView==='result'?'active':''}" role="tab" aria-selected="${activeForecastView==='result'}" tabindex="${activeForecastView==='result'?0:-1}" data-forecast-tab="result">预测结论</button><button id="forecast-tab-evidence" class="${activeForecastView==='evidence'?'active':''}" role="tab" aria-selected="${activeForecastView==='evidence'}" tabindex="${activeForecastView==='evidence'?0:-1}" data-forecast-tab="evidence">预测依据</button><button id="forecast-tab-score" class="${activeForecastView==='score'?'active':''}" role="tab" aria-selected="${activeForecastView==='score'}" tabindex="${activeForecastView==='score'?0:-1}" data-forecast-tab="score">预测打分</button></div><div class="forecast-target-sources"><b class="forecast-stage-status" data-forecast-current-day aria-live="polite">${esc(forecastStages.find(item=>item.id===activeForecastStage)?.label||'销量预测')}状态判定中</b><details class="forecast-source-details"><summary>数据来源与时间口径</summary><div class="forecast-source-decision"><b>数据来源</b><span data-forecast-day-source>正在检查当前预测阶段的时间窗口与数据来源</span></div><div class="forecast-source-decision"><b>时间口径</b><span data-forecast-time-summary>正在核对当前时间与各阶段窗口</span></div><p>人工参数和外部预测仅保存到当前浏览器，不上传；重新生成同路径页面后，人工修改项仍保留，真实值按最新数据读取。</p><button type="button" data-forecast-reset>清除本机草稿，恢复系统参数</button></details></div></div>
+        <div class="forecast-target-meta"><div class="forecast-stage-switcher" role="group" aria-label="选择预测阶段">${forecastStages.map(stage=>`<button type="button" data-forecast-stage-switch="${stage.id}" aria-pressed="${activeForecastStage===stage.id}">${stage.label}</button>`).join("")}</div><div class="forecast-tabs forecast-target-tabs" role="tablist" aria-label="预测内容"><button id="forecast-tab-result" class="${activeForecastView==='result'?'active':''}" role="tab" aria-selected="${activeForecastView==='result'}" tabindex="${activeForecastView==='result'?0:-1}" data-forecast-tab="result">预测结论</button><button id="forecast-tab-evidence" class="${activeForecastView==='evidence'?'active':''}" role="tab" aria-selected="${activeForecastView==='evidence'}" tabindex="${activeForecastView==='evidence'?0:-1}" data-forecast-tab="evidence">预测依据</button><button id="forecast-tab-score" class="${activeForecastView==='score'?'active':''}" role="tab" aria-selected="${activeForecastView==='score'}" tabindex="${activeForecastView==='score'?0:-1}" data-forecast-tab="score">预测打分</button></div><div class="forecast-target-sources"><b class="forecast-stage-status" data-forecast-current-day aria-live="polite">${esc(forecastStages.find(item=>item.id===activeForecastStage)?.label||'销量预测')}状态判定中</b><span class="forecast-source-brief" data-forecast-source-brief></span><span class="forecast-time-brief" data-forecast-time-brief></span><details class="forecast-source-details"><summary>来源与时间详情</summary><div class="forecast-source-decision"><b>数据来源</b><span data-forecast-day-source>正在检查当前预测阶段的时间窗口与数据来源</span></div><div class="forecast-source-decision"><b>时间口径</b><span data-forecast-time-summary>正在核对当前时间与各阶段窗口</span></div><p>人工参数和外部预测仅保存到当前浏览器，不上传；重新生成同路径页面后，人工修改项仍保留，真实值按最新数据读取。</p><button type="button" data-forecast-reset>清除本机草稿，恢复系统参数</button></details></div></div>
       </section>
       <section class="forecast-stage-pane${activeForecastStage==='small'?' active':''}" role="tabpanel" data-forecast-stage-pane="small">${smallOrderWorkspace}</section>
       <section class="forecast-stage-pane${activeForecastStage==='launch'?' active':''}" role="tabpanel" data-forecast-stage-pane="launch">
@@ -1116,6 +1143,7 @@
       if(actual){target.selectedSource=actual.selected_source||'missing';target.selectedSourceLabel=actual.selected_source_label||'数据缺失';target.fieldSources=actual.field_sources||{};target.missingFields=actual.missing_fields||[];target.dataMissing=!!actual.data_missing;target.sourceLatestDate=actual.source_latest_date||''}
       const sourceButton=document.querySelector('[data-workspace-source]');if(sourceButton)sourceButton.onclick=()=>jumpToSource(actual?.day_source||data.history_source);
       const timeSummary=root.querySelector('[data-forecast-time-summary]');if(timeSummary){const stageNow=absoluteStage(target),generated=String(DATA.meta?.generated_at||'').replace('T',' ').slice(0,16);timeSummary.textContent=`判定日期${today}（数据生成于${generated||'未知'}）；小订窗口 ${target.smallStartDate||'未维护'} ~ ${target.smallEndDate||'未维护'}（${target.smallDateSourceLabel||'来源缺失'}）；首销窗口 ${target.launchDate||'未维护'} ~ ${stageNow.end||'未维护'}，共${target.days}天（${target.dateSourceLabel}）；平销自 ${target.steadyStartDate||'缺失'} 起（${target.steadyDateSourceLabel||'来源缺失'}）`}
+      refreshForecastHeaderBrief(root);
       const indexedDays=[...(actual?.days||[])].filter(row=>row.date&&row.date<=today).map(row=>({...row,index:dayIndexForDate(target.launchDate,row.date)})).filter(row=>row.index>=0&&row.index<target.days).sort((a,b)=>a.index-b.index),todayIndex=stageInfo.key==='active'?stageInfo.day-1:-1,todayRow=indexedDays.find(row=>row.index===todayIndex&&row.date===today),latestHourly=[...(actual?.hourly_days||[])].filter(row=>row.date===today).sort((a,b)=>Number(a.last_hour||0)-Number(b.last_hour||0)).at(-1);let partial=null;
       if(stageInfo.key==='active'&&latestHourly)partial={...latestHourly,index:todayIndex};if(!partial&&stageInfo.key==='active'&&todayRow)partial={...todayRow,index:todayIndex,last_hour:Math.max(0,Math.min(Number(String(DATA.meta?.generated_at||'').slice(11,13))||0,23)),from_day_snapshot:true};const fixed=indexedDays.filter(row=>row.date<today),calendarCompletedDays=stageInfo.key==='ended'?target.days:stageInfo.key==='active'?Math.max(stageInfo.day-1,0):0,actualIndexes=new Set(fixed.map(row=>row.index)),pastMissingIndexes=Array.from({length:calendarCompletedDays},(_,index)=>index).filter(index=>!actualIndexes.has(index)),historyComplete=pastMissingIndexes.length===0;
       const defaultSmallShare=Math.max(1-baseShare,.05),resolvedFixed=fixed.map(row=>({...row}));

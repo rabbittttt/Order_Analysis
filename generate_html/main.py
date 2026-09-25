@@ -18,7 +18,7 @@ from core.components import add_kpi_comparisons
 from core.china_calendar import PUBLISHED_YEARS
 from core.config import load_config
 from core.discovery import discover_subjects, set_capabilities
-from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell
+from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook
 from core.forecast_summary import SUMMARY_NAME
 from core.renderer import b64gzip, render_dashboard
 from core.validation import validate_manifest
@@ -258,7 +258,7 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
     refresh_seconds = perf_counter() - stage_started
     store = WorkbookStore(input_dir)
     stage_started = perf_counter()
-    store.load(exclude_names={SUMMARY_NAME})
+    store.load(exclude_names={SUMMARY_NAME}, data_only_view=config.get("chart_render_mode") == "generated")
     load_seconds = perf_counter() - stage_started
     if not store.items:
         details = "；".join(store.load_errors) if store.load_errors else "目录中没有xlsx文件"
@@ -297,7 +297,7 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
                     module_builds[module.label] += 1
                 if not dashboard:
                     continue
-                dashboards[f"{subject.id}|{module.id}"] = dashboard.to_dict()
+                dashboards[f"{subject.id}|{module.id}"] = store.resolve_dashboard_sources(dashboard).to_dict()
                 capabilities.setdefault("".join(subject.name.split()), set()).add(module.id)
                 matched_modules.append(module.label)
             LOGGER.debug("主体映射完成: %s -> %s", subject.name, "、".join(matched_modules) if matched_modules else "仅底表")
@@ -316,7 +316,7 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
         # so imported source tabs never create extra analysis subjects.
         summary_path = input_dir / SUMMARY_NAME
         if summary_path.exists() and all(item.path.resolve() != summary_path.resolve() for item in store.items):
-            store.items.append(WorkbookItem(summary_path, load_workbook(summary_path, data_only=True)))
+            store.items.append(WorkbookItem(summary_path, load_data_workbook(summary_path, input_dir / ".cache" / "excel")))
         raw_files, raw_blocks = raw_tables(store)
         raw_seconds = perf_counter() - stage_started
         manifest = {

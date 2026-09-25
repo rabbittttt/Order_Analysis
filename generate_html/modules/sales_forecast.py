@@ -1138,10 +1138,9 @@ def _read_steady_history(
     current = today or date.today()
     model_mapping = _read_model_mapping()
     model_master = _read_model_master()
-    lock_items = store.find_all("锁单选配比例") if hasattr(store, "find_all") else []
-    if not lock_items:
-        item = store.find("锁单选配比例")
-        lock_items = [item] if item else []
+    # Yearly files form one history per generation, not repeated reference cars.
+    item = store.find("锁单选配比例")
+    lock_items = [item] if item else (store.find_all("锁单选配比例") if hasattr(store, "find_all") else [])
     result: list[dict[str, Any]] = []
     sources: list[SourceRef] = []
     for lock_item in lock_items:
@@ -2798,4 +2797,5 @@ class SalesForecastModule:
         small_history_source = SourceRef(small_history_path.name, "小订by天", "小订历史真实逐日曲线") if small_history_path else None
         sources = [history_source, *([stage_window_source] if stage_window_source else []), *([small_history_source] if small_history_source else []), *actual_sources, *steady_sources]
         views = {"week": {"periods": ["预测方案"], "default_period": "预测方案", "pages": {"预测方案": page}}}
-        return Dashboard(self.id, subject.id, views, sources)
+        dashboard = Dashboard(self.id, subject.id, views, sources)
+        return store.resolve_dashboard_sources(dashboard) if hasattr(store, "resolve_dashboard_sources") else dashboard
