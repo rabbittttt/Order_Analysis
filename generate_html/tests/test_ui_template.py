@@ -168,6 +168,14 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertNotIn(".topbar .top-actions #updatedAt {\n    display:none;", css)
         self.assertNotIn(".topbar .top-actions {\n    display:none;", css)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for quick-generation filtering")
+    def test_quick_generations_hide_special_and_outdated_variants(self):
+        result = subprocess.run(
+            ["node", str(ROOT / "tests" / "quick_generations.cjs")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_non_temporal_modules_keep_static_time_filter_placeholders(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")

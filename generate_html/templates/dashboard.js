@@ -184,11 +184,15 @@
   const generationYear=name=>Math.max(...[...String(name||'').matchAll(/(20\d{2})\s*款/g)].map(match=>Number(match[1])),0);
   const generationAggregate=name=>String(name||'').match(/(总计|汇总|合计)\s*$/)?.[1]||'';
   const generationModelKey=name=>String(name||'').replace(/20\d{2}\s*款/g,'').replace(/总计|汇总|合计/g,'').replace(/\s+/g,'').toLowerCase();
+  const quickGenerationExcluded=name=>/(?:总计|汇总|合计)\s*$|beta|预订|直订/i.test(String(name||''));
+  const quickGenerationFamilyKey=name=>generationModelKey(name).replace(/增程|纯电|智驾版|标准版/g,'');
   const generationShortName=name=>{const raw=String(name||'').trim(),aggregate=generationAggregate(raw),value=raw.replace(/(总计|汇总|合计)\s*$/,'').trim(),year=generationYear(value),brand=quickBrandOrder.find(item=>value.startsWith(item))||value.match(/^[\u4e00-\u9fff]{1,3}界/)?.[0]||'',model=value.slice(brand.length).replace(/20\d{2}\s*款/g,'').replace(/\s+Ultimate\b/ig,'U').replace(/\s+典藏大观\b/g,'大观').replace(/\s+/g,' ').trim(),yearLabel=year?` ${String(year).slice(-2)}`:'';return `${model||value}${yearLabel}${aggregate}`};
   function latestQuickGenerations(){
-    const candidates=DATA.subjects.filter(item=>item.type==='generation');
+    const candidates=DATA.subjects.filter(item=>item.type==='generation').filter(item=>!quickGenerationExcluded(item.name));
+    const newestYear=new Map();
+    candidates.forEach(item=>{const key=quickGenerationFamilyKey(item.name);newestYear.set(key,Math.max(newestYear.get(key)||0,generationYear(item.name)))});
     const latest=new Map();
-    candidates.forEach(item=>{const key=generationModelKey(item.name),year=generationYear(item.name),aggregate=Boolean(generationAggregate(item.name)),old=latest.get(key),oldAggregate=Boolean(old&&generationAggregate(old.name));if(!old||year>generationYear(old.name)||(year===generationYear(old.name)&&aggregate&&!oldAggregate)||(year===generationYear(old.name)&&aggregate===oldAggregate&&item.name.localeCompare(old.name,'zh-CN')<0))latest.set(key,item)});
+    candidates.forEach(item=>{const year=generationYear(item.name);if(year<newestYear.get(quickGenerationFamilyKey(item.name)))return;const key=generationModelKey(item.name),old=latest.get(key);if(!old||year>generationYear(old.name)||(year===generationYear(old.name)&&item.name.localeCompare(old.name,'zh-CN')<0))latest.set(key,item)});
     return [...latest.values()].sort((left,right)=>{const brandLeft=quickBrandOrder.indexOf(left.parent),brandRight=quickBrandOrder.indexOf(right.parent);return (brandLeft<0?quickBrandOrder.length:brandLeft)-(brandRight<0?quickBrandOrder.length:brandRight)||generationModelKey(left.name).localeCompare(generationModelKey(right.name),'en')||left.name.localeCompare(right.name,'zh-CN')});
   }
   function syncTopbarQuickLayout(){
