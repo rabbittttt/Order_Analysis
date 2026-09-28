@@ -27,7 +27,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
 from core.model_identity import model_key, usable_attribute
-from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, public_forecast_tables, summary_scope
+from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, public_forecast_tables, summary_scope, summary_quality
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -312,41 +312,6 @@ def close_count(left: Any, right: Any, relative_tolerance: float = 0.002, absolu
     return abs(left_value - right_value) <= max(absolute_tolerance, max(abs(left_value), abs(right_value)) * relative_tolerance)
 
 
-def summary_quality(
-    total_small: float,
-    small_to_big: float,
-    conversion: float,
-    gross: float,
-    direct: float,
-    direct_share: float,
-    cancel: float,
-    cancel_rate: float,
-    net: float,
-    net_rate: float,
-    lock: float,
-    lock_rate: float,
-    provided_fields: tuple[bool, ...] | None = None,
-) -> tuple[float, float, list[str]]:
-    fields = (total_small, small_to_big, conversion, gross, direct, direct_share, cancel, cancel_rate, net, net_rate, lock, lock_rate)
-    presence = provided_fields or tuple(value not in (None, "") for value in fields)
-    field_completeness = sum(bool(value) for value in presence) / len(fields)
-    checks: list[tuple[bool, str]] = []
-    if gross > 0 and (small_to_big > 0 or direct > 0):
-        checks.append((close_count(small_to_big + direct, gross), "总小转大+总直接大定与总大定不一致"))
-    for label, value in (("小订转化率", conversion), ("直接大定占比", direct_share), ("退订率", cancel_rate), ("留存大定率", net_rate), ("大定到锁单率", lock_rate)):
-        if value not in (None, 0):
-            checks.append((valid_rate(value), f"{label}超出0%～100%"))
-    if gross > 0 and direct > 0 and direct_share > 0:
-        checks.append((abs(direct_share - direct / gross) <= 0.02, "直接大定占比与数量不一致"))
-    if gross > 0 and net > 0:
-        checks.append((net <= gross * 1.02, "首销期留存大定高于总大定"))
-    if gross > 0 and lock > 0:
-        checks.append((lock <= gross * 1.02, "首销期锁单高于总大定"))
-    issues = [message for passed, message in checks if not passed]
-    consistency = sum(passed for passed, _ in checks) / len(checks) if checks else 0.0
-    return field_completeness, consistency, issues
-
-
 def day_structure_quality(small: Any, direct: Any, gross: Any, label: str) -> tuple[bool, str]:
     small_value, direct_value, gross_value = as_number(small), as_number(direct), as_number(gross)
     if gross_value <= 0:
@@ -395,7 +360,7 @@ def style_sheet(sheet, percent_headers: set[str] | None = None) -> None:
             if headers[cell.column - 1] in percent_headers:
                 cell.number_format = "0.0%"
             elif isinstance(cell.value, datetime):
-                cell.number_format = "yyyy-mm-dd"
+                cell.number_format = "yyyy-mm-dd hh:mm" if isinstance(cell.value, datetime) and any((cell.value.hour, cell.value.minute, cell.value.second)) else "yyyy-mm-dd"
             elif isinstance(cell.value, (int, float)):
                 cell.number_format = "#,##0.00" if not float(cell.value).is_integer() else "#,##0"
     sheet.freeze_panes = "A2"
@@ -1290,7 +1255,7 @@ def append_forecast_views(path, as_of_date, workbook=None):
         book[name].freeze_panes = "C2"
 
     compact_source_sheets(book)
-    public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today())
+    public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today(), getattr(module, "summary_raw_profiles", None))
     sheet_count = len(book.sheetnames)
     if owns_workbook:
         book.save(path)

@@ -16,15 +16,21 @@ from tools.refresh_sales_forecast_data import forecast_weekly_orders, write_rows
 
 
 class PublicForecastTablesTests(TestCase):
-    def make_public(self, target_start='2026-01-03'):
+    def make_public(self, target_start='2026-01-03', customize=None):
         book = Workbook()
         book.active.title = MASTER_SHEET
         book.active.append(['历史传播名', '订单分析代际名', '产品档位'])
         book.active.append(['历史车', '测试车', '中型SUV'])
         base = book.create_sheet('预测基准总表')
-        base.append(['传播名', '代际名', '总大定', '发布日', '首销截止'])
-        base.append(['历史车', '测试车', 20, datetime(2026, 1, 3), datetime(2026, 1, 9)])
+        base.append(['传播名', '代际名', '总大定', '发布日', '首销截止', '总小订'])
+        base.append(['历史车', '测试车', 20, datetime(2026, 1, 3), datetime(2026, 1, 9), 100])
+        metrics = book.create_sheet('D1_D2预测指标')
+        metrics.append(['传播名', 'D1大定'])
+        metrics.append(['历史车', 20])
         profile = {'model': '测试车', 'total_small': 100, 'stage_profiles': {},
+                   'launch_total_small': 100, 'launch_total_small_valid': True,
+                   'day_source': {'file': '首销期订单节奏.xlsx', 'sheet': '测试车by天'},
+                   'days': [{'date': '2026-01-03', 'day': 'D1', 'gross': 30, 'small_to_big': 10, 'direct': 20}],
                    'small_daily_days': [{'date': '2026-01-01', 'orders': 0}, {'date': '2026-01-02', 'orders': 10}],
                    'small_hourly_days': [{'date': '2026-01-02', 'orders': 10, 'hours': [{'hour': 15, 'orders': 4}, {'hour': 16, 'orders': 6}]}]}
         for stage, gross, owner in [('before', 20, 'history'), ('active', 30, 'launch'), ('ended', 20, 'history')]:
@@ -33,11 +39,14 @@ class PublicForecastTablesTests(TestCase):
                           '_field_sources': {'gross': owner, 'small_to_big': owner, 'direct': owner}}]}
         data = {'targets': [{'name': '测试车', 'history_model': '历史车', 'launch_date': target_start, 'end_date': '2026-01-09',
                             'small_start_date': '2026-01-01', 'small_end_date': '2026-01-02', 'days': 7}],
-                'actuals': [profile], 'history': [], 'steady_history': [],
+                'actuals': [profile], 'history': [{'model': '历史车', 'generation': '测试车', 'launch_date': '2026-01-03', 'daily_orders': [20]}], 'steady_history': [],
                 'small_order_history': [{'model': '历史车', 'generation': '测试车', 'event_id': 'event1',
                     'small_start_date': '2026-01-01', 'small_end_date': '2026-01-02', 'days': 2, 'total': 100,
-                    'daily_actual': True, 'dates': ['2026-01-01', '2026-01-02'], 'daily_orders': [0, 10],
+                    'daily_actual': True, 'source_sheet': '小订by天', 'total_complete': True,
+                    'dates': ['2026-01-01', '2026-01-02'], 'daily_orders': [0, 10],
                     'small_progress': [0, .1], 'standard_progress': [0, .1, .8, 1], 'small_hourly_curve': []}]}
+        if customize:
+            customize(data)
         def emit(name, headers, rows, percent_headers=None):
             if name in book.sheetnames:
                 del book[name]
@@ -63,17 +72,18 @@ class PublicForecastTablesTests(TestCase):
         self.assertEqual(small[0]['daily_orders'], [0, 10])
         self.assertEqual(small[0]['standard_progress'], [0, .1, .8, 1])
         self.assertEqual(small[0]['small_hourly_curve'], [])
-        self.assertEqual(profiles[0]['stage_profiles']['active']['days'][0]['gross'], 30)
-        self.assertEqual(profiles[0]['stage_profiles']['ended']['days'][0]['gross'], 20)
+        self.assertEqual(profiles[0]['days'][0]['gross'], 30)
         self.assertEqual(profiles[0]['small_hourly_days'][0]['hours'][0]['hour'], 15)
         sheet = book[DAILY_SHEET]
         headers = [c.value for c in sheet[1]]
         for row in sheet.iter_rows(min_row=2):
-            if row[headers.index('适用取数阶段')].value == '首销中':
+            if row[headers.index('来源类型')].value == '首销订单':
                 row[headers.index('大定')].value = 99
         updated = read_public_forecast(book, [])[0]
-        self.assertEqual(updated[0]['stage_profiles']['active']['days'][0]['gross'], 99)
-        self.assertEqual(updated[0]['stage_profiles']['ended']['days'][0]['gross'], 20)
+        self.assertEqual(updated[0]['days'][0]['gross'], 99)
+        history = [{'model': '历史车'}]
+        read_public_forecast(book, history)
+        self.assertEqual(history[0]['daily_orders'], [20])
         book.close()
 
     def test_current_window_does_not_overwrite_historical_reference_dates(self):
@@ -81,7 +91,8 @@ class PublicForecastTablesTests(TestCase):
         rows = list(book[MASTER_SHEET].values)
         record = dict(zip(rows[0], rows[1]))
         self.assertEqual(record['首销开始'], datetime(2026, 1, 3))
-        self.assertEqual(record['当前首销开始'], datetime(2026, 1, 5))
+        current = next(dict(zip(rows[0], r)) for r in rows[1:] if dict(zip(rows[0], r)).get('订单来源文件'))
+        self.assertEqual(current['首销开始'], datetime(2026, 1, 5))
         windows = read_public_forecast(book, [])[1]
         self.assertEqual(next(iter(windows.values()))['launch_date'], '2026-01-05')
         book.close()
@@ -103,6 +114,89 @@ class PublicForecastTablesTests(TestCase):
             data = dashboard.views['week']['pages']['预测方案']['workspace']['data']
             self.assertEqual(data['actuals'][0]['days'][0]['gross'], 30)
             self.assertEqual(data['small_order_history'][0]['daily_orders'], [0, 10])
+        book.close()
+
+    def test_removed_columns_are_not_exported(self):
+        book = self.make_public()
+        prohibited = {'适用取数阶段', '小订参考累计完成度', '小订标准进度', '真实逐日',
+                      '已结束日', '参考事件', '数据状态', '用途', '截至末小时小转大',
+                      '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考'}
+        for sheet in book:
+            self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
+        self.assertEqual(book[MASTER_SHEET].max_column, 27)
+        for name in (SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET):
+            self.assertEqual(book[name].max_column, 5)
+            self.assertEqual(book[name].cell(1, 5).value, '来源文件')
+        book.close()
+
+    def test_partial_small_data_preserves_blanks_without_inventing_terminal(self):
+        def customize(data):
+            item = data['small_order_history'][0]
+            item.update(daily_orders=[0, None], total=0, total_complete=False,
+                        total_source='小订by天已填累计（非终值）')
+        book = self.make_public(customize=customize)
+        item = read_public_forecast(book, [])[2][0]
+        self.assertEqual(item['daily_orders'], [0, None])
+        self.assertEqual(item['small_progress'], [None, None])
+        self.assertFalse(item['total_complete'])
+        self.assertEqual(len(item['standard_progress']), 4)
+        book.close()
+
+    def test_synthetic_curve_is_not_exported_as_real_daily_orders(self):
+        def customize(data):
+            item = data['small_order_history'][0]
+            item.update(daily_actual=False, source_sheet='小订进度', standard_progress=[.333, 1])
+            item.pop('total_complete', None)
+        book = self.make_public(customize=customize)
+        item = read_public_forecast(book, [])[2][0]
+        self.assertEqual(item['total'], 100)
+        self.assertEqual(item['daily_orders'], [33, 67])
+        self.assertEqual(item['d1_share'], .333)
+        self.assertFalse(item['daily_actual'])
+        self.assertEqual(item['small_progress'], [])
+        from core.forecast_summary import table_records
+        self.assertFalse(any(r['来源类型'] == '历史小订' for r in table_records(book, DAILY_SHEET)))
+        book.close()
+
+    def test_hourly_components_survive_without_hourly_snapshot_columns(self):
+        def customize(data):
+            data['actuals'][0]['hourly_days'] = [{'date': '2026-01-03', 'last_hour': 15,
+                'gross': 9, 'small_to_big': 0, 'direct': 9, 'lock': None,
+                'hours': [{'hour': 15, 'gross': 9}]}]
+            data['actuals'][0]['hour_source'] = {'file': '首销期订单节奏.xlsx', 'sheet': '测试车by时'}
+        book = self.make_public(customize=customize)
+        bucket = read_public_forecast(book, [])[0][0]['hourly_days'][0]
+        self.assertEqual((bucket['gross'], bucket['small_to_big'], bucket['direct'], bucket['lock']), (9, 0, 9, None))
+        self.assertEqual(book[LAUNCH_HOURLY_SHEET].cell(2, 5).value, '首销期订单节奏.xlsx')
+        book.close()
+
+    def test_week_reference_eligibility_is_derived_from_dates(self):
+        book = self.make_public()
+        sheet = book[WEEKLY_SHEET]
+        # Launch ends Fri Jan 9; the Jan 5 week is not a complete steady week.
+        sheet.append(['测试车', '26WK02', '平销', datetime(2026, 1, 10), datetime(2026, 1, 11), None, None, 3])
+        sheet.append(['测试车', '26WK03', '平销', datetime(2026, 1, 12), datetime(2026, 1, 18), None, None, 7])
+        sheet.append(['测试车', '26WK04', '平销', datetime(2026, 1, 19), datetime(2026, 1, 25), None, None, 9])
+        for row in range(2, 5):
+            sheet.cell(row, 11, '锁单选配比例分析.xlsx｜测试车by周')
+        steady = read_public_forecast(book, [], today=date(2026, 1, 25))[3]
+        self.assertEqual([w['period'] for w in steady[0]['weeks']], ['26WK03'])
+        sheet.cell(3, 11, '大定选配比例分析.xlsx｜测试车by周')
+        self.assertEqual(read_public_forecast(book, [], today=date(2026, 1, 25))[3], [])
+        book.close()
+
+    def test_stage_priority_is_reapplied_after_summary_read(self):
+        from modules.sales_forecast import _resolve_actual_profiles
+        from core.models import SourceRef
+        book = self.make_public()
+        history = [{'model': '历史车', 'generation': '测试车', 'small': 100, 'gross': 20,
+                    'days': 1, 'daily_small': [10], 'daily_direct': [10],
+                    'launch_date': '2026-01-03'}]
+        raw = read_public_forecast(book, history)[0]
+        targets = [{'name': '测试车', 'stage': 'ended', 'launch_date': '2026-01-03'}]
+        result = _resolve_actual_profiles(history, raw, targets, SourceRef('summary.xlsx', MASTER_SHEET))[0]
+        self.assertEqual(result['stage_profiles']['active']['days'][0]['gross'], 30)
+        self.assertEqual(result['stage_profiles']['ended']['days'][0]['gross'], 20)
         book.close()
 
     def weekly_fixture(self, *, complete_days=True, cutoff='2026-01-01'):

@@ -1459,10 +1459,18 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
         for row in sheet.iter_rows(min_row=2, values_only=True):
             record = dict(zip(headers, row))
             if visible:
-                if not record.get("首销历史参考"):
+                if _model_key(record.get("历史传播名")) not in d12_records:
                     continue
                 record.update({"传播名": record.get("历史传播名"), "代际名": record.get("订单分析代际名"),
                                "发布日": record.get("首销开始"), "首销截止": record.get("首销结束")})
+                from core.forecast_summary import summary_quality
+                _, consistency, issues = summary_quality(*[
+                    _number(record.get(k)) for k in ("总小订", "总小转大", "小订转化率", "总大定",
+                    "总直接大定", "直接大定占比", "总退订", "退订率", "首销期留存大定",
+                    "留存大定率", "首销期锁单", "大定到锁单率")])
+                record["口径一致性"] = consistency
+                record["质量状态"] = "需复核" if issues else "通过" if _number(record.get("字段完整度")) >= .75 and consistency >= .8 else "数据不足"
+                record["质量问题"] = "；".join(issues)
             model = str(record.get("传播名") or record.get("车型") or "").strip()
             if not model:
                 continue
@@ -2655,9 +2663,15 @@ class SalesForecastModule:
         path, history = _read_history()
         if not history:
             return None
-        profiles, windows, small_history, steady_history = read_public_forecast(workbook, history)
+        raw_profiles, windows, small_history, steady_history = read_public_forecast(workbook, history, today=self.as_of_date)
         master, mapping = _read_model_master(), _read_model_mapping()
-        targets = _target_options(history, profiles, windows, today=self.as_of_date, model_master=master)
+        _attach_actual_shapes(history, raw_profiles, today=self.as_of_date)
+        _attach_small_hourly_curves(small_history, raw_profiles)
+        _attach_steady_launch_features(steady_history, history)
+        targets = _target_options(history, raw_profiles, windows, today=self.as_of_date, model_master=master)
+        source = SourceRef(path.name, MASTER_SHEET, "车型基本信息与历史基准")
+        profiles = _resolve_actual_profiles(history, raw_profiles, targets, source, today=self.as_of_date)
+        _merge_small_daily_history(profiles, small_history, targets, SourceRef(path.name, DAILY_SHEET, "历史真实逐日小订"))
         by_model = {profile["model"]: profile for profile in profiles}
         for target in targets:
             profile = by_model[target["name"]]
@@ -2669,7 +2683,6 @@ class SalesForecastModule:
             errors = _profile_hard_errors(target, profile, today=self.as_of_date)
             target.update(hard_errors=errors, data_error=bool(errors))
             profile.update(hard_errors=errors, data_error=bool(errors))
-        source = SourceRef(path.name, MASTER_SHEET, "车型基本信息与历史基准")
         refs = [SourceRef(path.name, name, "销量预测可见数据") for name in (DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET)]
         dashboard = self._assemble_dashboard(None, subject, path, history, targets, profiles,
             small_history, steady_history, master, mapping, source, None, None, refs, [])
@@ -2738,6 +2751,7 @@ class SalesForecastModule:
                     option.get("stage_label", option.get("stage", "未知")),
                     "；".join(hard_errors),
                 )
+        self.summary_raw_profiles = raw_profiles
         return self._assemble_dashboard(
             store, subject, path, history, targets, profiles, small_history, steady_history,
             model_master, model_mapping, history_source, stage_window_path,
