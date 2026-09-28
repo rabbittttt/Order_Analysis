@@ -12,6 +12,23 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is required for forecast math numeric tests")
 class ForecastMathTests(unittest.TestCase):
+    def test_small_hourly_prediction_uses_shape_and_freezes_observations(self):
+        expression = "(()=>{const item={small_start_hour:18,small_hourly_curve:[...Array(18).fill(null),.2,.4,.6,.8,.9,1]},hours=[{hour:18,orders:40},{hour:19,orders:40}];return [100,100000].map(total=>m.smallHourlyForecast({hours,references:[{item:{...item,total,d1_gross:total},weight:100}]}))})()"
+        low, high = self.run_node(expression)
+        self.assertEqual(low, high)
+        self.assertEqual(low['observed'], 80)
+        self.assertEqual(low['total'], 200)
+        self.assertEqual(low['remaining'], 120)
+        self.assertEqual(sum(value or 0 for value in low['predictedHours']), 120)
+        self.assertTrue(all(value is None for value in low['actual'][:18]))
+        self.assertEqual(low['forecast'][-1], 1)
+
+    def test_small_hourly_score_ignores_absolute_size_and_prefers_shape_time(self):
+        result = self.run_node("(()=>{const curve=[...Array(18).fill(null),.2,.4,.6,.8,.9,1],current={hours:[{hour:18,orders:40},{hour:19,orders:40}],startHour:18};return {same:m.smallHourlyReferenceScore({total:1,small_start_hour:18,small_hourly_curve:curve},current),huge:m.smallHourlyReferenceScore({total:100000,small_start_hour:18,small_hourly_curve:curve},current),different:m.smallHourlyReferenceScore({small_start_hour:8,small_hourly_curve:[...Array(8).fill(null),.8,...Array(15).fill(1)]},current)}})()")
+        self.assertEqual(result['same']['score'], result['huge']['score'])
+        self.assertGreater(result['same']['score'], result['different']['score'])
+        self.assertEqual({part['key'] for part in result['same']['parts']}, {'release_hour', 'hour_slope', 'hour_progress'})
+
     def test_intraday_missing_components_conserve_observed_gross(self):
         for snapshot in ("{gross:100}", "{gross:100,small_to_big:0,direct:0}", "{gross:100,small_to_big:60,direct:40}"):
             result = self.run_node(f"m.intradayComponents({snapshot},.5,.6)")

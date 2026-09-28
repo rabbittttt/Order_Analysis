@@ -2785,6 +2785,12 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .forecast-chart-picker>summary b{padding:3px 6px;border-radius:999px;background:#E6F2FF;color:#0969DA;font-size:9px}
 .forecast-chart-picker-panel{position:absolute;top:42px;right:0;width:min(720px,calc(100vw - 190px));padding:12px;border:1px solid #C9DDED;border-radius:11px;background:#FFF;box-shadow:0 16px 36px rgba(31,73,112,.18)}
 .forecast-chart-picker-panel>small{display:block;margin:8px 2px;color:#7B8FA2;font-size:9px}
+/* Keep comparison pickers inside their reference card, clear of the sidebar. */
+@media(min-width:721px){
+  .forecast-ref-card{position:relative}
+  .forecast-ref-card .forecast-chart-picker{position:static}
+  .forecast-ref-card .forecast-chart-picker-panel{top:auto;right:14px;width:calc(100% - 28px);box-sizing:border-box;margin-top:6px;z-index:30}
+}
 .forecast-chart-quick{display:flex;flex-wrap:wrap;gap:6px}
 .forecast-chart-quick button{min-height:30px;padding:5px 9px;border:1px solid #C9DDED;border-radius:7px;background:#F7FBFF;color:#315677;font:600 10px "Microsoft YaHei","微软雅黑",sans-serif;cursor:pointer}
 .forecast-chart-quick button:hover{border-color:#7FB5ED;background:#EAF5FF;color:#0969DA}

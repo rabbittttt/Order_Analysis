@@ -192,10 +192,14 @@ def find_header_row(
         score = int("车型" in headers) * 10 + len(set(headers) & set(SUMMARY_HEADER_ALIASES))
         if require_days:
             score += min(len(day_columns), 10) * 2
-            if len(day_columns) < 2:
+            if not day_columns:
                 continue
         if "车型" not in headers:
             continue
+        if require_days:
+            # The first block is the raw quantity table. Later percentage
+            # blocks may have more day columns while an event is in progress.
+            return row_number, headers, day_columns
         candidate = (score, -row_number, headers, day_columns)
         if best is None or candidate[:2] > best[:2]:
             best = candidate
@@ -590,8 +594,6 @@ def extract_quantity_table(
         has_day_value = any(index < len(values) and values[index] not in (None, "") for index in day_columns.values())
         if not model and not has_day_value:
             blank_rows += 1
-            if result and blank_rows >= 2:
-                break
             continue
         blank_rows = 0
         if canonical_header(model) == "车型":
@@ -630,18 +632,27 @@ def curve_for(
 ) -> list[Any]:
     model_key = normalize(model)
     exact = [(name, curve) for name, curve in source_curves.items() if normalize(name) == model_key]
-    if len(exact) == 1:
-        return exact[0][1]
     matching_groups = [
         alias_keys for history_key, alias_keys in aliases.items()
         if history_key in mapping and model_key in alias_keys
     ]
     alias_keys = aliases.get(model_key) or (matching_groups[0] if len(matching_groups) == 1 else {model_key})
-    matched = [(name, curve) for name, curve in source_curves.items() if normalize(name) in alias_keys]
+    matched = exact + [(name, curve) for name, curve in source_curves.items()
+                       if normalize(name) in alias_keys and normalize(name) != model_key]
     if len(matched) == 1:
         return matched[0][1]
     if len(matched) > 1:
-        LOGGER.warning("%s曲线匹配不唯一：%s -> %s；该车型曲线留空", metric_label, model, "、".join(name for name, _ in matched))
+        # Only explicitly maintained aliases reach this branch. Preserve each
+        # known day, keeping source order for conflicting nonblank values.
+        result, conflicts = [], []
+        for index in range(max(len(curve) for _, curve in matched)):
+            values = [curve[index] for _, curve in matched if index < len(curve) and curve[index] not in (None, "")]
+            result.append(values[0] if values else None)
+            if values and any(value != values[0] for value in values[1:]):
+                conflicts.append(f"D{index + 1}")
+        if conflicts:
+            LOGGER.warning("%s别名曲线冲突：%s | 共%d天，示例=%s；逐日保留首个非空值", metric_label, model, len(conflicts), "、".join(conflicts[:3]))
+        return result
     else:
         LOGGER.warning("%s曲线未匹配：%s", metric_label, model)
     return []
@@ -675,7 +686,7 @@ def cumulative(values: list[Any], denominator: Any | None = None) -> list[float 
 def combine_daily(left: list[Any], right: list[Any]) -> list[float | None]:
     result = []
     for left_value, right_value in zip(left, right):
-        if left_value in (None, "") and right_value in (None, ""):
+        if left_value in (None, "") or right_value in (None, ""):
             result.append(None)
         else:
             result.append(as_number(left_value) + as_number(right_value))
@@ -832,9 +843,10 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         direct_curve = pad_curve(curve_for(model, raw_curves["direct"], mapping, aliases, "直接大定"), day_count)
         gross_curve = pad_curve(curve_for(model, raw_curves["gross"], mapping, aliases, "总大定"), day_count)
         cancel_curve = pad_curve(curve_for(model, raw_curves["cancel"], mapping, aliases, "退订"), day_count)
-        # 总大定首表若某行缺失，用小转大+直接大定补齐；两者也无数据时保持空白。
-        if not any(value not in (None, "") for value in gross_curve):
-            gross_curve = combine_daily(small_curve, direct_curve)
+        # Fill by day only when BOTH observed components are present.
+        combined = combine_daily(small_curve, direct_curve)
+        gross_curve = [value if value not in (None, "") else combined[index]
+                       for index, value in enumerate(gross_curve)]
         daily_small_rows.append([model, *small_curve])
         daily_direct_rows.append([model, *direct_curve])
         daily_gross_rows.append([model, *gross_curve])

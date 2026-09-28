@@ -545,11 +545,13 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 )
                 continue
             invalid_daily: list[str] = []
-            daily: list[int] = []
+            daily: list[int | None] = []
             for day_index, (column_index, header_date) in enumerate(date_columns, start=1):
                 raw_value = values[column_index] if column_index < len(values) else None
                 number = _optional_number(raw_value)
-                if number is None or not math.isfinite(number):
+                if raw_value in (None, ""):
+                    daily.append(None)
+                elif number is None or not math.isfinite(number):
                     invalid_daily.append(f"D{day_index}({header_date.isoformat()})缺失或非数字")
                 elif number < 0:
                     invalid_daily.append(f"D{day_index}({header_date.isoformat()})为负数{number:g}")
@@ -566,10 +568,14 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 index for index, value in enumerate(current_header)
                 if str(value or "").strip() == "合计"
             ]
+            partial_daily = any(value is None for value in daily)
+            daily_sum = sum(value for value in daily if value is not None)
             if total_columns:
                 total_column = max(total_columns)
                 raw_total = values[total_column] if total_column < len(values) else None
                 total_value = _optional_number(raw_total)
+                if raw_total in (None, "") and partial_daily:
+                    total_value = daily_sum
                 if total_value is None or not math.isfinite(total_value) or total_value < 0:
                     LOGGER.warning(
                         "[销量预测字段校验] 传播名=%s | Sheet=%s | 行=%d | 合计=%r无效 | "
@@ -578,8 +584,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                     )
                     continue
                 total = int(round(total_value))
-                daily_sum = sum(daily)
-                if abs(total - daily_sum) > 1:
+                if (not partial_daily and abs(total - daily_sum) > 1) or total < daily_sum - 1:
                     LOGGER.warning(
                         "[销量预测字段校验] 传播名=%s | Sheet=%s | 行=%d | 合计=%d与逐日求和=%d不一致 | "
                         "处理=整条真实逐日记录不参与预测",
@@ -587,7 +592,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                     )
                     continue
             else:
-                total = sum(daily)
+                total = daily_sum
                 LOGGER.warning(
                     "[销量预测字段校验] 传播名=%s | Sheet=%s | 行=%d | 未提供合计列 | "
                     "处理=使用全部日期列求和%d，不把最后一个日期误作合计",
@@ -648,18 +653,24 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 [],
             )
             summary_total = _optional_number(summary.get("总小订"))
-            if summary_total is not None and summary_total > 0 and abs(summary_total - total) > 1:
+            if summary_total is not None and summary_total > 0 and (
+                (not partial_daily and abs(summary_total - total) > 1) or summary_total < daily_sum - 1
+            ):
                 LOGGER.warning(
                     "[销量预测字段校验] 代际=%s | 车型汇总总小订%d与by天合计%d不一致 | "
                     "处理=按规则优先采用车型汇总总小订作为终值，请核对两处口径",
                     generation, int(round(summary_total)), total,
                 )
             final_total = int(round(summary_total)) if summary_total is not None and summary_total > 0 else total
+            total_complete = not partial_daily or (summary_total is not None and summary_total > 0)
             running = 0
             cumulative = []
+            prefix_complete = True
             for value in daily:
-                running += value
-                cumulative.append(min(running / max(final_total, 1), 1))
+                prefix_complete = prefix_complete and value is not None
+                if prefix_complete:
+                    running += value
+                cumulative.append(min(running / max(final_total, 1), 1) if prefix_complete and total_complete else None)
             item = {
                 "model": label,
                 "generation": generation,
@@ -673,14 +684,15 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "small_end_date": summary_end or (dates[-1] if dates else ""),
                 "days": max(int(_number(summary.get("小订天数"), len(daily))), len(daily), 1),
                 "total": final_total,
-                "total_source": "车型汇总" if (_optional_number(summary.get("总小订")) or 0) > 0 else "小订by天合计",
+                "total_complete": total_complete,
+                "total_source": "车型汇总" if (summary_total or 0) > 0 else "小订by天合计" if total_complete else "小订by天已填累计（非终值）",
                 "leads": _number(_first_record_value(summary, "线索量", "累计线索量", "线索数")),
                 "heat": _number(_first_record_value(summary, "互联网热度", "热度指数", "网络热度")),
                 "daily_orders": daily,
                 "dates": dates,
                 "small_progress": cumulative,
                 "standard_progress": [value for value in fallback_curve if value is not None],
-                "d1_share": daily[0] / max(final_total, 1),
+                "d1_share": daily[0] / max(final_total, 1) if daily and daily[0] is not None and total_complete else 0,
                 "small_hourly_curve": [],
                 "daily_actual": True,
                 "source_sheet": sheet.title,
@@ -2351,12 +2363,14 @@ def _attach_small_hourly_curves(small_history: list[dict[str, Any]], profiles: l
         terminal = sum(by_hour.values())
         if terminal <= 0:
             continue
+        start_hour = min(hour for hour, value in by_hour.items() if value > 0)
         running = 0.0
         curve = []
         for hour in range(24):
             running += by_hour.get(hour, 0)
-            curve.append(min(running / terminal, 1))
+            curve.append(min(running / terminal, 1) if hour >= start_hour else None)
         item["small_hourly_curve"] = curve
+        item["small_start_hour"] = start_hour
 
 
 def _attach_steady_launch_features(steady_history: list[dict[str, Any]], history: list[dict[str, Any]]) -> None:
@@ -2794,9 +2808,9 @@ class SalesForecastModule:
             ],
             "small_order_rules": [
                 "小订D1未到：优先使用线索量、互联网热度与产品/发布属性测算最终总小订；驱动字段未维护时仅输出可比车型量级并标低置信度。",
-                "小订D1当天：当前分时累计小订除以主辅参考车型相同小时完成率得到D1终值，再除以历史D1占最终小订比例得到小订期总量。",
+                "小订D1当天：分时参考按发布时间、已发生小时的增量斜率与累计占比匹配，不比较参考车型D1绝对量；真实累计加上后续小时预测得到D1终值，再按累计参考曲线的D1占比推算小订总量。",
                 "小订D1已过：已发生累计小订除以主辅参考车型同Dn累计完成率反推最终总量；已结束日期冻结真实值。",
-                "未来小订以前一完整真实日为衔接基准，参考曲线先剔除日历影响，再应用当前日期系数并渐进分配与剩余量的差额；网页可分阶段调整工作日、周末、节假日系数与逐日差额权重。无前日真实值时明确标注参考分配。",
+                "未来小订使用独立主辅到天基础曲线，以前一完整真实日为衔接基准；先剔除历史日历影响，再应用目标日历系数并渐进分配差额。累计进度、到天基础、D1分时分别选择主辅及权重；额外图表对比车型只用于展示。",
                 "小订结束后即进入首销前衔接阶段，最终总小订和相关实际字段按《小订退订分析》→《小订及首销数据整理》的顺序逐字段取值。",
                 "逐日小订按《小订选配比例分析》代际by天→《小订退订分析》分时汇总→《小订及首销数据整理》小订by天的顺序逐字段取值；前两者没有同车型同日期可用值时才使用历史小订by天。“小订进度”标准化曲线只作为最后回退。",
             ],

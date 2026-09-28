@@ -106,6 +106,69 @@
     return scoredEvidence(parts, minimumEvidence);
   }
 
+  function smallHourlyStart(item = {}) {
+    const explicit = item.small_start_hour;
+    if (Number.isInteger(explicit) && explicit >= 0 && explicit < 24) return explicit;
+    return (item.small_hourly_curve || []).findIndex(value => Number.isFinite(value) && value > 0);
+  }
+
+  function smallHourlyCurve(item = {}, targetStart = smallHourlyStart(item)) {
+    const start = smallHourlyStart(item), source = item.small_hourly_curve || [];
+    if (start < 0 || targetStart < 0 || targetStart > 23) return [];
+    const end = Math.min(23, start + 23 - targetStart), terminal = source[end];
+    if (!(terminal > 0)) return [];
+    return Array.from({length:24}, (_, hour) => {
+      if (hour < targetStart) return null;
+      const value = source[Math.min(start + hour - targetStart, 23)];
+      return Number.isFinite(value) ? Math.min(Math.max(value / terminal, 0), 1) : null;
+    });
+  }
+
+  function smallHourlyReferenceScore(item = {}, current = {}, minimumEvidence = 1) {
+    const hours = (current.hours || []).filter(row => Number.isInteger(row.hour) && Number.isFinite(row.orders) && row.orders >= 0);
+    const positive = hours.filter(row => row.orders > 0), inferred = positive.length ? Math.min(...positive.map(row => row.hour)) : -1;
+    const start = Number.isInteger(current.startHour) && current.startHour >= 0 ? current.startHour : inferred;
+    const refStart = smallHourlyStart(item), parts = [];
+    if (start >= 0 && refStart >= 0) parts.push({key:'release_hour',value:Math.max(0,1-Math.abs(start-refStart)/12),weight:.2,evidence:`${start}时 ↔ ${refStart}时`});
+    const curve = smallHourlyCurve(item,start), last = hours.length ? Math.max(...hours.map(row=>row.hour)) : -1;
+    const counts = Array(24).fill(0);hours.forEach(row=>counts[row.hour]+=row.orders);
+    const observed = counts.reduce((a,b)=>a+b,0), cut = curve[last];
+    if (last>start && observed>0 && cut>0) {
+      let actual=0,previous=0,slopeGap=0,cumulativeGap=0;
+      for(let hour=start;hour<=last;hour++) {
+        const value=curve[hour];if(!Number.isFinite(value))return scoredEvidence(parts,minimumEvidence);
+        actual+=counts[hour];slopeGap+=Math.abs(counts[hour]/observed-(value-previous)/cut);
+        cumulativeGap+=Math.abs(actual/observed-value/cut);previous=value;
+      }
+      parts.push({key:'hour_slope',value:Math.max(0,1-slopeGap/2),weight:.5,evidence:`发布后${last-start+1}小时新增量归一化比较`});
+      parts.push({key:'hour_progress',value:Math.max(0,1-cumulativeGap/(last-start+1)),weight:.3,evidence:`截至${last}时的各小时累计占比比较`});
+    }
+    const result=scoredEvidence(parts,minimumEvidence),weight=parts.reduce((sum,part)=>sum+part.weight,0);
+    result.score=weight?parts.reduce((sum,part)=>sum+part.value*part.weight,0)/weight:0;
+    return result;
+  }
+
+  function smallHourlyForecast({hours=[],references=[],startHour}={}) {
+    const invalid=hours.some(row=>!Number.isInteger(row.hour)||row.hour<0||row.hour>23||!Number.isFinite(row.orders)||row.orders<0);
+    if(invalid)return {error:'D1分时存在无效小时或数量',total:null};
+    const counts=Array(24).fill(0);hours.forEach(row=>counts[row.hour]+=row.orders);
+    const observed=counts.reduce((a,b)=>a+b,0),first=counts.findIndex(value=>value>0),start=Number.isInteger(startHour)&&startHour>=0?startHour:first,last=hours.length?Math.max(...hours.map(row=>row.hour)):-1;
+    if(start<0||last<start||observed<=0)return {error:'等待发布后的有效分时小订',total:null};
+    const refs=references.map(row=>({...row,curve:smallHourlyCurve(row.item,start)})).filter(row=>row.weight>0&&row.curve[last]>0&&row.curve.slice(start).every(Number.isFinite));
+    if(!refs.length)return {error:'所选参考车型缺少有效D1分时曲线',total:null};
+    const weight=refs.reduce((sum,row)=>sum+row.weight,0),curve=Array.from({length:24},(_,hour)=>hour<start?null:refs.reduce((sum,row)=>sum+row.curve[hour]*row.weight,0)/weight);
+    const cut=curve[last],recentStart=Math.max(start,last-2),prior=recentStart>start?curve[recentStart-1]:0;
+    const recent=counts.slice(recentStart,last+1).reduce((a,b)=>a+b,0),recentShare=cut-prior;
+    // Fit scale from both accumulated demand and the latest three observed
+    // hourly increments. Historical D1 absolute volume never enters this fit.
+    const cumulativeScale=observed/cut,scale=recentShare>0?(cumulativeScale+recent/recentShare)/2:cumulativeScale;
+    const remaining=Math.max(0,Math.round(scale*(1-cut))),future=distributeInteger(remaining,curve.slice(last+1).map((value,i)=>Math.max(value-curve[last+i],0)));
+    const total=observed+remaining,actual=Array(24).fill(null),forecast=Array(24).fill(null),predictedHours=Array(24).fill(null);let running=0;
+    for(let hour=start;hour<=last;hour++){running+=counts[hour];actual[hour]=running/total;}
+    if(last<23){forecast[last]=running/total;future.forEach((value,index)=>{const hour=last+index+1;predictedHours[hour]=value;running+=value;forecast[hour]=running/total;});}
+    return {error:'',observed,total,remaining,start,last,actual,forecast,predictedHours,curve};
+  }
+
   function steadyReferenceScore(item = {}, target = {}, current = {}, minimumEvidence = 3) {
     const parts = [];
     const add = (key, value, evidence) => parts.push({ key, value, evidence });
@@ -323,6 +386,10 @@
     isKnownAttribute,
     closeness,
     smallReferenceScore,
+    smallHourlyStart,
+    smallHourlyCurve,
+    smallHourlyReferenceScore,
+    smallHourlyForecast,
     steadyReferenceScore,
   };
 });

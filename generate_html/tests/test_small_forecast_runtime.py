@@ -28,15 +28,15 @@ const check=new Function('root','actual','target','stageInfo','small','resolvedF
 const method=new Function('rawDataError','small','baseConversion',
  'const endedComplete=false,baseShare=.2,actualSmall=0,actualDirect=0,actualGross=0,anchorSmall=0,anchorDirect=0;'+
  source.slice(methodStart,methodEnd)+'return {available:parameterAvailable,gross:parameterGross};');
-const probe=(end,total,error='',invalidDay=false)=>{
+const probe=(end,total,error='',invalidDay=false,stage='active')=>{
  const input={value:0},root={_smallForecastResult:{name:'RX',date:'2026-09-28',stage:'active',total,error},querySelector:key=>key==='[data-forecast-input="small"]'?input:null};
  const target={name:'RX',smallEndDate:end,hardErrors:['总小订缺失或不大于0']};
  const linked=link(root,()=>target,()=>({key:'active'}),()=> '2026-09-28',(a,b)=>a===b,()=>null,()=>({small:0}));
- const rawError=check(root,null,target,{key:'active'},Number(input.value),invalidDay?[{gross:1,small_to_big:null,direct:1}]:[],[],linked.smallOngoing,String);
+ const rawError=check(root,null,target,{key:stage},Number(input.value),invalidDay?[{gross:1,small_to_big:null,direct:1}]:[],[],linked.smallOngoing,String);
  return {linked:!!linked.linkSmall,value:Number(input.value),rawError,...method(rawError,Number(input.value),.5)};
 };
 console.log(JSON.stringify({ongoing:probe('2026-09-28',1000),pending:probe('2026-09-28',null,'等待参考'),
- ended:probe('2026-09-27',null),invalid:probe('2026-09-28',1000,'',true)}));
+ ended:probe('2026-09-27',null),invalid:probe('2026-09-28',1000,'',true),before:probe('2026-09-30',1000,'',false,'before')}));
 '''.replace('DASHBOARD', json.dumps(str(ROOT / 'templates/dashboard.js')))
         result = subprocess.run(['node', '-e', script], capture_output=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -46,6 +46,10 @@ console.log(JSON.stringify({ongoing:probe('2026-09-28',1000),pending:probe('2026
         self.assertFalse(data['ongoing']['rawError'])
         self.assertTrue(data['ongoing']['available'])
         self.assertEqual(data['ongoing']['gross'], 625)
+        self.assertTrue(data['before']['linked'])
+        self.assertFalse(data['before']['rawError'])
+        self.assertTrue(data['before']['available'])
+        self.assertEqual(data['before']['gross'], 625)
         self.assertFalse(data['pending']['rawError'])
         self.assertFalse(data['pending']['available'])
         self.assertTrue(data['ended']['rawError'])
@@ -66,8 +70,10 @@ const status={};
 const setForecastStageSummary=(root,id,label,text)=>{status[id]={label,text}};
 const esc=String,fmt=String,renderLifecycleBars=()=>'',renderLifecycleLineChart=()=>'',renderLifecycleScorePage=()=>'';
 const rebasedForecastCompletion=()=>({value:.5}),rebasedForecastCompletionCurve=()=>[.25,.5,.75,1];
+const observedDailyPrefix=values=>values,extendForecastCurve=values=>values;
 const window={ForecastMath:require(MATH)};console.warn=()=>{};
 eval(source.slice(source.indexOf('  function createForecastEstimateLogger('),source.lastIndexOf('  init();')));
+eval(source.slice(source.indexOf('  function lifecycleReferenceOptions('),source.indexOf('  function renderSmallOrderWorkspace(')));
 eval(source.slice(start,end));
 const target={name:'current',smallStartDate:'2026-09-01',smallEndDate:'2026-09-04',smallDays:4,tier:'SUV',energy:'增程',node:'年度换代'};
 const reference={model:'reference',event_id:'ref',total:1000,days:4,tier:'SUV',energy:'增程',node:'年度换代',small_progress:[.25,.5,.75,1]};

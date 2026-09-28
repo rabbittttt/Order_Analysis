@@ -375,7 +375,7 @@ class SalesForecastStageTests(unittest.TestCase):
         self.assertEqual(rows[0]["total"], 100)
         self.assertIn("未提供合计列", "\n".join(logs.output))
 
-    def test_small_order_missing_or_negative_day_rejects_the_real_curve(self):
+    def test_small_order_blank_day_preserves_known_values_but_negative_rejects(self):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "小订及首销数据整理.xlsx"
             workbook = Workbook()
@@ -384,18 +384,27 @@ class SalesForecastStageTests(unittest.TestCase):
             summary.append(["车型", "小订开始日期", "小订结束日期", "小订天数", "总小订"])
             summary.append(["缺失车", datetime(2026, 9, 1), datetime(2026, 9, 2), 2, 100])
             summary.append(["负数车", datetime(2026, 9, 1), datetime(2026, 9, 2), 2, 100])
+            summary.append(["未结束车", datetime(2026, 9, 1), datetime(2026, 9, 2), 2, None])
             daily = workbook.create_sheet("小订by天")
             daily.append(["小订", datetime(2026, 9, 1), datetime(2026, 9, 2), "合计"])
             daily.append(["缺失车", 60, None, 100])
             daily.append(["负数车", 110, -10, 100])
+            daily.append(["未结束车", 60, None, None])
             workbook.save(path)
             workbook.close()
             with patch("modules.sales_forecast._read_model_mapping", return_value={}), patch("modules.sales_forecast._read_model_master", return_value={}):
                 with self.assertLogs("modules.sales_forecast", level="WARNING") as logs:
                     _, rows = _read_small_order_history(path)
-        self.assertTrue(all(row["daily_actual"] is False for row in rows))
+        missing = next(row for row in rows if row["model"] == "缺失车")
+        self.assertTrue(missing["daily_actual"])
+        self.assertEqual(missing["daily_orders"], [60, None])
+        self.assertEqual(missing["small_progress"], [.6, None])
+        unfinished = next(row for row in rows if row["model"] == "未结束车")
+        self.assertEqual(unfinished["daily_orders"], [60, None])
+        self.assertFalse(unfinished["total_complete"])
+        self.assertEqual(unfinished["small_progress"], [None, None])
+        self.assertTrue(all(row["daily_actual"] is False for row in rows if row["model"] == "负数车"))
         message = "\n".join(logs.output)
-        self.assertIn("缺失或非数字", message)
         self.assertIn("为负数", message)
 
     def test_steady_history_reads_completed_lock_weeks_after_launch(self):
