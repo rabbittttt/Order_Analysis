@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import webbrowser
@@ -428,6 +429,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def cleanup_input_cache(input_dir: Path) -> None:
+    """Remove only this input directory's real .cache folder after the run."""
+    cache_dir = input_dir / ".cache"
+    try:
+        input_root = input_dir.resolve()
+        cache_dir = input_root / ".cache"
+        if not cache_dir.exists() and not cache_dir.is_symlink():
+            return
+        # Do not follow a symlink/junction or remove an unexpected file.
+        if cache_dir.is_symlink() or cache_dir.resolve() != cache_dir or not cache_dir.is_dir():
+            LOGGER.warning("缓存清理已跳过：不是输入目录内的普通 .cache 文件夹：%s", cache_dir)
+            return
+        shutil.rmtree(cache_dir)
+        LOGGER.info("已清理运行缓存: %s", cache_dir)
+    except OSError as exc:
+        LOGGER.warning("运行缓存未能清理: %s（%s）；可在文件占用结束后手动删除", cache_dir, exc)
+
+
 def main() -> int:
     args = parse_args()
     log_file = configure_runtime(args.output.parent, args.debug)
@@ -437,6 +456,8 @@ def main() -> int:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)
         return 1
+    finally:
+        cleanup_input_cache(args.input)
     LOGGER.info("生成成功: %s", args.output)
     LOGGER.info("汇总: 主体=%d，看板=%d, 警告=%d", len(manifest["subjects"]), len(manifest["dashboards"]), len(warnings))
     LOGGER.info("运行日志: %s", log_file)
