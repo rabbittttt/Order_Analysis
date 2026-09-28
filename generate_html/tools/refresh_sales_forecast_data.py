@@ -11,7 +11,7 @@ import sys
 import unicodedata
 import math
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -27,7 +27,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
 from core.model_identity import model_key, usable_attribute
-from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, write_summary_snapshot, summary_scope
+from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, public_forecast_tables, summary_scope
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -1009,7 +1009,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
 
 
 def forecast_order_files(directory: Path) -> list[Path]:
-    keywords = ("首销期订单节奏", "小订退订分析", "小订选配比例", "锁单选配比例")
+    keywords = ("首销期订单节奏", "小订退订分析", "小订选配比例", "锁单选配比例", "大定选配比例")
     return sorted(path for path in directory.glob("*.xlsx") if not path.name.startswith("~$") and any(key in path.name for key in keywords))
 
 
@@ -1162,9 +1162,112 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
     workbook["汇总说明"].column_dimensions["B"].width = 105
 
 
+def forecast_weekly_orders(store, dashboard, today):
+    """Collect quantities after file-boundary merging, split stage-boundary weeks by day."""
+    from modules.sales_forecast import (_iso_week_bounds, _as_date, _canonical_model,
+        _read_model_mapping, _fill_sparse_dates)
+    from core.excel import sheet_subject, display_period, _source_date_ranges
+    data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
+    targets = {r["name"]: r for r in data.get("targets", [])}
+    mapping = _read_model_mapping()
+    daily, weekly = {}, {}
+    labels = {"大定": "gross", "总大定": "gross", "留存大定": "net", "净大定": "net", "交车锁单": "lock"}
+    for keyword in ("大定选配比例", "锁单选配比例"):
+        item = store.find(keyword)
+        if item is None:
+            continue
+        coverage = _source_date_ranges(item)
+        for sheet in item.workbook.worksheets:
+            grain = grain_from_sheet(sheet.title)
+            if "图表" in sheet.title or grain not in {"day", "week"}:
+                continue
+            model = _canonical_model(sheet_subject(sheet.title), mapping)
+            if model not in targets:
+                continue
+            metric = ""
+            for row in sheet.iter_rows(min_row=2):
+                metric = str(row[0].value or metric).strip()
+                field = labels.get(metric)
+                if field is None or row[1].value != "数量" or row[2].value != "数量":
+                    continue
+                source = f"{item.path.name}｜{sheet.title}"
+                observed = []
+                for cell in row[3:]:
+                    header = sheet.cell(1, cell.column)
+                    value = cell.value
+                    value = value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
+                    if grain == "day":
+                        day = _as_date(header.value)
+                        if day:
+                            observed.append({"date": day.isoformat(), field: value})
+                    else:
+                        period = display_period(header.value, header.number_format)
+                        if _iso_week_bounds(period):
+                            weekly[(model, period, field)] = (value, source)
+                if grain == "day":
+                    filled = _fill_sparse_dates(observed, (field,), coverage, end=today)
+                    for entry in filled:
+                        daily[(model, entry["date"], field)] = (entry.get(field), source)
+    # Launch/day selections already carry the shared stage priority. For steady
+    # sales the mix sheets remain primary; do not extend launch data over them.
+    resolved = {}
+    for profile in data.get("actuals", []):
+        for row in profile.get("days", []):
+            if row.get("date"):
+                for field in ("gross", "net", "lock"):
+                    resolved[(profile["model"], row["date"], field)] = (row.get(field), row.get("_field_sources", {}).get(field))
+    periods = {(model, period) for model, period, _ in weekly}
+    for model, day, _ in {*daily, *resolved}:
+        parsed = date.fromisoformat(day)
+        year, week, _ = parsed.isocalendar()
+        periods.add((model, f"{year % 100:02d}WK{week:02d}"))
+    rows, missing_split = [], []
+    for model, period in sorted(periods):
+        target = targets[model]
+        launch, finish = _as_date(target.get("launch_date")), _as_date(target.get("end_date"))
+        bounds = _iso_week_bounds(period)
+        if not bounds or not launch or not finish:
+            continue
+        for stage, first, last in (("首销", launch, finish), ("平销", finish + timedelta(days=1), today)):
+            start, end = max(bounds[0], first), min(bounds[1], last, today)
+            if start > end:
+                continue
+            whole = start == bounds[0] and end == bounds[1]
+            values, sources = [], []
+            for field in ("gross", "net", "lock"):
+                values_by_day = []
+                current = start
+                while current <= end:
+                    key = (model, current.isoformat(), field)
+                    candidates = [resolved.get(key), daily.get(key)] if stage == "首销" else [daily.get(key)]
+                    values_by_day.append(next((c for c in candidates if c is not None and c[0] is not None), None))
+                    current += timedelta(days=1)
+                valid_days = all(c is not None for c in values_by_day)
+                raw_week = weekly.get((model, period, field)) if whole else None
+                if stage == "平销" and raw_week is not None:
+                    value, source = raw_week
+                elif valid_days:
+                    value = sum(c[0] for c in values_by_day)
+                    source = "、".join(dict.fromkeys(str(c[1] or "") for c in values_by_day)) + "（by天汇总）"
+                elif raw_week is not None:
+                    value, source = raw_week
+                else:
+                    value, source = None, "by天不完整，未补估"
+                    if not whole and (model, period, field) in weekly:
+                        missing_split.append(f"{model}/{period}/{stage}")
+                values.append(value)
+                sources.append(source)
+            if any(value is not None for value in values) or any((model, period, field) in weekly for field in ("gross", "net", "lock")):
+                rows.append([model, period, stage, datetime.combine(start, datetime.min.time()), datetime.combine(end, datetime.min.time()), *values, *sources, False])
+    if missing_split:
+        examples = list(dict.fromkeys(missing_split))
+        LOGGER.warning("[周阶段切分] %d个阶段周缺少拆分所需完整日数据，相关字段留空；示例=%s", len(examples), "、".join(examples[:5]))
+    return rows
+
+
 def append_forecast_views(path, as_of_date, workbook=None):
-    """Materialize auditable detail using exactly the same readers as the webpage."""
-    from modules.sales_forecast import SalesForecastModule, SOURCE_LABELS
+    """Resolve sources once, then write only the visible forecast domain tables."""
+    from modules.sales_forecast import SalesForecastModule
     from core.models import Subject
 
     module = SalesForecastModule()
@@ -1174,198 +1277,20 @@ def append_forecast_views(path, as_of_date, workbook=None):
     book = load_workbook(path) if owns_workbook else workbook
     with summary_scope(path, workbook=book) as summary:
         dashboard = module._build_from_sources(summary["store"], Subject("summary", "鸿蒙智行", "group"))
-    if dashboard is None:
-        raise ValueError("汇总未生成有效销量预测数据，请检查原始历史基准")
+        if dashboard is None:
+            raise ValueError("汇总未生成有效销量预测数据，请检查原始历史基准")
+        weekly_rows = forecast_weekly_orders(summary["store"], dashboard, module.as_of_date or date.today())
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
 
     def emit(name, headers, rows, percent_headers=None):
+        if name in book.sheetnames:
+            del book[name]
         write_rows(book, name, headers, rows, "ForecastDetail", percent_headers)
         fit_summary_columns(book[name])
         book[name].freeze_panes = "C2"
 
-    def excel_date(value):
-        try:
-            return datetime.fromisoformat(value) if value else None
-        except (TypeError, ValueError):
-            return value
-
-    effective_date = as_of_date or date.today().isoformat()
-
-    def row_status(value, actual=True):
-        if not actual:
-            return "参考曲线（非真实日）"
-        if not value:
-            return "日期缺失"
-        return "已结束日" if value < effective_date else "当日快照（未结束）" if value == effective_date else "未来日期（不作真实值）"
-
-    target_by_model = {row.get("name"): row for row in data["targets"]}
-    master_sheet = book["车型基本信息"]
-    raw_master_headers = [cell.value for cell in master_sheet[1]]
-    master_width = max((index for index, value in enumerate(raw_master_headers, 1) if value not in (None, "")), default=0)
-    master_headers = raw_master_headers[:master_width]
-    model_column = master_headers.index("订单分析代际名")
-    history_column = master_headers.index("历史传播名")
-    stage_headers = ["首销阶段", "小订阶段", "小订开始", "小订结束", "首销开始", "首销结束", "总小订", "取数来源", "数据问题"]
-
-    def stage_values(target):
-        if not target:
-            return [None] * len(stage_headers)
-        return [
-            target.get("stage_label"), target.get("small_stage_label"),
-            *[excel_date(target.get(key)) for key in ("small_start_date", "small_end_date", "launch_date", "end_date")],
-            target.get("small"), target.get("selected_source_label"), "；".join(target.get("hard_errors", [])),
-        ]
-
-    model_rows = []
-    matched_targets = set()
-    for values in master_sheet.iter_rows(min_row=2, values_only=True):
-        row = list(values[:master_width])
-        if not any(value not in (None, "") for value in row):
-            continue
-        model = row[model_column]
-        target = target_by_model.get(model)
-        if target:
-            matched_targets.add(model)
-        model_rows.append([*row, *stage_values(target)])
-    for model, target in sorted(target_by_model.items()):
-        if model in matched_targets:
-            continue
-        row = [None] * master_width
-        row[model_column] = model
-        row[history_column] = target.get("history_model")
-        model_rows.append([*row, *stage_values(target)])
-    book.remove(master_sheet)
-    emit("车型基本信息", [*master_headers, *stage_headers], model_rows)
-
-    def source_text(reference, fallback):
-        if not isinstance(reference, dict):
-            return fallback
-        parts = [reference.get("file"), reference.get("sheet")]
-        return "｜".join(str(part) for part in parts if part) or fallback
-
-    small_cancel = {}
-    for profile in data["small_order_history"]:
-        generation = profile.get("generation") or profile.get("model")
-        dates = profile.get("dates") or []
-        for index, value in enumerate(profile.get("daily_orders", [])):
-            date_value = dates[index] if index < len(dates) else None
-            key = (generation, date_value)
-            small_cancel[key] = {
-                "history_model": profile.get("model"), "model": generation,
-                "small_start": profile.get("small_start_date"), "date": date_value,
-                "day": f"D{index + 1}", "orders": value, "daily_actual": profile.get("daily_actual"),
-                "source_model": profile.get("source_model"), "small_source_type": "历史小订逐日",
-                "small_source": profile.get("source_sheet"),
-            }
-
-    def current_small_defaults(model, date_value):
-        target = target_by_model.get(model, {})
-        small_start = target.get("small_start_date")
-        day = None
-        if small_start and date_value:
-            day_number = (date.fromisoformat(date_value) - date.fromisoformat(small_start)).days + 1
-            day = f"D{day_number}" if day_number > 0 else None
-        return {
-            "history_model": target.get("history_model"), "model": model,
-            "small_start": small_start, "date": date_value, "day": day,
-            "source_model": model,
-        }
-
-    for profile in data["actuals"]:
-        model = profile["model"]
-        for day in profile.get("small_daily_days", []):
-            date_value = day.get("date")
-            row = small_cancel.setdefault((model, date_value), current_small_defaults(model, date_value))
-            if day.get("orders") is not None:
-                daily_source = profile.get("small_daily_sources", {}).get(date_value) or profile.get("small_hour_source")
-                source_file = daily_source.get("file", "") if isinstance(daily_source, dict) else ""
-                row["orders"] = day.get("orders")
-                row["daily_actual"] = True
-                row["small_source_type"] = "小订选配比例分析" if "小订选配比例" in source_file else "小订退订分析" if "小订退订分析" in source_file else "历史小订逐日" if isinstance(daily_source, dict) and daily_source.get("sheet") == "小订by天" else "当前小订"
-                row["small_source"] = source_text(daily_source, row["small_source_type"])
-        for day in profile.get("cancel_days", []):
-            date_value = day.get("date")
-            row = small_cancel.setdefault((model, date_value), current_small_defaults(model, date_value))
-            row["cancel"] = day.get("cancel")
-            row["cancel_rate"] = day.get("cancel_rate")
-            row["cancel_source"] = source_text(profile.get("cancel_source"), "小订退订分析")
-        # Resolved launch/ended-stage fields use the same priority as the webpage.
-        # Cancellation is cumulative SMALL-order cancellation, never daily big orders.
-        for day in profile.get("days", []):
-            if day.get("cancel") is None or not day.get("date"):
-                continue
-            date_value = day["date"]
-            row = small_cancel.setdefault((model, date_value), current_small_defaults(model, date_value))
-            row["cancel"] = day["cancel"]
-            total_small = profile.get("total_small")
-            row["cancel_rate"] = day["cancel"] / total_small if total_small else None
-            row["cancel_source"] = SOURCE_LABELS.get(day.get("_field_sources", {}).get("cancel"), "数据缺失")
-    small_cancel_rows = sorted(small_cancel.values(), key=lambda row: (row["model"], row.get("date") or ""))
-    emit("小订及退订逐日", ["历史传播名", "订单分析代际名", "小订开始", "日期", "生命周期", "小订数量", "累计退订", "累计退订率", "真实逐日", "原始名称", "小订来源类型", "小订来源", "退订来源", "数据状态"], [
-        [row.get("history_model"), row["model"], excel_date(row.get("small_start")), excel_date(row.get("date")), row.get("day"), row.get("orders"), row.get("cancel"), row.get("cancel_rate"), row.get("daily_actual"), row.get("source_model"), row.get("small_source_type"), row.get("small_source"), row.get("cancel_source"), row_status(row.get("date"), row.get("daily_actual") is not False)]
-        for row in small_cancel_rows
-    ], {"累计退订率"})
-    emit("当前小订分时", ["订单分析代际名", "日期", "小时", "小时小订"], [
-        [p["model"], excel_date(day.get("date")), hour.get("hour"), hour.get("orders")]
-        for p in data["actuals"] for day in p.get("small_hourly_days", []) for hour in day.get("hours", [])
-    ])
-
-    def order_stage(model, value):
-        target = target_by_model.get(model, {})
-        end_date = target.get("end_date")
-        return "平销" if value and end_date and value > end_date else "首销"
-
-    fields = ("gross", "net", "small_to_big", "direct", "lock")
-    order_rows = {}
-    for profile in data["actuals"]:
-        for row in profile.get("days", []):
-            key = (profile["model"], row.get("date"))
-            order_rows[key] = {
-                "model": profile["model"], "date": row.get("date"), "day": row.get("day"),
-                "stage": order_stage(profile["model"], row.get("date")),
-                **{field: row.get(field) for field in fields},
-                **{f"{field}_source": SOURCE_LABELS.get(row.get("_field_sources", {}).get(field), "数据缺失") for field in fields},
-            }
-    for profile in data["steady_history"]:
-        steady_start = date.fromisoformat(profile["steady_start_date"]) if profile.get("steady_start_date") else None
-        for row in profile.get("daily", []):
-            key = (profile["model"], row.get("date"))
-            current = order_rows.setdefault(key, {
-                "model": profile["model"], "date": row.get("date"), "stage": "平销",
-                **{field: None for field in fields},
-                **{f"{field}_source": "数据缺失" for field in fields},
-            })
-            current["stage"] = "平销"
-            current_date = date.fromisoformat(row["date"]) if row.get("date") else None
-            if not current.get("day") and steady_start and current_date:
-                current["day"] = f"P{(current_date - steady_start).days + 1}"
-            current["lock"] = row.get("lock")
-            current["lock_source"] = source_text({"file": profile.get("source_file"), "sheet": "、".join(profile.get("daily_source_sheets", []))}, "锁单选配比例分析")
-    current_order_rows = sorted(order_rows.values(), key=lambda row: (row["model"], row.get("date") or ""))
-    emit("当前订单逐日", ["订单分析代际名", "日期", "生命周期", "订单阶段", "大定", "留存大定", "小转大", "直接大定", "交车锁单", "大定来源", "留存大定来源", "小转大来源", "直接大定来源", "锁单来源", "数据状态"], [
-        [row["model"], excel_date(row.get("date")), row.get("day"), row.get("stage"), *[row.get(field) for field in fields], *[row.get(f"{field}_source") for field in fields], row_status(row.get("date"))]
-        for row in current_order_rows
-    ])
-    emit("当前首销分时", ["订单分析代际名", "日期", "小时", "小时大定"], [
-        [p["model"], excel_date(day.get("date")), hour.get("hour"), hour.get("gross")]
-        for p in data["actuals"] for day in p.get("hourly_days", []) for hour in day.get("hours", [])
-    ])
-    for position, name in enumerate([
-        "字段说明", "车型基本信息", INDEX_SHEET, "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时",
-    ], 1):
-        book.move_sheet(name, offset=position - book.index(book[name]))
-    def snapshot_value(value):
-        if isinstance(value, dict):
-            return {
-                key: (SUMMARY_NAME if key == "file" and item == path.name else snapshot_value(item))
-                for key, item in value.items()
-            }
-        if isinstance(value, (list, tuple)):
-            return [snapshot_value(item) for item in value]
-        return value
-
-    write_summary_snapshot(book, snapshot_value(dashboard.to_dict()))
     compact_source_sheets(book)
+    public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today())
     sheet_count = len(book.sheetnames)
     if owns_workbook:
         book.save(path)
@@ -1442,6 +1367,7 @@ def compact_source_sheets(workbook):
 def reorder_summary_sheets(workbook):
     """Keep a stable, readable progression without changing any source values."""
     first = [
+        GUIDE_SHEET, "车型基本信息", DAILY_SHEET, "小订by时", "首销by时", WEEKLY_SHEET,
         "汇总说明", "字段说明", "车型基本信息", "数据来源目录",
         "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时",
         "预测基准总表", "D1_D2预测指标",
@@ -1451,7 +1377,7 @@ def reorder_summary_sheets(workbook):
         "车型汇总", "小订by天", "小订进度",
     ]
     existing = {sheet.title: sheet for sheet in workbook.worksheets}
-    ordered = [existing[name] for name in first if name in existing]
+    ordered = [existing[name] for name in dict.fromkeys(first) if name in existing]
     group_order = {"源_小订": 0, "源_首销": 1, "源_平销": 2, "源_其他": 3}
     raw_sheets = [sheet for sheet in workbook.worksheets if sheet.title.startswith("源_")]
     raw_sheets.sort(key=lambda sheet: (
@@ -1470,10 +1396,9 @@ def summary_is_current(source, output, mapping, orders_dir, as_of_date):
         return False
     book = load_workbook(output, read_only=True, data_only=True)
     try:
-        if "汇总说明" not in book.sheetnames or INDEX_SHEET not in book.sheetnames:
+        if GUIDE_SHEET not in book.sheetnames or DAILY_SHEET not in book.sheetnames:
             return False
-        info = dict(book["汇总说明"].iter_rows(min_row=2, values_only=True))
-        return info.get("刷新签名") == forecast_signature(source, mapping, orders_dir, as_of_date)
+        return book.properties.identifier == forecast_signature(source, mapping, orders_dir, as_of_date)
     finally:
         book.close()
 

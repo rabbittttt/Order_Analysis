@@ -14,7 +14,8 @@ from core.forecast_summary import (
     SNAPSHOT_SHEET,
     SUMMARY_NAME,
     summary_scope,
-    write_summary_snapshot,
+    GUIDE_SHEET,
+    DAILY_SHEET,
 )
 from core.excel import WorkbookStore
 from modules.sales_forecast import _read_actual_profiles, _read_model_mapping, _read_model_master, _read_stage_windows
@@ -99,23 +100,23 @@ class ForecastSummaryTests(unittest.TestCase):
                     finally:
                         original.close()
 
-    def test_compact_snapshot_round_trip_needs_no_source_sheets(self):
+    def test_visible_summary_round_trip_needs_no_source_sheets(self):
         with TemporaryDirectory() as temp:
             path = Path(temp) / SUMMARY_NAME
             book = Workbook()
-            book.active.title = "汇总说明"
-            book.create_sheet(INDEX_SHEET)
-            payload = {"views": {"week": {"value": 123}}, "sources": []}
-            write_summary_snapshot(book, payload)
+            book.active.title = GUIDE_SHEET
+            sheet = book.create_sheet(DAILY_SHEET)
+            sheet.append(['订单分析代际名', '大定'])
+            sheet.append(['测试车', 123])
             book.save(path)
             book.close()
 
             with summary_scope(path) as active:
-                self.assertEqual(active["snapshot"], payload)
-                self.assertEqual(active["store"].items, [])
+                self.assertTrue(active['visible'])
+                self.assertEqual(active['inputs'][DAILY_SHEET]['B2'].value, 123)
                 self.assertNotIn(SNAPSHOT_SHEET, active["inputs"].sheetnames)
             check = load_workbook(path)
-            self.assertEqual(check[SNAPSHOT_SHEET].sheet_state, "veryHidden")
+            self.assertTrue(all(sheet.sheet_state == 'visible' for sheet in check))
             check.close()
 
     def test_summary_in_order_directory_does_not_become_a_raw_subject(self):

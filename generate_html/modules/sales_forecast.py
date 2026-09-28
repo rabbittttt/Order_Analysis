@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import math
 import re
-from copy import deepcopy
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -1436,8 +1435,9 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
         return None, []
     workbook = open_input(path, read_only=False, data_only=True)
     try:
-        processed = "预测基准总表" in workbook.sheetnames
-        base_sheet = "预测基准总表" if processed else "首销预测基准" if "首销预测基准" in workbook.sheetnames else "传播名汇总" if "传播名汇总" in workbook.sheetnames else "车型汇总" if "车型汇总" in workbook.sheetnames else ""
+        visible = bool(ACTIVE_SUMMARY.get() and ACTIVE_SUMMARY.get().get("visible"))
+        processed = visible or "预测基准总表" in workbook.sheetnames
+        base_sheet = "车型基本信息" if visible else "预测基准总表" if processed else "首销预测基准" if "首销预测基准" in workbook.sheetnames else "传播名汇总" if "传播名汇总" in workbook.sheetnames else "车型汇总" if "车型汇总" in workbook.sheetnames else ""
         if not base_sheet:
             return path, []
         progress_maps = {
@@ -1458,6 +1458,11 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
         model_master = _read_model_master()
         for row in sheet.iter_rows(min_row=2, values_only=True):
             record = dict(zip(headers, row))
+            if visible:
+                if not record.get("首销历史参考"):
+                    continue
+                record.update({"传播名": record.get("历史传播名"), "代际名": record.get("订单分析代际名"),
+                               "发布日": record.get("首销开始"), "首销截止": record.get("首销结束")})
             model = str(record.get("传播名") or record.get("车型") or "").strip()
             if not model:
                 continue
@@ -2640,24 +2645,38 @@ class SalesForecastModule:
             return None
         if self.summary_path.exists():
             with summary_scope(self.summary_path) as summary:
-                if summary.get("snapshot"):
-                    snapshot = summary["snapshot"]
-                    views = deepcopy(snapshot["views"])
-                    page = views["week"]["pages"]["预测方案"]
-                    page["workspace"]["source"] = SourceRef(
-                        self.summary_path.name,
-                        "当前订单逐日",
-                        "销量预测汇总数据",
-                    ).to_dict()
-                    sources = [
-                        SourceRef(self.summary_path.name, "车型基本信息", "车型信息与当前阶段"),
-                        SourceRef(self.summary_path.name, "小订及退订逐日", "历史及当前小订与退订"),
-                        SourceRef(self.summary_path.name, "当前订单逐日", "当前订单"),
-                        SourceRef(self.summary_path.name, "预测基准总表", "首销历史参考"),
-                    ]
-                    return Dashboard(self.id, subject.id, views, sources)
+                if summary.get("visible"):
+                    return self._build_from_visible(summary["workbook"], subject)
                 return self._build_from_sources(summary["store"], subject)
         return self._build_from_sources(store, subject)
+
+    def _build_from_visible(self, workbook, subject):
+        from core.forecast_summary import read_public_forecast, MASTER_SHEET, DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET
+        path, history = _read_history()
+        if not history:
+            return None
+        profiles, windows, small_history, steady_history = read_public_forecast(workbook, history)
+        master, mapping = _read_model_master(), _read_model_mapping()
+        targets = _target_options(history, profiles, windows, today=self.as_of_date, model_master=master)
+        by_model = {profile["model"]: profile for profile in profiles}
+        for target in targets:
+            profile = by_model[target["name"]]
+            candidate = profile["stage_profiles"].get(target["stage"], {})
+            profile.update(candidate)
+            for key in ("selected_source", "selected_source_label", "field_sources", "missing_fields", "data_missing", "source_latest_date"):
+                target[key] = candidate.get(key)
+            target["small"] = candidate.get("total_small", profile.get("total_small"))
+            errors = _profile_hard_errors(target, profile, today=self.as_of_date)
+            target.update(hard_errors=errors, data_error=bool(errors))
+            profile.update(hard_errors=errors, data_error=bool(errors))
+        source = SourceRef(path.name, MASTER_SHEET, "车型基本信息与历史基准")
+        refs = [SourceRef(path.name, name, "销量预测可见数据") for name in (DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET)]
+        dashboard = self._assemble_dashboard(None, subject, path, history, targets, profiles,
+            small_history, steady_history, master, mapping, source, None, None, refs, [])
+        if dashboard:
+            data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
+            data["small_order_source"] = SourceRef(path.name, DAILY_SHEET, "小订历史参考").to_dict()
+        return dashboard
 
     def _build_from_sources(self, store, subject: Subject) -> Dashboard | None:
         path, history = _read_history()
@@ -2719,6 +2738,16 @@ class SalesForecastModule:
                     option.get("stage_label", option.get("stage", "未知")),
                     "；".join(hard_errors),
                 )
+        return self._assemble_dashboard(
+            store, subject, path, history, targets, profiles, small_history, steady_history,
+            model_master, model_mapping, history_source, stage_window_path,
+            small_history_path, actual_sources, steady_sources,
+        )
+
+    def _assemble_dashboard(self, store, subject, path, history, targets, profiles,
+                            small_history, steady_history, model_master, model_mapping,
+                            history_source, stage_window_path, small_history_path,
+                            actual_sources, steady_sources):
         default_option = _default_target_option(targets)
         if default_option is None:
             return None

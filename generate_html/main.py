@@ -20,7 +20,7 @@ from core.china_calendar import PUBLISHED_YEARS
 from core.config import load_config
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook
-from core.forecast_summary import SUMMARY_NAME, read_summary_snapshot
+from core.forecast_summary import SUMMARY_NAME, visible_target_names
 from core.renderer import b64gzip, render_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
@@ -90,13 +90,9 @@ def forecast_target_names(summary_path: Path) -> list[str]:
         return []
     workbook = load_workbook(summary_path, read_only=True, data_only=True)
     try:
-        snapshot = read_summary_snapshot(workbook)
+        return visible_target_names(workbook)
     finally:
         workbook.close()
-    if not snapshot:
-        return []
-    data = snapshot.get("views", {}).get("week", {}).get("pages", {}).get("预测方案", {}).get("workspace", {}).get("data", {})
-    return [str(item["name"]).strip() for item in data.get("targets", []) if item.get("name")]
 
 
 class LevelFormatter(logging.Formatter):
