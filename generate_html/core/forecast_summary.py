@@ -16,7 +16,7 @@ MASTER_SHEET = "车型基本信息"
 DAILY_SHEET = "小订首销平销by天"
 SMALL_HOURLY_SHEET = "小订by时"
 LAUNCH_HOURLY_SHEET = "首销by时"
-WEEKLY_SHEET = "首销平销订单by周"
+WEEKLY_SHEET = "首销平销by周"
 INDEX_SHEET = "数据来源目录"
 SNAPSHOT_SHEET = "_预测缓存"
 ACTIVE_SUMMARY = ContextVar("forecast_summary", default=None)

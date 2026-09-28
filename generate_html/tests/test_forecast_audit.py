@@ -154,7 +154,7 @@ class ForecastAuditTests(unittest.TestCase):
             dashboard = SimpleNamespace(views=payload['views'], to_dict=lambda:payload)
             with patch('modules.sales_forecast.SalesForecastModule._build_from_sources', return_value=dashboard), patch('tools.refresh_sales_forecast_data.load_workbook', side_effect=AssertionError('unnecessary reload')):
                 append_forecast_views(path, '2026-09-02', workbook=book)
-            self.assertEqual(book.sheetnames[:6], ['说明与来源', '车型基本信息', '小订by时', '首销by时', '小订首销平销by天', '首销平销订单by周'])
+            self.assertEqual(book.sheetnames[:6], ['说明与来源', '车型基本信息', '小订by时', '首销by时', '小订首销平销by天', '首销平销by周'])
             orders = list(book['小订首销平销by天'].values)
             self.assertNotIn('累计退订', orders[0])
             self.assertNotIn('累计退订率', orders[0])
