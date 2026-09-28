@@ -453,7 +453,50 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertIn("当前与主辅参考的平销交车锁单", script)
         self.assertIn("仅展示首销截止后完整自然周的交车锁单", script)
         self.assertIn(".forecast-lifecycle-reference-chart{grid-column:1/-1", css)
-        self.assertIn(".forecast-lifecycle-line-scroll svg{height:300px}", css)
+        self.assertIn(".forecast-lifecycle-line-scroll svg{height:auto;aspect-ratio:920/245}", css)
+        self.assertIn("function renderForecastEvidenceLines", script)
+        self.assertIn("target.innerHTML=renderForecastEvidenceLines({series", script)
+        self.assertIn("return renderForecastEvidenceLines({series:series.map", script)
+        self.assertIn("data-small-hourly-reference-chart", script)
+        self.assertIn("title:'D1 小订分时累计进度'", script)
+        self.assertIn("hour<=lastHour", script)
+        self.assertIn("ongoing&&!forecast.error?Number(forecast.d1)", script)
+        self.assertIn("d1Row?.orders:NaN", script)
+        self.assertIn("不使用整日数据冒充分时", script)
+        self.assertIn("role:'forecast',dashed:true", script)
+        self.assertNotIn("dashed:index>0", script)
+        self.assertIn(".forecast-task-chart .forecast-evidence-line-scroll{overflow-x:auto}", css)
+
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for chart rendering checks")
+    def test_shared_evidence_chart_preserves_zero_missing_units_and_accessibility(self):
+        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
+        helpers = script[script.index("  function renderForecastEvidenceLines("):script.index("  function renderLifecycleScorePage(")]
+        checks = r"""
+const assert=require('node:assert/strict');
+const esc=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+const args={series:[{label:'current <test>',values:[0,.5,null],color:'#1677FF',role:'actual'},
+ {label:'reference',values:[0,.6,1],color:'#FF8A00',role:'reference'},
+ {label:'future',values:[null,.5,1],color:'#00A878',role:'forecast',dashed:true}],labels:['0时','1时','2时'],hourly:true,ariaLabel:'D1 comparison'};
+const rate=renderLifecycleLineChart(args);
+assert(rate.includes('viewBox="0 0 920 245"'));
+assert(rate.includes('current &lt;test> · 最新50%'));
+assert(rate.includes('0时 · 0.0%'));
+assert(rate.includes('tabindex="0" role="img"'));
+assert(rate.includes('<td>—</td>'));
+assert(rate.includes('stroke-dasharray="7 5"'));
+assert(rate.includes('查看图表数值'));
+const number=renderLifecycleLineChart({...args,unit:'number',series:[{label:'locks',values:[0,700,null],color:'#1677FF',role:'actual'}]});
+assert(number.includes('最新700单'));assert(!number.includes('100%'));assert(number.includes('0时 · 0单'));
+const gap=renderLifecycleLineChart({...args,series:[{label:'gapped',values:[0,null,1],color:'#1677FF',role:'actual'}]});
+assert.equal((gap.match(/<polyline /g)||[]).length,2,'missing values must break the line, not be interpolated');
+const close=renderLifecycleLineChart({...args,unit:'number',series:[{label:'main',values:[700,700,700],color:'#FF8A00',role:'reference'},
+ {label:'aux',values:[500,500,500],color:'#7C3AED',role:'reference'}]});
+const labelPositions=[...close.matchAll(/<text x="48" y="([^"]+)"[^>]*>(?:700|500)单<\/text>/g)].map(match=>Number(match[1]));
+assert.equal(labelPositions.length,2);assert(Math.abs(labelPositions[0]-labelPositions[1])>=12,'nearby reference labels must not overlap');
+assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).includes('缺少D1分时'));
+"""
+        result = subprocess.run([shutil.which("node"), "-e", helpers + checks], capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_sales_forecast_result_layout_stays_expanded_and_uses_horizontal_space(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
