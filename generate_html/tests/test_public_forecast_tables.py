@@ -56,7 +56,7 @@ class PublicForecastTablesTests(TestCase):
 
     def test_no_cache_merged_tables_and_typed_values(self):
         book = self.make_public()
-        self.assertEqual(book.sheetnames[:6], [GUIDE_SHEET, MASTER_SHEET, DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET])
+        self.assertEqual(book.sheetnames[:6], [GUIDE_SHEET, MASTER_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, DAILY_SHEET, WEEKLY_SHEET])
         self.assertNotIn('预测基准总表', book.sheetnames)
         self.assertTrue(all(s.sheet_state == 'visible' for s in book))
         self.assertEqual(visible_target_names(book), ['测试车'])

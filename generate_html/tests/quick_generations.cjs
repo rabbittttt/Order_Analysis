@@ -23,6 +23,7 @@ const names = [
   '尚界 X6M 2026款汇总', '尚界 SHB 2026款汇总',
   '尚界 Z7 2026款', '尚界 Z7 Beta 2025款',
   '尚界 Z7T 2026款', '尚界 Z7T Beta 2025款',
+  '智界 RX 盲订 2027款', '智界 RX 2027款盲订', '智界 RX 2027款',
 ];
 const subjects = names.map((name, index) => ({id: String(index), name, parent: name.slice(0, 2), type: 'generation'}));
 const actual = select({subjects});
@@ -32,6 +33,7 @@ const expected = [
   '尊界 S800 2025款', '尊界 S800 典藏大观 2026款',
   '尊界 V680 2026款', '尊界 V800 2026款',
   '尚界 Z7 2026款', '尚界 Z7T 2026款',
+  '智界 RX 2027款',
 ];
 assert.deepStrictEqual([...actual].sort(), [...expected].sort());
 assert.strictEqual(subjects.length, names.length, 'source subjects must remain untouched');

@@ -13,7 +13,7 @@ from core.excel import WorkbookItem, WorkbookStore
 SUMMARY_NAME = "鸿蒙智行销量数据汇总.xlsx"
 GUIDE_SHEET = "说明与来源"
 MASTER_SHEET = "车型基本信息"
-DAILY_SHEET = "全周期订单by天"
+DAILY_SHEET = "小订首销平销by天"
 SMALL_HOURLY_SHEET = "小订by时"
 LAUNCH_HOURLY_SHEET = "首销by时"
 WEEKLY_SHEET = "首销平销订单by周"
@@ -294,7 +294,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
     for name in ("汇总说明", "字段说明", INDEX_SHEET, "预测基准总表", "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时", SNAPSHOT_SHEET):
         if name in book.sheetnames:
             del book[name]
-    first = [GUIDE_SHEET, MASTER_SHEET, DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET]
+    first = [GUIDE_SHEET, MASTER_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, DAILY_SHEET, WEEKLY_SHEET]
     book._sheets = [book[name] for name in first] + [s for s in book.worksheets if s.title not in first]
 
 

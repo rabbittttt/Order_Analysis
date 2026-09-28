@@ -61,7 +61,9 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
    return panel;
   };
   let launch=await upload('launch','first.csv',[[d1,100]]);await launch.locator('input[value="all"]').check();
+  check('单日外部预测显示数据点',await launch.locator('[data-forecast-import-result] svg circle').count()===1);
   await upload('launch','second.csv',[[d2,200]]);
+  check('多日外部预测显示折线',await launch.locator('[data-forecast-import-result] svg polyline').count()===1&&await launch.locator('[data-forecast-import-result] svg circle').count()===2);
   check('默认合并保留原有日期',(await records(page)).length===2&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('300'));
   await upload('launch','correction.csv',[[d2,250]]);
   check('同阶段同日更新而非重复相加',(await records(page)).length===2&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('350'));
@@ -73,6 +75,7 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   await page.reload();await ready(page);
   launch=page.locator('[data-forecast-import="launch"]');
   check('刷新恢复外部预测及整个阶段范围',await launch.locator('input[value="all"]').isChecked()&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('350'));
+  check('刷新恢复外部预测折线',await launch.locator('[data-forecast-import-result] svg circle').count()===2);
   const small=await upload('small','small.csv',[[d1,7]]);await small.locator('input[value="all"]').check();
   const overlap=await records(page);check('交界同日不同阶段不互相覆盖',overlap.filter(r=>r.date===d1).length===2&&overlap.some(r=>r.stage==='small'&&r.quantity===7)&&overlap.some(r=>r.stage==='launch'&&r.quantity===100));
   await page.locator('[data-forecast-stage-switch="launch"]').click();

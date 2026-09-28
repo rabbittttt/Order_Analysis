@@ -1332,7 +1332,7 @@ def compact_source_sheets(workbook):
 def reorder_summary_sheets(workbook):
     """Keep a stable, readable progression without changing any source values."""
     first = [
-        GUIDE_SHEET, "车型基本信息", DAILY_SHEET, "小订by时", "首销by时", WEEKLY_SHEET,
+        GUIDE_SHEET, "车型基本信息", "小订by时", "首销by时", DAILY_SHEET, WEEKLY_SHEET,
         "汇总说明", "字段说明", "车型基本信息", "数据来源目录",
         "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时",
         "预测基准总表", "D1_D2预测指标",

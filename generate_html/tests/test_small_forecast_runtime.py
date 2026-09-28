@@ -10,12 +10,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which('node'), 'Node.js required')
 class SmallForecastRuntimeTests(unittest.TestCase):
+    def test_requested_forecast_fixes(self):
+        result = subprocess.run(['node', str(ROOT / 'tests/forecast_requested_fixes.cjs')], capture_output=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_end_day_links_small_prediction_even_when_launch_has_started(self):
         script = r'''
 const fs=require('fs'),assert=require('assert');
 const source=fs.readFileSync(DASHBOARD,'utf8');
 const linkStart=source.indexOf('      const smallInput=root.querySelector');
-const linkEnd=source.indexOf('      const get=',linkStart);
+const linkEnd=source.indexOf('      const linkedSignature=',linkStart);
 const blockStart=source.indexOf('      const blockingErrors=');
 const blockEnd=source.indexOf('      const endedComplete=',blockStart);
 const methodStart=source.indexOf('      const parameterAvailable=');
@@ -66,6 +70,7 @@ const nodes=new Map(),node=key=>{if(!nodes.has(key))nodes.set(key,{value:'',text
 const select={value:'',options:[{value:'ref',dataset:{model:'reference'}}]},weight={value:'100'};
 const workspace={querySelector:node,querySelectorAll:key=>key==='[data-small-ref]'?[select]:key==='[data-small-weight]'?[weight]:[]};
 const root={querySelector:()=>workspace};
+const lifecycleUnavailable=(task,item)=>task==='hourly'&&!((item.small_hourly_curve||[]).some(value=>Number.isFinite(value)&&value>0));
 const status={};
 const setForecastStageSummary=(root,id,label,text)=>{status[id]={label,text}};
 const esc=String,fmt=String,renderLifecycleBars=()=>'',renderLifecycleLineChart=()=>'',renderLifecycleScorePage=()=>'';
