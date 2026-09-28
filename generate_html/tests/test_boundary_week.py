@@ -6,11 +6,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from openpyxl import Workbook
+from openpyxl.utils.datetime import to_excel
 
 from core.excel import WorkbookItem, WorkbookStore, _week_period, _source_date_range, display_period, parse_metric_sheet
 from core.forecast_summary import INDEX_SHEET, summary_scope
 from modules.conversion import ConversionModule, STAGES
 from modules.sales_forecast import _read_steady_history
+from modules.overview import OverviewModule
 from core.models import Subject
 
 
@@ -54,7 +56,7 @@ class BoundaryWeekTests(unittest.TestCase):
         return book
 
     def test_boundaries_use_calendar_not_hardcoded_years(self):
-        for period, reason in [("26WK53", "跨年"), ("2026WK53", "跨年"), ("26WK27", "跨半年"),
+        for period, reason in [("26WK01", "跨年"), ("26WK53", "跨年"), ("2026WK53", "跨年"), ("26WK27", "跨半年"),
                                ("25WK27", "跨半年"), ("24WK26", ""), ("23WK52", ""), ("26WK28", "")]:
             with self.subTest(period=period):
                 self.assertEqual(_week_period(period)[3], reason)
@@ -227,6 +229,112 @@ class BoundaryWeekTests(unittest.TestCase):
         store = self.store([book], ranges=[(date(2026, 1, 1), date(2027, 1, 3))])
         _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
         self.assertEqual(parse_metric_sheet(sheet)["26WK53"]["metrics"]["交车锁单"], 140)
+
+    def test_old_net_and_new_retained_labels_merge_without_changing_originals(self):
+        books = [self.metric("26WK01", 140), self.metric("26WK01", 90)]
+        for book, label in zip(books, ["净大定", "留存大定"]):
+            book.active.cell(2, 1, label)
+        store = self.store(books, "大定选配比例分析")
+        _, sheet = store.find_subject_sheet("大定选配比例", MODEL, "week")
+        self.assertEqual(parse_metric_sheet(sheet)["26WK01"]["metrics"], {"留存大定": 230})
+        self.assertEqual(books[0].active.cell(2, 1).value, "净大定")
+        self.assertEqual(books[0].active.cell(2, 4).value, 140)
+
+    def test_daily_detail_has_priority_over_limited_chart_dates(self):
+        books = [self.metric("26WK01", 140), self.metric("26WK01", 90)]
+        for book, days in zip(books, [("25-12-29", "25/12/31"),
+                                     (to_excel(date(2026, 1, 1)), to_excel(date(2026, 1, 4)))]):
+            daily = book.create_sheet(MODEL + "by天")
+            daily.append(["指标", "统计类型", "分类", *days])
+            daily.cell(35, 1, "交车锁单")
+            daily.cell(35, 2, "数量")
+            daily.cell(35, 3, "数量")
+            daily.cell(35, 4, 1)
+            daily.cell(35, 5, 0)
+            # A chart is a display window, not physical export coverage.
+            chart = book.create_sheet("问界by天图表")
+            chart.append([MODEL])
+            chart.append([None, "交车锁单", date(2026, 1, 2), date(2026, 1, 31)])
+            chart.append([None, "总计", 2, 3])
+        store = self.store(books, infer_test_ranges=False)
+        self.assertEqual(_source_date_range(store.items[0]), (date(2025, 12, 29), date(2025, 12, 31)))
+        self.assertEqual(_source_date_range(store.items[1]), (date(2026, 1, 1), date(2026, 1, 4)))
+        _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
+        self.assertEqual(parse_metric_sheet(sheet)["26WK01"]["metrics"]["交车锁单"], 230)
+        with patch("modules.sales_forecast._read_model_mapping", return_value={}), patch(
+            "modules.sales_forecast._read_model_master", return_value={}
+        ):
+            rows, _ = _read_steady_history(store, {"m9": {"generation": MODEL, "end_date": "2025-12-28"}}, date(2026, 1, 12))
+        self.assertEqual(rows[0]["weeks"][0]["lock"], 230)
+        self.assertEqual(rows[0]["weeks"][0]["start_date"], "2025-12-29")
+        self.assertEqual(rows[0]["weeks"][0]["end_date"], "2026-01-04")
+
+    def test_chart_only_fallback_reads_each_blocks_own_header(self):
+        book = Workbook()
+        chart = book.active
+        chart.title = "问界by天图表"
+        chart.append([MODEL])
+        chart.append([None, "交车锁单", "2025年12月29日", "25-12-30"])
+        chart.append([None, "总计", 1, None])
+        chart.append(["问界 M7 2024款"])
+        chart.append([None, "交车锁单", "25-12-31", "26-01-01"])
+        chart.append([None, "总计", 0, None])
+        store = self.store([book], infer_test_ranges=False)
+        self.assertEqual(_source_date_range(store.items[0]), (date(2025, 12, 29), date(2025, 12, 31)))
+
+    def test_overview_cards_chart_and_history_use_cross_year_sum(self):
+        store = WorkbookStore(Path("."))
+        self.addCleanup(store.close)
+        for keyword, metrics, headline in [
+            ("大定选配比例分析", ["净大定", "留存大定"], "留存大定"),
+            ("锁单选配比例分析", ["交车锁单", "交车锁单"], "交车锁单"),
+        ]:
+            for index, (quantity, label, rate, span) in enumerate(zip(
+                [140, 90], metrics, [.4, .8],
+                [(date(2025, 12, 29), date(2025, 12, 31)), (date(2026, 1, 1), date(2026, 1, 4))],
+            )):
+                book = self.metric("26WK01", quantity)
+                book.active.cell(2, 1, label)
+                book.active.append(["大定" if keyword.startswith("大定") else "已交付", "数量", "数量", quantity])
+                daily = book.create_sheet(MODEL + "by天")
+                daily.append(["指标", "统计类型", "分类", *span])
+                daily.append([label, "数量", "数量", 1, 1])
+                chart = book.create_sheet("问界by周图表")
+                chart.append([MODEL])
+                chart.append([None, headline, "26WK01"])
+                chart.append([None, "A", rate])
+                chart.append([None, "B", 1 - rate])
+                chart.append([None, "总计", quantity])
+                store.items.append(WorkbookItem(Path(f"{keyword}_{index}.xlsx"), book))
+        dashboard = OverviewModule().build(store, Subject("m9", MODEL, "generation", "问界"))
+        page = dashboard.views["week"]["pages"]["26WK01"]
+        self.assertEqual({item["label"]: item["value"] for item in page["kpis"]},
+                         {"大定": 230, "留存大定": 230, "交车锁单": 230, "已交付": 230})
+        for entry in (entry for entry in page["sections"] if entry["kind"] == "stacked_trend"):
+            self.assertEqual(entry["data"]["totals"], [230])
+            self.assertAlmostEqual(entry["data"]["series"][0]["values"][0], 128 / 230)
+        history = next(entry for entry in page["sections"] if entry["kind"] == "history_table")
+        self.assertEqual(history["data"]["granularities"]["week"]["rows"][0][3], 230)
+
+    def test_unmerged_chart_conflict_explains_ranges_once(self):
+        books = []
+        for quantity in [140, 90]:
+            book = self.metric("26WK01", quantity)
+            chart = book.create_sheet("问界by周图表")
+            chart.append([MODEL])
+            chart.append([None, "交车锁单", "26WK01"])
+            chart.append([None, "A", 1])
+            chart.append([None, "总计", quantity])
+            books.append(book)
+        store = self.store(books, ranges=[(date(2025, 1, 1), date(2026, 1, 4)),
+                                         (date(2026, 1, 1), date(2026, 1, 4))])
+        with self.assertLogs("core.excel", level="WARNING") as logs:
+            store.find_chart_data("锁单选配比例", MODEL, "week")
+            store.find_chart_data("锁单选配比例", MODEL, "week")
+        chart_logs = [line for line in logs.output if "多文件图表冲突" in line]
+        self.assertEqual(len(chart_logs), 1)
+        self.assertIn("2025-01-01~2026-01-04", chart_logs[0])
+        self.assertIn("未在边界日衔接", chart_logs[0])
 
     def test_future_blank_columns_do_not_make_a_file_cross_the_cut(self):
         book = self.metric("26WK27", 140)

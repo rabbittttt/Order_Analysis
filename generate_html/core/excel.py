@@ -388,21 +388,24 @@ def _quantity_value(value):
     return number if not isinstance(value, bool) and math.isfinite(number) and number >= 0 else None
 
 
-def _coverage_date(cell):
+def _coverage_date(cell, *, day_header=False):
     value = cell.value
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
     if isinstance(value, str):
-        text = clean_text(value)
-        match = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T]00:00:00)?", text)
+        text = clean_text(value).replace("年", "-").replace("月", "-").replace("日", "")
+        match = re.fullmatch(r"(\d{2}|\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T]00:00:00)?", text)
         if match:
             try:
-                return date(*(int(part) for part in match.groups()))
+                year, month, day = map(int, match.groups())
+                return date(year + 2000 if year < 100 else year, month, day)
             except ValueError:
                 pass
-    if isinstance(value, (int, float)) and is_date_format(cell.number_format):
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and (
+        is_date_format(cell.number_format) or (day_header and 20000 < value < 100000)
+    ):
         from openpyxl.utils.datetime import from_excel
         try:
             converted = from_excel(value)
@@ -420,7 +423,7 @@ def _source_date_range(item):
     """
     if hasattr(item, "_boundary_date_range"):
         return item._boundary_date_range
-    dates = []
+    dates, chart_sheets = [], []
     starts = {"数据开始日期", "统计开始日期", "导出开始日期", "数据起始日期", "统计起始日期"}
     ends = {"数据结束日期", "数据截止日期", "统计结束日期", "统计截止日期", "导出结束日期", "导出截止日期"}
     for sheet in item.workbook.worksheets:
@@ -436,21 +439,31 @@ def _source_date_range(item):
         if grain_from_sheet(sheet.title) != "day":
             continue
         if "图表" in sheet.title:
-            header_row = 2
-            count_rows = [row for row in range(3, sheet.max_row + 1) if clean_text(sheet.cell(row, 2).value) == "总计"]
-            first_column = 3
-        else:
-            header_row = 1
-            count_rows = [row for row in range(2, min(sheet.max_row, 30) + 1)
-                          if clean_text(sheet.cell(row, 2).value) == "数量"
-                          and clean_text(sheet.cell(row, 3).value) == "数量"]
-            first_column = 4
+            chart_sheets.append(sheet)
+            continue
+        count_rows = [row for row in range(2, sheet.max_row + 1)
+                      if clean_text(sheet.cell(row, 2).value) == "数量"
+                      and clean_text(sheet.cell(row, 3).value) == "数量"]
         if not count_rows:
             continue
-        for column in range(first_column, sheet.max_column + 1):
-            day = _coverage_date(sheet.cell(header_row, column))
+        for column in range(4, sheet.max_column + 1):
+            day = _coverage_date(sheet.cell(1, column), day_header=True)
             if day and any(_quantity_value(sheet.cell(row, column).value) is not None for row in count_rows):
                 dates.append(day)
+    # Full by-day detail is export evidence; rolling chart windows are not.
+    # Only chart-only workbooks fall back to all blocks' own date headers.
+    if not dates:
+        for sheet in chart_sheets:
+            block_starts = [row for row in range(1, sheet.max_row + 1) if clean_text(sheet.cell(row, 1).value)]
+            for start, end in zip(block_starts, [*block_starts[1:], sheet.max_row + 1]):
+                count_rows = [row for row in range(start + 2, end)
+                              if clean_text(sheet.cell(row, 2).value) == "总计"]
+                if not count_rows:
+                    continue
+                for column in range(3, sheet.max_column + 1):
+                    day = _coverage_date(sheet.cell(start + 1, column), day_header=True)
+                    if day and any(_quantity_value(sheet.cell(row, column).value) is not None for row in count_rows):
+                        dates.append(day)
     item._boundary_date_range = (min(dates), max(dates)) if dates else None
     return item._boundary_date_range
 
@@ -557,6 +570,10 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 labels.append(value)
             if not any(value not in (None, "") for value in labels):
                 continue
+            # Overview already treats these as legacy/current aliases. Apply
+            # that same identity only to the metric label of known mix tables.
+            if header_rows == 1 and key_columns == 3 and 1 in forward_rows and clean_text(labels[0]) == "净大定":
+                labels[0] = "留存大定"
             key = tuple(_source_key(value) for value in labels)
             row_keys[row] = key
             rows.setdefault(key, labels)
@@ -942,6 +959,7 @@ class WorkbookStore:
         self._subject_sheets_cache: dict[tuple[Any, ...], list[tuple[WorkbookItem, Any]]] = {}
         self.multi_source_groups: dict[str, int] = {}
         self._boundary_chart_logs: set[tuple] = set()
+        self._chart_conflict_logs: set[tuple] = set()
 
     def load(self, exclude_names: Iterable[str] = (), *, data_only_view: bool = False) -> None:
         if not self.input_dir.exists():
@@ -952,6 +970,7 @@ class WorkbookStore:
         self._subject_sheets_cache.clear()
         self.multi_source_groups.clear()
         self._boundary_chart_logs.clear()
+        self._chart_conflict_logs.clear()
         excluded = set(exclude_names)
         paths = sorted(path for path in self.input_dir.glob("*.xlsx") if not path.name.startswith("~$") and path.name not in excluded)
         if not paths:
@@ -1192,6 +1211,7 @@ class WorkbookStore:
         periods, series, totals = set(), {}, {}
         conflicts = 0
         samples = []
+        reasons = {}
         boundary_parts, boundary_reports, observations, total_sources = {}, {}, {}, {}
         coverage = {item.path.name: _source_date_range(item) for item, _, _ in matches}
         rate_conflicts, resolved_rates = [], set()
@@ -1216,8 +1236,17 @@ class WorkbookStore:
                         totals[period] = merged[0]
                     elif totals[period] != value:
                         conflicts += 1
-                        if len(samples) < 3:
+                        if len(samples) < 3 and period not in samples:
                             samples.append(period)
+                            week = _week_period(period)
+                            pair = [coverage.get(total_sources[period]), coverage.get(item.path.name)]
+                            if boundary:
+                                sides = [_boundary_side(span, week) for span in pair]
+                                reasons[period] = ("缺少完整逐日日期范围" if any(span is None for span in pair) else
+                                                   "未在边界日衔接（范围跨界、重叠或缺口）" if None in sides or sides[0] == sides[1] else
+                                                   "数量无效或额外文件不重复追加")
+                            else:
+                                reasons[period] = "普通周期按原优先级取值"
                 for entry in data["series"]:
                     values = series.setdefault(entry["name"], {})
                     value = entry["values"][index]
@@ -1228,6 +1257,9 @@ class WorkbookStore:
                             rate_conflicts.append((entry["name"], period))
                         else:
                             conflicts += 1
+                            if len(samples) < 3 and period not in samples:
+                                samples.append(period)
+                                reasons[period] = "普通周期占比按原优先级取值"
         for (period, _), weights in boundary_parts.items():
             denominator = sum(weight for _, weight in weights)
             if len(weights) < 2 or denominator <= 0:
@@ -1239,15 +1271,26 @@ class WorkbookStore:
                     continue
                 series.setdefault(name, {})[period] = sum(rate * weight for rate, weight in pieces if weight > 0) / denominator
                 resolved_rates.add((name, period))
-        conflicts += sum(key not in resolved_rates for key in rate_conflicts)
+        for name, period in rate_conflicts:
+            if (name, period) not in resolved_rates:
+                conflicts += 1
+                if len(samples) < 3 and period not in samples:
+                    samples.append(period)
+                    reasons[period] = "占比缺少可靠的合并分母或来源占比"
         log_key = tuple((str(item.path), sheet.title, data["subject"], data.get("headline", "")) for item, sheet, data in matches)
         if boundary_reports and log_key not in self._boundary_chart_logs:
             _log_boundary_weeks(f"图表主体={matches[0][2]['subject']}", list(boundary_reports.values()))
             self._boundary_chart_logs.add(log_key)
         order = sorted(periods, key=_period_sort)
-        if conflicts:
-            LOGGER.warning("[多文件图表冲突] 主体=%s | 共%d项 | 重叠周期保留首个值，不重复累加 | 周期示例=%s",
-                           matches[0][2]["subject"], conflicts, "、".join(samples))
+        if conflicts and log_key not in self._chart_conflict_logs:
+            ranges = [f"{source}:{span[0]}~{span[1]}" if span else f"{source}:未识别"
+                      for source, span in list(coverage.items())[:6]]
+            if len(coverage) > 6:
+                ranges.append(f"等共{len(coverage)}个文件")
+            LOGGER.warning("[多文件图表冲突] 主体=%s | 共%d项 | 冲突位置保留首个值，不重复累加 | 周期示例=%s | 文件日期范围=%s | 未累加说明=%s",
+                           matches[0][2]["subject"], conflicts, "、".join(samples), "、".join(ranges),
+                           "；".join(f"{period}:{reasons[period]}" for period in samples))
+            self._chart_conflict_logs.add(log_key)
         return {**matches[0][2], "periods": order,
                 "totals": [totals.get(period, 0) for period in order],
                 "series": [{"name": name, "values": [values.get(period, 0) for period in order]}
