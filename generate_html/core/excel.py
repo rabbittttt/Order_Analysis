@@ -467,6 +467,12 @@ def _boundary_side(coverage, week):
     return None  # Already crosses the cut, overlaps it, has a gap, or is unrelated.
 
 
+def _source_date_ranges(item):
+    """Keep each physical export interval; a merged view must not invent gap days."""
+    origins = getattr(item, "_source_items", (item,))
+    return list(dict.fromkeys(span for origin in origins if (span := _source_date_range(origin))))
+
+
 def _add_boundary_week(previous, current, key, period, parts, reports, coverage):
     """Add only two confirmed adjoining file pieces, never an already complete week."""
     week = _week_period(period)
@@ -1003,6 +1009,7 @@ class WorkbookStore:
                 self._source_aliases[(source_item.path.name, source_sheet.title)] = matches
                 self._source_aliases[(items[0].path.name, source_sheet.title)] = matches
         result = WorkbookItem(items[0].path, WorkbookView(sheets))
+        result._source_items = items
         self._combined_cache[keyword] = result
         self.multi_source_groups[keyword] = len(items)
         LOGGER.debug("多文件来源: %s | 共%d个文件全部纳入: %s", keyword, len(items), "、".join(item.path.name for item in items))

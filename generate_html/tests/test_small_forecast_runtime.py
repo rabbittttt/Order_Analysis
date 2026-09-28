@@ -10,6 +10,47 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which('node'), 'Node.js required')
 class SmallForecastRuntimeTests(unittest.TestCase):
+    def test_end_day_links_small_prediction_even_when_launch_has_started(self):
+        script = r'''
+const fs=require('fs'),assert=require('assert');
+const source=fs.readFileSync(DASHBOARD,'utf8');
+const linkStart=source.indexOf('      const smallInput=root.querySelector');
+const linkEnd=source.indexOf('      const get=',linkStart);
+const blockStart=source.indexOf('      const blockingErrors=');
+const blockEnd=source.indexOf('      const endedComplete=',blockStart);
+const methodStart=source.indexOf('      const parameterAvailable=');
+const methodEnd=source.indexOf('      const referenceSmallEstimate=',methodStart);
+assert(linkStart>=0&&linkEnd>linkStart&&blockStart>=0&&blockEnd>blockStart);
+const link=new Function('root','targetState','absoluteStage','todayIso','sameModel','actualForTarget','findTarget',
+ source.slice(linkStart,linkEnd)+'return {linkSmall,smallOngoing};');
+const check=new Function('root','actual','target','stageInfo','small','resolvedFixed','pastMissingIndexes','smallOngoing','esc',
+ source.slice(blockStart,blockEnd)+'return rawDataError;');
+const method=new Function('rawDataError','small','baseConversion',
+ 'const endedComplete=false,baseShare=.2,actualSmall=0,actualDirect=0,actualGross=0,anchorSmall=0,anchorDirect=0;'+
+ source.slice(methodStart,methodEnd)+'return {available:parameterAvailable,gross:parameterGross};');
+const probe=(end,total,error='',invalidDay=false)=>{
+ const input={value:0},root={_smallForecastResult:{name:'RX',date:'2026-09-28',stage:'active',total,error},querySelector:key=>key==='[data-forecast-input="small"]'?input:null};
+ const target={name:'RX',smallEndDate:end,hardErrors:['总小订缺失或不大于0']};
+ const linked=link(root,()=>target,()=>({key:'active'}),()=> '2026-09-28',(a,b)=>a===b,()=>null,()=>({small:0}));
+ const rawError=check(root,null,target,{key:'active'},Number(input.value),invalidDay?[{gross:1,small_to_big:null,direct:1}]:[],[],linked.smallOngoing,String);
+ return {linked:!!linked.linkSmall,value:Number(input.value),rawError,...method(rawError,Number(input.value),.5)};
+};
+console.log(JSON.stringify({ongoing:probe('2026-09-28',1000),pending:probe('2026-09-28',null,'等待参考'),
+ ended:probe('2026-09-27',null),invalid:probe('2026-09-28',1000,'',true)}));
+'''.replace('DASHBOARD', json.dumps(str(ROOT / 'templates/dashboard.js')))
+        result = subprocess.run(['node', '-e', script], capture_output=True, encoding='utf-8')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertTrue(data['ongoing']['linked'])
+        self.assertEqual(data['ongoing']['value'], 1000)
+        self.assertFalse(data['ongoing']['rawError'])
+        self.assertTrue(data['ongoing']['available'])
+        self.assertEqual(data['ongoing']['gross'], 625)
+        self.assertFalse(data['pending']['rawError'])
+        self.assertFalse(data['pending']['available'])
+        self.assertTrue(data['ended']['rawError'])
+        self.assertTrue(data['invalid']['rawError'])
+
     def test_active_small_initializes_and_predicts_without_current_final_total(self):
         script = r'''
 const fs=require('fs');

@@ -7,11 +7,65 @@ from unittest.mock import patch
 
 from openpyxl import Workbook
 from core.forecast_summary import INDEX_SHEET, summary_scope
-from modules.sales_forecast import _attach_actual_shapes, _fill_sparse_dates, _read_actual_profiles, _read_history
+from modules.sales_forecast import _attach_actual_shapes, _fill_sparse_dates, _read_actual_profiles, _read_history, _read_steady_history
 from tools.refresh_sales_forecast_data import append_forecast_views
 
 
 class ForecastAuditTests(unittest.TestCase):
+    def test_file_coverage_fills_leading_trailing_and_all_zero_days(self):
+        coverage = [(date(2026, 9, 1), date(2026, 9, 6))]
+        rows = [{'date': '2026-09-03', 'orders': 2}, {'date': '2026-09-04', 'orders': None}]
+        result = _fill_sparse_dates(rows, ('orders',), coverage, date(2026, 9, 2), date(2026, 9, 8))
+        self.assertEqual([row['date'] for row in result], [f'2026-09-0{i}' for i in range(2, 7)])
+        self.assertEqual([row['orders'] for row in result], [0, 2, None, 0, 0])
+        empty = _fill_sparse_dates([], ('orders',), coverage, date(2026, 9, 2), date(2026, 9, 4))
+        self.assertEqual([row['orders'] for row in empty], [0, 0, 0])
+
+    def test_separate_export_intervals_never_fill_uncovered_gap(self):
+        coverage = [(date(2026, 9, 1), date(2026, 9, 2)), (date(2026, 9, 5), date(2026, 9, 6))]
+        result = _fill_sparse_dates([], ('lock',), coverage)
+        self.assertEqual([row['date'] for row in result], ['2026-09-01', '2026-09-02', '2026-09-05', '2026-09-06'])
+
+    def test_small_mix_uses_file_update_end_and_maintained_small_window(self):
+        book = Workbook()
+        sheet = book.active
+        sheet.title = '问界 M9 2026款by天'
+        sheet.append(['指标', '统计类型', '分类', date(2026, 9, 3)])
+        sheet.append(['小订', '数量', '数量', 2])
+        group = book.create_sheet('鸿蒙智行by天')
+        group.append(['指标', '统计类型', '分类', date(2026, 8, 20), date(2026, 9, 6)])
+        group.append(['小订', '数量', '数量', 10, 10])
+        item = SimpleNamespace(path=Path('小订选配比例.xlsx'), workbook=book)
+        store = SimpleNamespace(find=lambda keyword: item if keyword == '小订选配比例' else None)
+        windows = {'m9': {'generation': '问界 M9 2026款', 'small_start_date': '2026-09-01', 'small_end_date': '2026-09-10'}}
+        with patch('modules.sales_forecast._read_model_mapping', return_value={}):
+            profiles, _ = _read_actual_profiles(store, windows, today=date(2026, 9, 8))
+        rows = profiles[0]['small_daily_days']
+        self.assertEqual([row['date'] for row in rows], [f'2026-09-0{i}' for i in range(1, 7)])
+        self.assertEqual([row['orders'] for row in rows], [0, 0, 2, 0, 0, 0])
+
+    def test_old_steady_model_zero_days_and_omitted_zero_week_are_real(self):
+        book = Workbook()
+        weekly = book.active
+        weekly.title = '问界 M9 2026款by周'
+        weekly.append(['指标', '统计类型', '分类', '26WK28', '26WK30'])
+        weekly.append(['交车锁单', '数量', '数量', 100, 200])
+        daily = book.create_sheet('问界 M9 2026款by天')
+        daily.append(['指标', '统计类型', '分类', date(2026, 7, 10), date(2026, 7, 24)])
+        daily.append(['交车锁单', '数量', '数量', 100, 200])
+        group = book.create_sheet('鸿蒙智行by天')
+        group.append(['指标', '统计类型', '分类', date(2026, 7, 1), date(2026, 7, 29)])
+        group.append(['交车锁单', '数量', '数量', 500, 500])
+        item = SimpleNamespace(path=Path('锁单选配比例.xlsx'), workbook=book)
+        store = SimpleNamespace(find=lambda _: item)
+        windows = {'m9': {'generation': '问界 M9 2026款', 'end_date': '2026-06-30'}}
+        with patch('modules.sales_forecast._read_model_mapping', return_value={}), patch('modules.sales_forecast._read_model_master', return_value={}):
+            history, _ = _read_steady_history(store, windows, today=date(2026, 7, 31))
+        self.assertEqual([row['lock'] for row in history[0]['weeks']], [100, 0, 200])
+        self.assertEqual(history[0]['daily'][0]['date'], '2026-07-01')
+        self.assertEqual(history[0]['daily'][0]['lock'], 0)
+        self.assertEqual(history[0]['daily'][-1]['date'], '2026-07-29')
+
     def test_history_curves_prefer_exact_event_name_over_shared_generation(self):
         with TemporaryDirectory() as temp:
             path = Path(temp) / 'history.xlsx'

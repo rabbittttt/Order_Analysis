@@ -279,7 +279,25 @@ const templates=path.resolve(__dirname,'../templates');
  await page.evaluate(f=>{window.bridgeTest.state.forecastStage='steady';document.querySelector('#page').innerHTML=window.bridgeTest.renderForecastWorkspaceV2(f);window.bridgeTest.bindForecastWorkspaceV2()},nowSteady);
  const steadyToday=await page.locator('[data-steady-workspace]').evaluate(w=>w._steadyDaily.find(row=>row.date==='2026-09-04'));
  assert(steadyToday.lock>=900);assert.equal(steadyToday.actual,false);
+ // The last reservation day can also be launch D1. Its total is still a forecast.
+ const reservationEnd=JSON.parse(JSON.stringify(fixture));
+ Object.assign(reservationEnd.target,{launch_date:'2026-09-04',small_start_date:'2026-09-01',small_end_date:'2026-09-04',total_small:0});
+ Object.assign(reservationEnd.targets[0],{launch_date:'2026-09-04',end_date:'2026-09-11',small_start_date:'2026-09-01',small_end_date:'2026-09-04',small_days:4,small:0});
+ reservationEnd.small_order_history=[{...reservationEnd.small_order_history[0],days:4,small_progress:[.25,.5,.75,1]}];
+ reservationEnd.actuals=[{model:'current',total_small:0,hard_errors:['总小订缺失或不大于0'],days:[],small_daily_days:[
+  {date:'2026-09-01',orders:1000},{date:'2026-09-02',orders:0},{date:'2026-09-03',orders:2000},{date:'2026-09-04',orders:500}
+ ]}];
+ const renderEnd=async f=>{await page.evaluate(f=>{window.bridgeTest.state.forecastStage='launch';document.querySelector('#page').innerHTML=window.bridgeTest.renderForecastWorkspaceV2(f);window.bridgeTest.bindForecastWorkspaceV2()},f);};
+ await renderEnd(reservationEnd);
+ const endDayLinked=await page.locator('.forecast-workspace').evaluate(r=>({small:r._smallForecastResult,input:Number(r.querySelector('[data-forecast-input="small"]').value),linked:r._smallForecastLinked,
+  available:r._forecastComparison.scenarios.parameter.available,error:r.querySelector('[data-forecast-data-error]').hidden}));
+ assert.equal(endDayLinked.small.stage,'active');assert.equal(endDayLinked.small.error,'');assert(endDayLinked.small.total>0);
+ assert.equal(endDayLinked.input,endDayLinked.small.total);assert(endDayLinked.linked);assert(endDayLinked.available);assert(endDayLinked.error);
+ assert.equal(reservationEnd.actuals[0].total_small,0,'forecast must not overwrite real final total');
+ reservationEnd.small_order_history=[];await renderEnd(reservationEnd);
+ assert(await page.locator('[data-forecast-data-error]').evaluate(n=>n.hidden));
+ assert((await page.locator('[data-forecast-method-status="parameter"]').textContent()).includes('等待小订预测总量'));
  assert.deepEqual(errors,[]);
- console.log('PASS: shared daily curve affects both methods, capped weights across stages, display-only slope isolation and responsive layout, conservation and calendar integration');
+ console.log('PASS: shared curves, conservation, calendar integration, end-day reservation prediction linked to active launch method two, pending forecast is not a raw-data error');
  }finally{await browser.close()}
 })().catch(error=>{console.error(error);process.exitCode=1});

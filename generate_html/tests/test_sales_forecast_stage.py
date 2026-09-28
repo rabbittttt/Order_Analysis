@@ -151,6 +151,7 @@ class SalesForecastStageTests(unittest.TestCase):
         self.assertEqual(_small_order_stage("2026-09-01", "2026-09-10", date(2026, 9, 1))["key"], "d1")
         active = _small_order_stage("2026-09-01", "2026-09-10", date(2026, 9, 4))
         self.assertEqual((active["key"], active["day"]), ("active", 4))
+        self.assertEqual(_small_order_stage("2026-09-01", "2026-09-10", date(2026, 9, 10))["key"], "active")
         self.assertEqual(_small_order_stage("2026-09-01", "2026-09-10", date(2026, 9, 11))["key"], "ended")
 
     def test_lock_mix_generation_is_added_to_forecast_targets(self):

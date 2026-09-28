@@ -14,7 +14,7 @@ from openpyxl.utils.datetime import from_excel
 
 from core.china_calendar import calendar_payload
 from core.model_identity import model_key, usable_attribute
-from core.excel import display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type
+from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type
 from core.models import Dashboard, SourceRef, Subject
 from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, input_path, open_input, summary_scope
 
@@ -1081,10 +1081,11 @@ def _iso_week_bounds(value: Any) -> tuple[date, date] | None:
     return start, start + timedelta(days=6)
 
 
-def _fill_sparse_dates(rows, fields):
+def _fill_sparse_dates(rows, fields, coverage=(), start=None, end=None):
     """Absent export columns inside observed coverage mean zero, not blank cells.
 
-    Never fill before/after the observed interval or overwrite an explicit blank.
+    Physical-file coverage can extend beyond this model's last sale. Never fill
+    outside those export intervals or overwrite an explicit blank/invalid cell.
     Duplicate dates remain intact so downstream validation can reject them.
     """
     by_date = {row["date"]: row for row in rows if row.get("date")}
@@ -1092,18 +1093,22 @@ def _fill_sparse_dates(rows, fields):
         return rows
     observed = sorted(day for day, row in by_date.items()
                       if any(_optional_number(row.get(field)) is not None for field in fields))
-    if len(observed) < 2:
+    intervals = list(coverage)
+    if not intervals and len(observed) >= 2:
+        intervals = [(date.fromisoformat(observed[0]), date.fromisoformat(observed[-1]))]
+    if not intervals:
         return rows
-    current, end = date.fromisoformat(observed[0]), date.fromisoformat(observed[-1])
-    while current <= end:
-        key = current.isoformat()
-        if key not in by_date:
-            by_date[key] = {"date": key, **{field: 0 for field in fields}, "absent_as_zero": True}
-        current += timedelta(days=1)
+    for first, last in intervals:
+        current, finish = max(first, start) if start else first, min(last, end) if end else last
+        while current <= finish:
+            key = current.isoformat()
+            if key not in by_date:
+                by_date[key] = {"date": key, **{field: 0 for field in fields}, "absent_as_zero": True}
+            current += timedelta(days=1)
     return [by_date[key] for key in sorted(by_date)]
 
 
-def _read_steady_daily(workbook, generation: str, start: date, today: date):
+def _read_steady_daily(workbook, generation: str, start: date, today: date, coverage=()):
     result = []
     source_sheets = []
     for sheet in workbook.worksheets:
@@ -1123,7 +1128,8 @@ def _read_steady_daily(workbook, generation: str, start: date, today: date):
                 result.append({'date':day.isoformat(), 'lock':int(round(value)) if valid else None, 'complete':day < today})
             source_sheets.append(sheet.title)
             break
-    result = _fill_sparse_dates(sorted(result, key=lambda row:row['date']), ("lock",))
+    result = (_fill_sparse_dates(sorted(result, key=lambda row:row['date']), ("lock",), coverage, start, today)
+              if source_sheets else result)
     for row in result:
         row["complete"] = row["date"] < today.isoformat()
     return result, source_sheets
@@ -1163,7 +1169,8 @@ def _read_steady_history(
                 )
                 continue
             steady_start = launch_end + timedelta(days=1)
-            daily, daily_sheets = _read_steady_daily(lock_item.workbook, generation, steady_start, current)
+            daily, daily_sheets = _read_steady_daily(lock_item.workbook, generation, steady_start, current,
+                                                    _source_date_ranges(lock_item))
             parsed = parse_metric_sheet(sheet)
             raw_locks: dict[str, Any] = {}
             current_metric = ""
@@ -1206,6 +1213,23 @@ def _read_steady_history(
                     "end_date": week_end.isoformat(),
                     "lock": int(round(lock_value)),
                 })
+            # A week omitted from the mix export is zero only when all seven
+            # daily dates are covered. Explicit invalid weekly values stay invalid.
+            daily_weeks = {}
+            for row in daily:
+                day = _as_date(row.get("date"))
+                if day and row.get("complete"):
+                    daily_weeks.setdefault(day.isocalendar()[:2], []).append(row)
+            for (year, week), rows in daily_weeks.items():
+                period = f"{year % 100:02d}WK{week:02d}"
+                week_start, week_end = date.fromisocalendar(year, week, 1), date.fromisocalendar(year, week, 7)
+                if (period in raw_locks or any(row["period"] == period for row in weeks)
+                        or week_start < steady_start or week_end >= current or len({row['date'] for row in rows}) != 7
+                        or any(row.get("lock") is None for row in rows)):
+                    continue
+                weeks.append({"period": period, "start_date": week_start.isoformat(),
+                              "end_date": week_end.isoformat(), "lock": sum(row["lock"] for row in rows),
+                              "absent_as_zero": all(row.get("absent_as_zero") for row in rows)})
             weeks.sort(key=lambda row: row["start_date"])
             if any(
                 (_as_date(current_row["start_date"]) - _as_date(previous["start_date"])).days != 7
@@ -1476,7 +1500,7 @@ def _sheet_rows(sheet) -> dict[str, list[Any]]:
     }
 
 
-def _read_actual_profiles(store) -> tuple[list[dict[str, Any]], list[SourceRef]]:
+def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[dict[str, Any]], list[SourceRef]]:
     profiles: dict[str, dict[str, Any]] = {}
     sources: list[SourceRef] = []
     model_mapping = _read_model_mapping()
@@ -1625,6 +1649,7 @@ def _read_actual_profiles(store) -> tuple[list[dict[str, Any]], list[SourceRef]]
 
     small_mix_item = store.find("小订选配比例")
     if small_mix_item:
+        small_coverage = _source_date_ranges(small_mix_item)
         for sheet in small_mix_item.workbook.worksheets:
             if "图表" in sheet.title or grain_from_sheet(sheet.title) != "day":
                 continue
@@ -1658,9 +1683,13 @@ def _read_actual_profiles(store) -> tuple[list[dict[str, Any]], list[SourceRef]]
                     daily_rows.append({"date": date_key, "orders": None})
                     continue
                 daily_rows.append({"date": date_key, "orders": int(round(orders))})
+            window = _stage_window(stage_windows or {}, model) or {}
+            known_dates = [day for row in daily_rows if (day := _as_date(row.get("date"))) is not None]
+            start = _as_date(window.get("small_start_date")) or (min(known_dates) if known_dates else None)
+            end = min(_as_date(window.get("small_end_date")) or (today or date.today()), today or date.today())
+            daily_rows = _fill_sparse_dates(daily_rows, ("orders",), small_coverage, start, end) if start else daily_rows
             if not daily_rows:
                 continue
-            daily_rows = _fill_sparse_dates(daily_rows, ("orders",))
             profile_name = next((name for name in profiles if _same_model(name, model)), model)
             profile = profiles.setdefault(profile_name, {"model": profile_name, "days": [], "hourly_days": [], "small_hourly_days": []})
             source = SourceRef(small_mix_item.path.name, sheet.title, "小订选配比例by天真实小订")
@@ -2620,11 +2649,11 @@ class SalesForecastModule:
         path, history = _read_history()
         if not history or path is None:
             return None
-        raw_profiles, actual_sources = _read_actual_profiles(store)
+        stage_window_path, stage_windows = _read_stage_windows()
+        raw_profiles, actual_sources = _read_actual_profiles(store, stage_windows, today=self.as_of_date)
         _attach_actual_shapes(history, raw_profiles, today=self.as_of_date)
         small_history_path, small_history = _read_small_order_history()
         _attach_small_hourly_curves(small_history, raw_profiles)
-        stage_window_path, stage_windows = _read_stage_windows()
         steady_history, steady_sources = _read_steady_history(
             store, stage_windows, today=self.as_of_date
         )
