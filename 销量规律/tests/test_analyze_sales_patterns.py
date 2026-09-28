@@ -272,5 +272,106 @@ class SalesPatternTests(unittest.TestCase):
                     m.main()
             self.assertEqual(final.read_bytes(),b'preserve source')
             self.assertFalse((root/'ignored-folder').exists())
+
+
+class UnifiedDailyTests(unittest.TestCase):
+    def read(self, rows, models=(), headers=None):
+        base = ['日期','订单分析代际名','订单阶段','来源类型','来源文件','来源Sheet',
+                '生命周期','历史传播名','小订数量','大定','留存大定','交车锁单']
+        head = headers if headers is not None else list(dict.fromkeys(base+[k for r in rows for k in r]))
+        model_head = ['订单分析代际名','历史传播名','首销开始','首销结束','小订开始','小订结束','品牌','产品档位','能源类型']
+        book = Book([], [])
+        book.sheets = {
+            m.UNIFIED_DAILY_SHEET: Sheet([head]+[[r.get(k) for k in head] for r in rows]),
+            '车型基本信息': Sheet([model_head]+[[r.get(k) for k in model_head] for r in models]),
+            '说明与来源': Sheet([['项目','内容'],['数据判定日期','2025-12-31']]),
+        }
+        book.sheetnames = list(book.sheets)
+        with patch.object(m.openpyxl, 'load_workbook', return_value=book):
+            return m.read_panel(Path('not-read.xlsx'))
+
+    def row(self, **changes):
+        row = dict(日期=date(2025,8,1), 订单分析代际名='测试车型', 订单阶段='首销',
+                   来源类型='首销订单', 来源文件='鸿蒙智行首销期订单节奏.xlsx',
+                   来源Sheet='测试车型by天', 生命周期='D1')
+        row.update(changes)
+        return row
+
+    def test_unified_metrics_zero_snapshots_future_and_no_net_substitution(self):
+        rows = [self.row(大定=100,留存大定=0,交车锁单=20),
+                self.row(日期=date(2025,8,2),大定=80,生命周期='D2'),
+                self.row(来源类型='首销分时累计',来源Sheet='测试车型by时',交车锁单=999),
+                self.row(日期=date(2026,1,1),留存大定=1000)]
+        panel,audit = self.read(rows)
+        net = [r for r in panel if r['metric']=='留存大定']
+        self.assertEqual([r['value'] for r in net],[0])
+        self.assertEqual([r['value'] for r in panel if r['metric']=='交车锁单'],[20])
+        self.assertEqual(audit['累计快照或参考曲线排除'],1)
+        self.assertEqual(audit['未来或超过数据判定日期排除'],1)
+        self.assertEqual(net[0]['cycle'],'2025-08-01')
+        self.assertIn('测试车型by天',net[0]['source'])
+
+    def test_unified_small_priority_and_stage_normalization(self):
+        rows = [self.row(订单阶段='小订',来源类型='历史小订',来源文件='整理表.xlsx',小订数量=50),
+                self.row(订单阶段='小订',来源类型='逐日小订',来源文件='鸿蒙智行小订退订分析.xlsx',小订数量=60),
+                self.row(订单阶段='小订',来源类型='逐日小订',来源文件='鸿蒙智行小订选配比例分析.xlsx',小订数量=0)]
+        panel,audit = self.read(rows)
+        self.assertEqual(len(panel),1)
+        self.assertEqual(panel[0]['value'],0)
+        self.assertEqual(panel[0]['stage'],'小订阶段')
+        self.assertEqual(audit['跨来源候选未累加'],2)
+        reverse,_ = self.read(list(reversed(rows)))
+        self.assertEqual(panel[0]['source'],reverse[0]['source'])
+        self.assertEqual(panel[0]['value'],reverse[0]['value'])
+
+    def test_unified_finished_launch_prefers_history_and_active_prefers_launch(self):
+        rows=[self.row(大定=100),self.row(来源类型='历史首销',来源文件='整理表.xlsx',大定=200)]
+        ended=[dict(订单分析代际名='测试车型',首销开始='2025-08-01',首销结束='2025-09-01')]
+        active=[dict(订单分析代际名='测试车型',首销开始='2025-08-01',首销结束='2026-01-01')]
+        self.assertEqual(self.read(rows,ended)[0][0]['value'],200)
+        self.assertEqual(self.read(rows,active)[0][0]['value'],100)
+
+    def test_unified_regular_lock_source_priority(self):
+        rows=[self.row(订单阶段='平销',交车锁单=25),
+              self.row(订单阶段='平销',来源类型='平销锁单',来源文件='鸿蒙智行锁单选配比例分析.xlsx',交车锁单=0)]
+        panel,_=self.read(rows)
+        self.assertEqual(len(panel),1)
+        self.assertEqual(panel[0]['value'],0)
+        self.assertEqual(panel[0]['cycle'],'平销')
+
+    def test_unified_duplicate_and_equal_priority_conflicts(self):
+        row=self.row(留存大定=10)
+        panel,audit=self.read([row,row.copy()])
+        self.assertEqual(len(panel),1)
+        self.assertEqual(audit['相同重复去重'],1)
+        with self.assertRaisesRegex(ValueError,'重复键冲突'):
+            self.read([row,self.row(留存大定=11)])
+        with self.assertRaisesRegex(ValueError,'同优先级来源冲突'):
+            self.read([row,self.row(来源Sheet='第二批by天',留存大定=11)])
+
+    def test_unified_matches_multiple_launches_and_preserves_conflicting_attributes(self):
+        models=[dict(订单分析代际名='测试车型',历史传播名='上半年款',首销开始='2025-01-01',首销结束='2025-02-01',能源类型='纯电'),
+                dict(订单分析代际名='测试车型',历史传播名='下半年款',首销开始='2025-08-01',首销结束='2025-09-01',能源类型='增程')]
+        rows=[self.row(日期=date(2025,1,2),生命周期=None,历史传播名='上半年款',留存大定=10),
+              self.row(日期=date(2025,8,2),生命周期=None,历史传播名='下半年款',留存大定=20)]
+        panel,audit=self.read(rows,models)
+        self.assertEqual({r['cycle'] for r in panel},{'2025-01-01','2025-08-01'})
+        self.assertEqual({r['life'] for r in panel},{2})
+        self.assertEqual({r['energy'] for r in panel},{'映射冲突'})
+        self.assertEqual(audit['属性冲突车型数'],1)
+
+    def test_unified_legacy_net_alias_and_negative_values(self):
+        row=self.row(净大定=-2)
+        headers=[k for k in row]+['小订数量','大定','交车锁单']
+        panel,audit=self.read([row],headers=headers)
+        self.assertEqual([(r['metric'],r['value']) for r in panel],[('留存大定',-2)])
+        self.assertEqual(audit['留存大定负值不参与倍率'],1)
+
+    def test_unified_missing_source_columns_fail_clearly(self):
+        row=self.row(留存大定=10)
+        with self.assertRaisesRegex(ValueError,'来源Sheet'):
+            self.read([row],headers=[k for k in row if k!='来源Sheet'])
+
+
 if __name__=='__main__': unittest.main()
 

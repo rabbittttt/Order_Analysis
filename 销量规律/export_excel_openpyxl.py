@@ -433,7 +433,7 @@ def export_workbook(payload, output_path, log=None):
             {5: "yyyy-mm-dd", 6: "yyyy-mm-dd"})
     source_row = 8 + len(d["coverage"])
     b.section(methods, source_row, "数据来源与检查", 8)
-    b.note(methods, source_row + 1, "业务来源：鸿蒙智行销量数据汇总.xlsx / 小订及退订逐日、当前订单逐日")
+    b.note(methods, source_row + 1, "业务来源：" + Path(payload.get("source", "鸿蒙智行销量数据汇总.xlsx")).name + " / " + "、".join(payload.get("source_sheets", ["小订及退订逐日", "当前订单逐日"])))
     b.note(methods, source_row + 2, "结果模式：" + ("本地样例" if payload.get("sample") else "实际数据") + "；所有数值为本次分析快照，原业务工作簿未修改。")
     b.note(methods, source_row + 3, "SHA-256：" + payload["sha256"])
     audit_row = source_row + 5
@@ -445,7 +445,7 @@ def export_workbook(payload, output_path, log=None):
         ("月", "完整自然月；月末最后7天与其余日期日均比较，未调整星期与节日。"),
         ("年", "完整年度逐年显示；通用季节性需多年度验证。零月保留，全年为零时指数留空。"),
         ("节假日", "平销节前7天、节中、节后7天均须完整；同星期匹配前后对照。"),
-        ("缺失与来源", "缺失不补零；预测、合成、模拟和缺失来源排除。负值保留在观测合计，含负值周期不算倍率。"),
+        ("缺失与来源", "缺失不补零；预测、合成、模拟和缺失来源排除。新版逐日表按来源优先级择一，累计快照、参考曲线和未来数据排除；周表不拆成日销量。负值保留在观测合计，含负值周期不算倍率。"),
         ("统计边界", "规律汇总提供完整年度的留出方向验证；未做回归、置信区间或因果识别。"),
         ("日历", "已配置年份：" + "、".join(map(str, payload.get("calendar_years", []))) + "；未配置年份不判断普通周与节日。"),
         ("首页分类", grouping["reason"]),

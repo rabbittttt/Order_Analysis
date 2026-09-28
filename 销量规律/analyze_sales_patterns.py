@@ -53,10 +53,171 @@ def load_calendar(extra=None):
 def ordinary(d,c):
     return d.year in c['years'] and d not in c['holidays'] and d not in c['work']
 
+UNIFIED_DAILY_SHEET = '小订首销平销by天'
+
+
+def _workbook_records(wb, name):
+    rows = iter(wb[name].iter_rows(values_only=True))
+    header = next(rows, ())
+    return header, ((n, dict(zip(header, values))) for n, values in enumerate(rows, 2)
+                    if any(value is not None for value in values))
+
+
+def _daily_source_rank(row, metric, model_info, cutoff):
+    kind, filename = row['来源类型'], row['来源文件']
+    if metric == '小订数量':
+        if '小订选配' in filename: return 0
+        if '小订退订' in filename: return 1
+        if kind == '历史小订': return 2
+        return 10
+    if metric == '交车锁单' and row['订单阶段'] == '平销' and kind == '平销锁单':
+        return 0
+    start, end = dt(model_info.get('首销开始')), dt(model_info.get('首销结束'))
+    if start and cutoff < start:
+        order = ('小订退订', '历史首销', '首销订单')
+    elif (end and cutoff >= end) or row['订单阶段'] == '平销':
+        order = ('历史首销', '首销订单', '小订退订')
+    else:
+        order = ('首销订单', '历史首销', '小订退订')
+    for rank, source in enumerate(order, 1):
+        if source == kind or (source == '小订退订' and source in filename): return rank
+    return 10
+
+
+def _match_model_phase(records, row, day):
+    """Match repeated model entries by original name and period, not row order."""
+    dated = [r for r in records if dt(r.get('首销开始')) or dt(r.get('小订开始'))]
+    same_name = [r for r in dated if row.get('历史传播名') and
+                 r.get('历史传播名') == row['历史传播名']]
+    choices = same_name or dated
+    prefix = '小订' if row.get('订单阶段') in ('小订', '小订阶段') else '首销'
+    covering = [r for r in choices if dt(r.get(prefix+'开始')) and dt(r.get(prefix+'结束'))
+                and dt(r[prefix+'开始']) <= day <= dt(r[prefix+'结束'])]
+    choices = covering or choices
+    starts = [(dt(r.get(prefix+'开始')), r) for r in choices if dt(r.get(prefix+'开始'))]
+    if not starts: return {}
+    past = [(start, r) for start, r in starts if start <= day]
+    selected_start = max(start for start, _ in past) if past else min(start for start, _ in starts)
+    matches = [r for start, r in starts if start == selected_start]
+    boundaries = {tuple(dt(r.get(k)) for k in ('小订开始','小订结束','首销开始','首销结束')) for r in matches}
+    if len(boundaries) > 1:
+        raise ValueError('车型阶段日期冲突：'+str(row.get('订单分析代际名')))
+    return matches[0]
+
+
+def read_unified_panel(wb, audit):
+    """Resolve daily source candidates without adding snapshots or weekly totals."""
+    cutoff = date.today()
+    if '说明与来源' in wb.sheetnames:
+        _, notes = _workbook_records(wb, '说明与来源')
+        for _, row in notes:
+            if row.get('项目') == '数据判定日期' and dt(row.get('内容')):
+                cutoff = min(cutoff, dt(row['内容']))
+    info = defaultdict(list)
+    if '车型基本信息' in wb.sheetnames:
+        _, model_rows = _workbook_records(wb, '车型基本信息')
+        for _, row in model_rows:
+            model = row.get('订单分析代际名')
+            if model:
+                info[str(model)].append(row)
+    head, rows = _workbook_records(wb, UNIFIED_DAILY_SHEET)
+    required = {'日期', '订单分析代际名', '订单阶段', '来源类型', '来源文件', '来源Sheet'}
+    if required - set(head):
+        raise ValueError(UNIFIED_DAILY_SHEET + '缺少字段' + str(sorted(required-set(head))))
+    columns = {'小订数量': '小订数量'} if '小订数量' in head else {}
+    for metric, aliases in ORDER_METRIC_COLUMNS.items():
+        present = [col for col, _ in aliases if col in head]
+        if present:
+            columns[metric] = present[0]
+            if len(present) > 1: audit[metric+'新旧字段同时存在，优先新字段'] += 1
+    if not columns:
+        raise ValueError(UNIFIED_DAILY_SHEET + '没有可识别的订单指标列')
+    candidates = defaultdict(list)
+    seen = {}
+    for rowno, row in rows:
+        audit[UNIFIED_DAILY_SHEET+'原始行'] += 1
+        d, model = dt(row.get('日期')), row.get('订单分析代际名')
+        if not d or not model:
+            audit['无效日期或车型'] += 1
+            continue
+        if d > cutoff:
+            audit['未来或超过数据判定日期排除'] += 1
+            continue
+        kind = str(row.get('来源类型') or '').strip()
+        filename = str(row.get('来源文件') or '').strip()
+        source_sheet = str(row.get('来源Sheet') or '').strip()
+        if any(word in kind or word in source_sheet for word in ('累计', '快照', '参考曲线')):
+            audit['累计快照或参考曲线排除'] += 1
+            continue
+        if not kind or not filename or not source_sheet or any(
+                word in kind for word in ('预测', '合成', '模拟', '缺失')):
+            audit['逐日来源排除'] += 1
+            continue
+        if '真实逐日' in head and str(row.get('真实逐日')).lower() not in ('true', '1', '是'):
+            audit['非真实逐日排除'] += 1
+            continue
+        stage = str(row.get('订单阶段') or '').strip()
+        if not stage:
+            audit['订单阶段缺失排除'] += 1
+            continue
+        match = re.fullmatch(r'D(\d+)', str(row.get('生命周期') or ''), re.I)
+        life = int(match[1]) if match else None
+        model_info = _match_model_phase(info.get(str(model), []), row, d)
+        anchor = d-timedelta(days=life-1) if life and life > 0 else None
+        small_stage = stage in ('小订', '小订阶段')
+        if anchor is None and (small_stage or stage == '首销'):
+            prefix = '小订' if small_stage else '首销'
+            start, end = dt(model_info.get(prefix+'开始')), dt(model_info.get(prefix+'结束'))
+            if start and end and start <= d <= end:
+                anchor, life = start, (d-start).days+1
+        normalized_stage = '小订阶段' if small_stage else stage
+        cycle = str(anchor) if anchor and stage != '平销' else normalized_stage
+        source = ' | '.join((kind, filename, source_sheet))
+        normalized_row = dict(row, 来源类型=kind, 来源文件=filename, 订单阶段=stage)
+        for metric, column in columns.items():
+            value = row.get(column)
+            if value is None:
+                audit[metric+'缺失'] += 1
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                audit[metric+'非数值'] += 1
+                continue
+            key = (str(model), d, metric)
+            source_key = key + (source,)
+            signature = (value, normalized_stage, cycle)
+            if source_key in seen:
+                if seen[source_key] != signature:
+                    raise ValueError('重复键冲突（同来源）：'+str(source_key))
+                audit['相同重复去重'] += 1
+                continue
+            seen[source_key] = signature
+            item = dict(model=str(model), date=d, metric=metric, stage=normalized_stage,
+                        source=source, cycle=cycle, value=float(value), life=life,
+                        sheet=UNIFIED_DAILY_SHEET, row=rowno)
+            rank = _daily_source_rank(normalized_row, metric, model_info, cutoff)
+            candidates[key].append((rank, item))
+    panel = []
+    for key, choices in sorted(candidates.items()):
+        choices.sort(key=lambda choice: (choice[0], choice[1]['source']))
+        rank, selected = choices[0]
+        tied = [r for priority, r in choices if priority == rank]
+        if any((r['value'], r['stage'], r['cycle']) !=
+               (selected['value'], selected['stage'], selected['cycle']) for r in tied):
+            raise ValueError('同优先级来源冲突，无法自动选取：'+str(key))
+        audit['跨来源候选未累加'] += len(choices)-1
+        if selected['value'] < 0: audit[selected['metric']+'负值不参与倍率'] += 1
+        panel.append(selected)
+    audit['新版逐日表已识别'] = 1
+    attach_model_classes(wb, panel, audit)
+    return panel, dict(audit)
+
+
 def read_panel(path):
     wb=openpyxl.load_workbook(path,read_only=True,data_only=True)
     panel=[]; audit=Counter(); seen={}
     try:
+        if UNIFIED_DAILY_SHEET in getattr(wb, 'sheetnames', ()):
+            return read_unified_panel(wb, audit)
         for name,small in [('小订及退订逐日',True),('当前订单逐日',False)]:
             it=wb[name].iter_rows(values_only=True); head=next(it)
             required={'日期','订单分析代际名'}|({'小订数量','真实逐日'} if small else {'订单阶段'})
@@ -401,6 +562,9 @@ def main():
     if not panel:
         raise ValueError('源工作簿中没有有效观测，请检查日期、车型、指标值和来源字段')
     log(f'源数据读取及校验完成：有效观测 {len(panel):,} 条，车型 {len({r["model"] for r in panel}):,} 个，用时 {time.perf_counter()-stage:.1f} 秒')
+    log('读取工作表：'+'、'.join(sorted({r['sheet'] for r in panel})))
+    for key in ('跨来源候选未累加', '累计快照或参考曲线排除', '未来或超过数据判定日期排除'):
+        if audit.get(key): log(f'{key}：{audit[key]:,} 条')
     log(f'数据日期范围：{min(r["date"] for r in panel)} 至 {max(r["date"] for r in panel)}')
 
     stage=time.perf_counter()
@@ -431,7 +595,7 @@ def main():
     if sha256_file(src)!=digest:
         raise RuntimeError('分析期间源文件发生变化，已停止导出')
     payload=dict(sample=a.sample_data and not a.real_data,source=str(src),sha256=digest,
-                 audit=audit,calendar_years=sorted(c['years']),calendar_sources=c['sources'],
+                 source_sheets=sorted({r['sheet'] for r in panel}),audit=audit,calendar_years=sorted(c['years']),calendar_sources=c['sources'],
                  analysis_end=max(r['date'] for r in panel),results=result,forecast=forecast,
                  calendar_events=[dict(year=y,holiday=n,start=a,end=b) for y,n,a,b in c['events']])
     log('正在准备离线交互网页...')

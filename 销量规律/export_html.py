@@ -50,6 +50,8 @@ def build_web_data(payload, panel):
         "P25/P75表示历史倍率分布，不是预测置信区间；周内、月份、节假日系数可能重叠，不自动连乘。",
         "分类汇总可能随车型覆盖变化。单车型、同阶段、同来源/批次的完整周期更适合预测校准。",
     ]
+    if payload.get("source_sheets"):
+        notes.append("逐日输入：" + "、".join(payload["source_sheets"]) + "；同一天同指标的来源候选择一，累计快照、参考曲线及未来日期不进入分析。")
     if payload.get("sample"):
         notes.insert(0, "当前为样例数据，仅验证功能，不能据此确定真实经营规律。")
     return dict(meta=dict(title="鸿蒙智行 · 销量预测规律研究", generated_at=datetime.now().isoformat(timespec="seconds"),
