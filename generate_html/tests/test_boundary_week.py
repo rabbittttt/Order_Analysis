@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 from openpyxl import Workbook
 
-from core.excel import WorkbookItem, WorkbookStore, _week_period, display_period, parse_metric_sheet
+from core.excel import WorkbookItem, WorkbookStore, _week_period, _source_date_range, display_period, parse_metric_sheet
+from core.forecast_summary import INDEX_SHEET, summary_scope
 from modules.conversion import ConversionModule, STAGES
 from modules.sales_forecast import _read_steady_history
 from core.models import Subject
@@ -17,9 +18,27 @@ MODEL = "问界 M9 2026款"
 
 
 class BoundaryWeekTests(unittest.TestCase):
-    def store(self, books, keyword="锁单选配比例分析"):
+    def store(self, books, keyword="锁单选配比例分析", ranges=None, infer_test_ranges=True):
+        if ranges is None and infer_test_ranges:
+            week = next((week for book in books for sheet in book.worksheets
+                         for row in sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 3), values_only=True)
+                         for value in row if (week := _week_period(str(value))) and week[3]), None)
+            if week:
+                cutoff = date(week[1].year, 12, 31) if week[3] == "跨年" else date(week[1].year, 6, 30)
+                ranges = [(week[1], cutoff), *[(date(cutoff.year + 1, 1, 1) if cutoff.month == 12
+                                               else date(cutoff.year, 7, 1), week[2])] * (len(books) - 1)]
+        if "订单7级转化" not in keyword:
+            for book, span in zip(books, ranges or []):
+                sheet = book.create_sheet(MODEL + "by天")
+                sheet.append(["指标", "统计类型", "分类", *span])
+                sheet.append(["交车锁单", "数量", "数量", 1, 1])
         store = WorkbookStore(Path("."))
         store.items = [WorkbookItem(Path(f"{keyword}_{index}.xlsx"), book) for index, book in enumerate(books)]
+        if "订单7级转化" in keyword:
+            # Record-only fixtures receive the original coverage evidence just
+            # as summary_scope restores it from the imported source directory.
+            for item, span in zip(store.items, ranges or []):
+                item._boundary_date_range = span
         self.addCleanup(store.close)
         return store
 
@@ -71,7 +90,7 @@ class BoundaryWeekTests(unittest.TestCase):
     def test_identical_pieces_stay_deduplicated_after_sum(self):
         store = self.store([self.metric("26WK53", value) for value in [140, 90, 140, 230]])
         _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
-        self.assertEqual(parse_metric_sheet(sheet)["26WK53"]["metrics"]["交车锁单"], 460)
+        self.assertEqual(parse_metric_sheet(sheet)["26WK53"]["metrics"]["交车锁单"], 230)
         same = self.store([self.metric("26WK53", 140), self.metric("26WK53", 140)])
         with patch("core.excel.LOGGER.info") as log:
             _, sheet = same.find_subject_sheet("锁单选配比例", MODEL, "week")
@@ -178,6 +197,126 @@ class BoundaryWeekTests(unittest.TestCase):
         self.assertEqual(sheet.cell(3, 3).value, 140)  # Annual totals are not additive.
         self.assertEqual(sheet.cell(3, 6).value, .4)  # No percentage summation.
         self.assertTrue(any("边界周累加" in line for line in logs.output))
+
+    def test_file_already_crosses_boundary_is_not_added(self):
+        books = [self.metric("26WK27", 1853), self.metric("26WK27", 3)]
+        store = self.store(books, ranges=[(date(2026, 1, 1), date(2026, 7, 5)),
+                                         (date(2026, 7, 1), date(2026, 7, 5))])
+        with patch("core.excel.LOGGER.info") as info, patch("core.excel.LOGGER.warning"):
+            _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
+        self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 1853)
+        self.assertEqual(sheet._boundary_week_merges, [])
+        info.assert_not_called()
+
+    def test_unknown_overlapping_gap_and_unrelated_ranges_do_not_add(self):
+        cases = [None,
+                 [(date(2026, 6, 29), date(2026, 6, 30)), (date(2026, 6, 30), date(2026, 7, 5))],
+                 [(date(2026, 6, 29), date(2026, 6, 29)), (date(2026, 7, 1), date(2026, 7, 5))],
+                 [(date(2021, 1, 1), date(2025, 12, 31)), (date(2026, 1, 1), date(2026, 7, 5))]]
+        for ranges in cases:
+            with self.subTest(ranges=ranges):
+                store = self.store([self.metric("26WK27", 140), self.metric("26WK27", 90)],
+                                   ranges=ranges, infer_test_ranges=False)
+                with patch("core.excel.LOGGER.warning"):
+                    _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
+                self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 140)
+                self.assertEqual(sheet._boundary_week_merges, [])
+
+    def test_one_physical_file_never_enters_addition(self):
+        book = self.metric("26WK53", 140)
+        store = self.store([book], ranges=[(date(2026, 1, 1), date(2027, 1, 3))])
+        _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
+        self.assertEqual(parse_metric_sheet(sheet)["26WK53"]["metrics"]["交车锁单"], 140)
+
+    def test_future_blank_columns_do_not_make_a_file_cross_the_cut(self):
+        book = self.metric("26WK27", 140)
+        store = self.store([book], ranges=[(date(2026, 6, 29), date(2026, 6, 30))])
+        book.worksheets[1].cell(1, 6, date(2026, 7, 1))
+        self.assertEqual(_source_date_range(store.items[0]), (date(2026, 6, 29), date(2026, 6, 30)))
+
+    def test_sparse_old_model_uses_whole_file_dates_including_real_zero(self):
+        books = [self.metric("26WK27", 1), self.metric("26WK27", 2)]
+        for book, sold in zip(books, [date(2026, 6, 29), date(2026, 7, 3)]):
+            daily = book.create_sheet(MODEL + "by天")
+            daily.append(["指标", "统计类型", "分类", sold])
+            daily.append(["交车锁单", "数量", "数量", 1])
+        for book, days in zip(books, [(date(2026, 6, 29), date(2026, 6, 30)),
+                                      (date(2026, 7, 1), date(2026, 7, 5))]):
+            daily = book.create_sheet("鸿蒙智行by天")
+            daily.append(["指标", "统计类型", "分类", *days])
+            daily.append(["交车锁单", "数量", "数量", 0, 0])
+        store = self.store(books, infer_test_ranges=False)
+        self.assertEqual(_source_date_range(store.items[0]), (date(2026, 6, 29), date(2026, 6, 30)))
+        self.assertEqual(_source_date_range(store.items[1]), (date(2026, 7, 1), date(2026, 7, 5)))
+        _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
+        self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 3)
+
+    def test_sparse_model_cannot_hide_that_its_file_already_crosses_cut(self):
+        books = [self.metric("26WK27", 1), self.metric("26WK27", 2)]
+        store = self.store(books, ranges=[(date(2026, 6, 29), date(2026, 6, 30)),
+                                         (date(2026, 7, 1), date(2026, 7, 5))])
+        other = books[0].create_sheet("鸿蒙智行by天")
+        other.append(["指标", "统计类型", "分类", date(2026, 7, 5)])
+        other.append(["交车锁单", "数量", "数量", 5])
+        with patch("core.excel.LOGGER.warning"), patch("core.excel.LOGGER.info") as info:
+            _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
+        self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 1)
+        info.assert_not_called()
+
+    def test_summary_preserves_original_file_ranges_even_without_importing_daily_sheets(self):
+        book = Workbook()
+        directory = book.active
+        directory.title = INDEX_SHEET
+        directory.append(["类别", "原始文件", "原始Sheet", "汇总Sheet", "文件数据开始日期", "文件数据结束日期"])
+        for index, (quantity, start, end) in enumerate([(140, "2026-06-29", "2026-06-30"), (90, "2026-07-01", "2026-07-05")]):
+            stored = book.create_sheet(f"source{index}")
+            for row in self.metric("26WK27", quantity).active.iter_rows(values_only=True):
+                stored.append(row)
+            directory.append(["订单", f"锁单选配比例_{index}.xlsx", MODEL + "by周", stored.title, start, end])
+        with summary_scope(Path("summary.xlsx"), workbook=book) as active:
+            _, sheet = active["store"].find_subject_sheet("锁单选配比例", MODEL, "week")
+            self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 230)
+
+    def test_compact_source_directory_keeps_physical_file_dates(self):
+        from tools.refresh_sales_forecast_data import compact_source_sheets
+
+        book = Workbook()
+        directory = book.active
+        directory.title = INDEX_SHEET
+        directory.append(["类别", "原始文件", "原始Sheet", "汇总Sheet", "行数", "列数", "阅读用途",
+                          "文件数据开始日期", "文件数据结束日期"])
+        for name in ["源_平销_001", "源_平销_002"]:
+            book.create_sheet(name)
+            directory.append(["订单", "锁单选配比例.xlsx", name, name, 2, 4, "订单", "2026-07-01", "2026-07-05"])
+        compact_source_sheets(book)
+        row = next(book[INDEX_SHEET].iter_rows(min_row=2, values_only=True))
+        self.assertEqual(row[2], 2)
+        self.assertEqual(row[-2:], ("2026-07-01", "2026-07-05"))
+        self.assertFalse(any(name.startswith("源_") for name in book.sheetnames))
+
+    def test_summary_does_not_infer_narrower_ranges_from_imported_subset(self):
+        for original_range in [(None, None), ("2026-01-01", "2026-07-05")]:
+            with self.subTest(original_range=original_range):
+                book = Workbook()
+                directory = book.active
+                directory.title = INDEX_SHEET
+                directory.append(["类别", "原始文件", "原始Sheet", "汇总Sheet",
+                                  "文件数据开始日期", "文件数据结束日期"])
+                for index, (quantity, span, evidence) in enumerate([
+                    (140, (date(2026, 6, 29), date(2026, 6, 30)), original_range),
+                    (90, (date(2026, 7, 1), date(2026, 7, 5)), ("2026-07-01", "2026-07-05")),
+                ]):
+                    stored = book.create_sheet(f"source{index}")
+                    for row in self.metric("26WK27", quantity).active.iter_rows(values_only=True):
+                        stored.append(row)
+                    daily = book.create_sheet(f"daily{index}")
+                    daily.append(["指标", "统计类型", "分类", *span])
+                    daily.append(["交车锁单", "数量", "数量", 1, 1])
+                    for sheet, original in [(stored, MODEL + "by周"), (daily, MODEL + "by天")]:
+                        directory.append(["订单", f"锁单选配比例_{index}.xlsx", original, sheet.title, *evidence])
+                with summary_scope(Path("summary.xlsx"), workbook=book) as active, patch("core.excel.LOGGER.warning"):
+                    _, sheet = active["store"].find_subject_sheet("锁单选配比例", MODEL, "week")
+                    self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 140)
 
 
 if __name__ == "__main__":

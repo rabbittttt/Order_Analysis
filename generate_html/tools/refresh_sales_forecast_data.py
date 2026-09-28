@@ -28,7 +28,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
 
 from core.model_identity import model_key, usable_attribute
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, write_summary_snapshot, summary_scope
-from core.excel import grain_from_sheet, load_data_workbook
+from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
@@ -1025,6 +1025,7 @@ def forecast_signature(source, mapping, directory, as_of_date):
 def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_date, preserve_layout=True):
     """Consolidate values and formats, never fill blanks or add duplicate orders."""
     directory = []
+    source_ranges = {}
     source_counters = {"小订": 0, "首销": 0, "平销": 0, "其他": 0}
 
     def source_group(kind, filename):
@@ -1102,6 +1103,8 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         book = (load_workbook(path, read_only=False, data_only=True) if preserve_layout
                 else load_data_workbook(path, orders_dir / ".cache" / "excel"))
         try:
+            if kind == "订单":
+                source_ranges[path.name] = _source_date_range(WorkbookItem(path, book))
             for sheet in book.worksheets:
                 if kind == "历史" and sheet.title not in {"车型汇总", "小订by天", "小订进度"}:
                     continue
@@ -1119,12 +1122,12 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
                 import_sheet(sheet, kind, path.name, sheet.title if kind != "订单" else None)
         finally:
             book.close()
-    write_rows(workbook, INDEX_SHEET, ["类别", "原始文件", "原始Sheet", "汇总Sheet", "行数", "列数", "阅读用途"], [
+    write_rows(workbook, INDEX_SHEET, ["类别", "原始文件", "原始Sheet", "汇总Sheet", "行数", "列数", "阅读用途", "文件数据开始日期", "文件数据结束日期"], [
         [*row, {
             "历史": "历史参考与预测基准",
             "映射": "车型名称与属性映射",
             "订单": "当前真实订单候选来源",
-        }.get(row[0], "来源明细")]
+        }.get(row[0], "来源明细"), *[day.isoformat() if day else None for day in (source_ranges.get(row[1]) or (None, None))]]
         for row in directory
     ], "ForecastSources")
     fit_summary_columns(workbook[INDEX_SHEET])
@@ -1138,7 +1141,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         ["预测参考区", "预测基准总表、D1_D2预测指标及首销参考曲线：保留首销预测现有参考数据和计算结果，首销预测继续读取这些既有口径。"],
         ["历史与资料区", "车型基本信息、小订及退订逐日和预测基准总表：用于名称映射、车型属性、当前阶段及历史小订/首销基准核对。"],
         ["来源说明", "本文件只保留预测所需的汇总结果，不复制原始订单Sheet，也不重复展示可由统一逐日表表达的明细；数据来源目录记录对应汇总位置。"],
-        ["取数规则", "按原有阶段优先级逐字段回退；同类文件全部纳入，按车型、日期和指标合并。普通重叠位置保留排序后首个非空值，同值去重；跨年周、跨6月30日且该日非周日的周，不同文件中的不同有效数量累加并记录边界周日志。占比由合并数量重算或加权，不直接相加。"],
+        ["取数规则", "按原有阶段优先级逐字段回退；同类文件全部纳入，普通重叠保留排序后首个非空值，同值去重。边界周仅在两个原始文件日期范围分别截止6月30日/12月31日、从次日开始且互不重叠时累加不同有效数量；单文件已跨界、范围重叠或无法确认衔接时不累加。日期范围由真实逐日数量或明确导出起止日期确定，来源目录保留该证据；占比重算或加权，不直接相加。"],
         ["首销数据说明", "首销逐日数据与首销参考曲线承担不同预测用途，虽然部分车型数值可能相同，本次不合并、不改取数来源。"],
         ["汇总日期", as_of_date or date.today().isoformat()],
         ["刷新签名", forecast_signature(source, mapping_path, orders_dir, as_of_date)],
@@ -1362,6 +1365,14 @@ def compact_source_sheets(workbook):
     """Replace copied source worksheets with a concise source-to-summary index."""
     source_records = list(workbook[INDEX_SHEET].iter_rows(min_row=2, values_only=True))
     grouped = defaultdict(list)
+    headers = [cell.value for cell in workbook[INDEX_SHEET][1]]
+    range_columns = [headers.index(label) if label in headers else None
+                     for label in ("文件数据开始日期", "文件数据结束日期")]
+    source_ranges = {}
+    for record in source_records:
+        source_ranges.setdefault((record[0], record[1]),
+                                 [record[column] if column is not None and column < len(record) else None
+                                  for column in range_columns])
     for kind, filename, original, *_ in source_records:
         grouped[(kind, filename)].append(original)
     for sheet in list(workbook.worksheets):
@@ -1402,13 +1413,14 @@ def compact_source_sheets(workbook):
         return "当前订单数据"
 
     rows = [
-        [kind, filename, len(names), content_summary(kind, filename), destinations(kind, filename)]
+        [kind, filename, len(names), content_summary(kind, filename), destinations(kind, filename),
+         *source_ranges[(kind, filename)]]
         for (kind, filename), names in grouped.items()
     ]
     write_rows(
         workbook,
         INDEX_SHEET,
-        ["来源类型", "原始文件", "原始Sheet数", "包含内容", "汇总位置"],
+        ["来源类型", "原始文件", "原始Sheet数", "包含内容", "汇总位置", "文件数据开始日期", "文件数据结束日期"],
         rows,
         "ForecastSources",
     )

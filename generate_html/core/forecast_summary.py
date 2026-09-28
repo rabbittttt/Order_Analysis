@@ -6,6 +6,7 @@ import gzip
 import json
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import date
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -105,9 +106,13 @@ def summary_scope(path, workbook=None):
             return
         if INDEX_SHEET not in workbook.sheetnames:
             raise ValueError(f"{path.name}缺少数据来源目录，请运行main重新生成")
-        groups, inputs = {}, list(workbook.worksheets)
+        groups, inputs, source_ranges = {}, list(workbook.worksheets), {}
+        headers = [cell.value for cell in workbook[INDEX_SHEET][1]]
+        range_columns = ([headers.index(label) for label in ("文件数据开始日期", "文件数据结束日期")]
+                         if all(label in headers for label in ("文件数据开始日期", "文件数据结束日期")) else [])
         seen = set()
-        for kind, filename, original, stored, *_ in workbook[INDEX_SHEET].iter_rows(min_row=2, values_only=True):
+        for record in workbook[INDEX_SHEET].iter_rows(min_row=2, values_only=True):
+            kind, filename, original, stored, *_ = record
             if not stored:
                 continue
             if stored not in workbook.sheetnames or (filename, original) in seen:
@@ -116,11 +121,20 @@ def summary_scope(path, workbook=None):
             view = SheetView(workbook[stored], original)
             if kind == "订单":
                 groups.setdefault(filename, []).append(view)
+                if range_columns:
+                    try:
+                        start, end = (date.fromisoformat(str(record[column])) for column in range_columns)
+                        source_ranges[filename] = (start, end) if start <= end else None
+                    except (TypeError, ValueError):
+                        source_ranges[filename] = None
             elif kind in {"历史", "映射"}:
                 inputs = [sheet for sheet in inputs if sheet.title != original]
                 inputs.append(view)
         store = WorkbookStore(path.parent)
         store.items = [WorkbookItem(Path(name), WorkbookView(sheets)) for name, sheets in groups.items()]
+        for item in store.items:
+            if item.path.name in source_ranges:
+                item._boundary_date_range = source_ranges[item.path.name]
         active = {"path": path, "inputs": WorkbookView(inputs), "store": store}
         token = ACTIVE_SUMMARY.set(active)
         yield active

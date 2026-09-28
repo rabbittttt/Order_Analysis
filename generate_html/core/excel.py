@@ -388,24 +388,109 @@ def _quantity_value(value):
     return number if not isinstance(value, bool) and math.isfinite(number) and number >= 0 else None
 
 
-def _add_boundary_week(previous, current, key, period, parts, reports):
-    """Only distinct numeric pieces from different files enter boundary-week sums."""
+def _coverage_date(cell):
+    value = cell.value
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        text = clean_text(value)
+        match = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[ T]00:00:00)?", text)
+        if match:
+            try:
+                return date(*(int(part) for part in match.groups()))
+            except ValueError:
+                pass
+    if isinstance(value, (int, float)) and is_date_format(cell.number_format):
+        from openpyxl.utils.datetime import from_excel
+        try:
+            converted = from_excel(value)
+            return converted.date() if isinstance(converted, datetime) else None
+        except (ValueError, OverflowError):
+            pass
+    return None
+
+
+def _source_date_range(item):
+    """Infer the physical file's coverage from real daily quantities/explicit export dates.
+
+    A week label alone never proves which side of a boundary a file contains.
+    File names and other source files are deliberately not used as evidence.
+    """
+    if hasattr(item, "_boundary_date_range"):
+        return item._boundary_date_range
+    dates = []
+    starts = {"数据开始日期", "统计开始日期", "导出开始日期", "数据起始日期", "统计起始日期"}
+    ends = {"数据结束日期", "数据截止日期", "统计结束日期", "统计截止日期", "导出结束日期", "导出截止日期"}
+    for sheet in item.workbook.worksheets:
+        declared = {}
+        for row in range(1, min(sheet.max_row, 10) + 1):
+            label = compact_text(sheet.cell(row, 1).value)
+            if label in starts | ends:
+                day = _coverage_date(sheet.cell(row, 2))
+                if day:
+                    declared["start" if label in starts else "end"] = day
+        if "start" in declared and "end" in declared and declared["start"] <= declared["end"]:
+            dates.extend(declared.values())
+        if grain_from_sheet(sheet.title) != "day":
+            continue
+        if "图表" in sheet.title:
+            header_row = 2
+            count_rows = [row for row in range(3, sheet.max_row + 1) if clean_text(sheet.cell(row, 2).value) == "总计"]
+            first_column = 3
+        else:
+            header_row = 1
+            count_rows = [row for row in range(2, min(sheet.max_row, 30) + 1)
+                          if clean_text(sheet.cell(row, 2).value) == "数量"
+                          and clean_text(sheet.cell(row, 3).value) == "数量"]
+            first_column = 4
+        if not count_rows:
+            continue
+        for column in range(first_column, sheet.max_column + 1):
+            day = _coverage_date(sheet.cell(header_row, column))
+            if day and any(_quantity_value(sheet.cell(row, column).value) is not None for row in count_rows):
+                dates.append(day)
+    item._boundary_date_range = (min(dates), max(dates)) if dates else None
+    return item._boundary_date_range
+
+
+def _boundary_side(coverage, week):
+    if not coverage:
+        return None
+    start, end = coverage
+    cutoff = date(week[1].year, 12, 31) if week[3] == "跨年" else date(week[1].year, 6, 30)
+    if start <= cutoff and end == cutoff:
+        return "left"
+    if start == cutoff + timedelta(days=1) and end >= start:
+        return "right"
+    return None  # Already crosses the cut, overlaps it, has a gap, or is unrelated.
+
+
+def _add_boundary_week(previous, current, key, period, parts, reports, coverage):
+    """Add only two confirmed adjoining file pieces, never an already complete week."""
     week = _week_period(period)
     if not week or not week[3]:
         return None
     old, new = _quantity_value(previous[0]), _quantity_value(current[0])
     if old is None or new is None:
         return None
-    pieces = parts.setdefault(key, [(previous[3], old)])
+    pieces = parts.get(key, [(previous[3], old)])
     if any(value == new for _, value in pieces):
         return previous  # Preserve the established identical-value deduplication.
     if any(source == current[3] for source, _ in pieces):
         return None  # Duplicate keys within one physical file are not shards.
+    sides = [_boundary_side(coverage.get(source), week) for source, _ in pieces]
+    new_side = _boundary_side(coverage.get(current[3]), week)
+    if len(pieces) != 1 or sides[0] is None or new_side is None or sides[0] == new_side:
+        return None
+    parts[key] = pieces
     pieces.append((current[3], new))
     total = sum(value for _, value in pieces)
-    report = reports.setdefault(week[0], {"week": week, "fields": set(), "sources": set(), "examples": []})
+    report = reports.setdefault(week[0], {"week": week, "fields": set(), "sources": set(), "ranges": {}, "examples": []})
     report["fields"].add(key)
     report["sources"].update(source for source, _ in pieces)
+    report["ranges"].update({source: coverage[source] for source, _ in pieces})
     if len(report["examples"]) < 3:
         report["examples"].append(f"{'/'.join(map(str, key))}: "
                                   + "+".join(f"{source}={value:g}" for source, value in pieces)
@@ -416,15 +501,17 @@ def _add_boundary_week(previous, current, key, period, parts, reports):
 def _log_boundary_weeks(label, reports):
     if not reports:
         return
-    weeks, sources, examples = {}, set(), []
+    weeks, sources, examples, ranges = {}, set(), [], {}
     for report in reports:
         week = report["week"]
         weeks[week[0]] = f"{week[0]} {week[1]}~{week[2]}（{week[3]}）"
         sources.update(report["sources"])
+        ranges.update(report["ranges"])
         examples.extend(report["examples"][:max(0, 3 - len(examples))])
-    LOGGER.info("[边界周累加] %s | 周期=%s | 累加数量字段=%d | 来源=%s | 示例=%s",
+    LOGGER.info("[边界周累加] %s | 周期=%s | 累加数量字段=%d | 来源=%s | 文件日期范围=%s | 示例=%s",
                 label, "、".join(weeks[key] for key in sorted(weeks)),
-                sum(len(report["fields"]) for report in reports), "、".join(sorted(sources)), "；".join(examples))
+                sum(len(report["fields"]) for report in reports), "、".join(sorted(sources)),
+                "、".join(f"{source}:{start}~{end}" for source, (start, end) in sorted(ranges.items())), "；".join(examples))
 
 
 def _period_sort(value, *, keep_aggregate_order=False):
@@ -448,6 +535,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     conflicts = []
     conflict_count = 0
     boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
+    coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
     for item, sheet in matches:
         row_keys, col_keys = {}, {}
         inherited = {}
@@ -506,7 +594,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                     values[key] = (cell.value, cell.number_format, cell.data_type, item.path.name)
                 else:
                     merged = (_add_boundary_week(previous, (cell.value, cell.number_format, cell.data_type, item.path.name),
-                                                 key, period, boundary_parts, boundary_reports)
+                                                 key, period, boundary_parts, boundary_reports, coverage)
                               if _quantity_field(row_key, cell.number_format)
                               or (quantity_columns and _quantity_field(("数量",), cell.number_format)) else None)
                     if merged is not None:
@@ -602,6 +690,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
     first_header = None
     conflict_count, conflicts = 0, []
     boundary_parts, boundary_reports = {}, {}
+    coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
     for item, sheet in matches:
         header_row = None
         for row in range(1, min(sheet.max_row, 15) + 1):
@@ -655,7 +744,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
                     period = next((part for part in row_key if _week_period(part)), "")
                     labels = tuple(_source_key(label) for label, _ in columns[field])
                     merged = (_add_boundary_week(previous, (value, cell.number_format, cell.data_type, item.path.name),
-                                                 (row_key, field), period, boundary_parts, boundary_reports)
+                                                 (row_key, field), period, boundary_parts, boundary_reports, coverage)
                               if _quantity_field(labels, cell.number_format) else None)
                     if merged is not None:
                         record[field] = merged
@@ -1097,6 +1186,7 @@ class WorkbookStore:
         conflicts = 0
         samples = []
         boundary_parts, boundary_reports, observations, total_sources = {}, {}, {}, {}
+        coverage = {item.path.name: _source_date_range(item) for item, _, _ in matches}
         rate_conflicts, resolved_rates = [], set()
         for item, sheet, data in matches:
             for index, raw_period in enumerate(data["periods"]):
@@ -1114,7 +1204,7 @@ class WorkbookStore:
                 elif value is not None:
                     merged = _add_boundary_week((totals[period], "", "n", total_sources[period]),
                                                 (value, "", "n", item.path.name), (period, "总量"), period,
-                                                boundary_parts, boundary_reports)
+                                                boundary_parts, boundary_reports, coverage)
                     if merged is not None:
                         totals[period] = merged[0]
                     elif totals[period] != value:
