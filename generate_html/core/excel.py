@@ -5,6 +5,7 @@ import logging
 import gzip
 import hashlib
 import json
+import math
 import os
 import tempfile
 from itertools import groupby
@@ -12,7 +13,8 @@ import re
 import weakref
 from statistics import median
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -43,7 +45,7 @@ def compact_identifier(value: Any) -> str:
 def display_period(value: Any, number_format: str = "") -> str:
     if isinstance(value, (datetime, date)):
         return format_excel_value(value, number_format or "yyyy-mm-dd")
-    return clean_text(value)
+    return _source_key(value)
 
 
 def safe_number(value: Any, default: float = 0.0) -> float:
@@ -346,10 +348,83 @@ def load_data_workbook(path: Path, cache_dir: Path | None = None):
             pending.unlink(missing_ok=True)
 
 
+@lru_cache(maxsize=4096)
+def _week_period(text):
+    match = re.fullmatch(r"(\d{2}|\d{4})WK(\d{1,2})", text.upper())
+    if not match:
+        return None
+    year = int(match[1])
+    year = year + 2000 if year < 100 else year
+    try:
+        start = date.fromisocalendar(year, int(match[2]), 1)
+    except ValueError:
+        return None
+    end = start + timedelta(days=6)
+    reason = "跨年" if start.year != end.year else (
+        "跨半年" if start <= date(start.year, 6, 30) < end else "")
+    return f"{year % 100:02d}WK{int(match[2]):02d}", start, end, reason
+
+
 def _source_key(value):
     if isinstance(value, (date, datetime)):
         return value.isoformat().replace("T00:00:00", "")
-    return clean_text(value)
+    text = clean_text(value)
+    week = _week_period(text)
+    return week[0] if week else text
+
+
+@lru_cache(maxsize=4096)
+def _quantity_field(labels, number_format):
+    text = "|".join(map(str, labels))
+    return ("%" not in number_format and "％" not in number_format
+            and not re.search(r"占比|比例|率|平均|均价|时长|天数|（天）|\(天\)", text)
+            and any(label in {"数量", "订单量", "订单数", "单量", "累计锁单"} for label in labels))
+
+
+def _quantity_value(value):
+    if isinstance(value, str) and ("%" in value or "％" in value):
+        return None
+    number = safe_number(value, float("nan"))
+    return number if not isinstance(value, bool) and math.isfinite(number) and number >= 0 else None
+
+
+def _add_boundary_week(previous, current, key, period, parts, reports):
+    """Only distinct numeric pieces from different files enter boundary-week sums."""
+    week = _week_period(period)
+    if not week or not week[3]:
+        return None
+    old, new = _quantity_value(previous[0]), _quantity_value(current[0])
+    if old is None or new is None:
+        return None
+    pieces = parts.setdefault(key, [(previous[3], old)])
+    if any(value == new for _, value in pieces):
+        return previous  # Preserve the established identical-value deduplication.
+    if any(source == current[3] for source, _ in pieces):
+        return None  # Duplicate keys within one physical file are not shards.
+    pieces.append((current[3], new))
+    total = sum(value for _, value in pieces)
+    report = reports.setdefault(week[0], {"week": week, "fields": set(), "sources": set(), "examples": []})
+    report["fields"].add(key)
+    report["sources"].update(source for source, _ in pieces)
+    if len(report["examples"]) < 3:
+        report["examples"].append(f"{'/'.join(map(str, key))}: "
+                                  + "+".join(f"{source}={value:g}" for source, value in pieces)
+                                  + f" → {total:g}")
+    return total, previous[1], "n", previous[3]
+
+
+def _log_boundary_weeks(label, reports):
+    if not reports:
+        return
+    weeks, sources, examples = {}, set(), []
+    for report in reports:
+        week = report["week"]
+        weeks[week[0]] = f"{week[0]} {week[1]}~{week[2]}（{week[3]}）"
+        sources.update(report["sources"])
+        examples.extend(report["examples"][:max(0, 3 - len(examples))])
+    LOGGER.info("[边界周累加] %s | 周期=%s | 累加数量字段=%d | 来源=%s | 示例=%s",
+                label, "、".join(weeks[key] for key in sorted(weeks)),
+                sum(len(report["fields"]) for report in reports), "、".join(sorted(sources)), "；".join(examples))
 
 
 def _period_sort(value, *, keep_aggregate_order=False):
@@ -362,15 +437,17 @@ def _period_sort(value, *, keep_aggregate_order=False):
 
 
 def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward_headers=(), time_row=None,
-                  column_group_row=None, sparse_headers=()):
+                  column_group_row=None, sparse_headers=(), quantity_columns=False):
     """Union an identified table by business labels; first nonblank value wins.
 
-    Used only across files, never to add totals or combine different launch phases.
+    Boundary-week quantities may add distinct yearly/half-year pieces. Summary
+    columns and different launch phases never enter that exception.
     Physical originals stay untouched and remain available in the raw-table centre.
     """
     rows, columns, values = {}, {}, {}
     conflicts = []
     conflict_count = 0
+    boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
     for item, sheet in matches:
         row_keys, col_keys = {}, {}
         inherited = {}
@@ -399,6 +476,8 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                     if value not in (None, ""):
                         inherited[row] = value
                     value = inherited.get(row) if value in (None, "") else value
+                if isinstance(value, str) and _week_period(clean_text(value)):
+                    value = _source_key(value)
                 labels.append((value, cell.number_format))
             if not any(value not in (None, "") for value, _ in labels):
                 continue
@@ -412,19 +491,73 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 key = tuple(_source_key(value) for value, _ in labels)
             col_keys[col] = key
             columns.setdefault(key, labels)
+        column_periods = {col: next((part for part in key if _week_period(part)), "") for col, key in col_keys.items()}
         for row, row_key in row_keys.items():
             for col, col_key in col_keys.items():
                 cell = sheet.cell(row, col)
                 if cell.value in (None, ""):
                     continue
                 key = row_key, col_key
+                period = column_periods[col]
+                if len(row_key) == 3 and row_key[1] == "占比" and period and _week_period(period)[3]:
+                    ratio_sources.setdefault(key, {}).setdefault(item.path.name, cell_number(cell, rate=True, default=float("nan")))
                 previous = values.get(key)
                 if previous is None:
                     values[key] = (cell.value, cell.number_format, cell.data_type, item.path.name)
-                elif previous[0] != cell.value:
-                    conflict_count += 1
-                    if len(conflicts) < 3:
-                        conflicts.append(f"{'/'.join(row_key)} @ {'/'.join(col_key)}: {previous[3]}={previous[0]} / {item.path.name}={cell.value}")
+                else:
+                    merged = (_add_boundary_week(previous, (cell.value, cell.number_format, cell.data_type, item.path.name),
+                                                 key, period, boundary_parts, boundary_reports)
+                              if _quantity_field(row_key, cell.number_format)
+                              or (quantity_columns and _quantity_field(("数量",), cell.number_format)) else None)
+                    if merged is not None:
+                        values[key] = merged
+                    elif previous[0] != cell.value:
+                        example = f"{'/'.join(row_key)} @ {'/'.join(col_key)}: {previous[3]}={previous[0]} / {item.path.name}={cell.value}"
+                        if key in ratio_sources:
+                            ratio_conflicts.append((key, example))
+                        else:
+                            conflict_count += 1
+                            if len(conflicts) < 3:
+                                conflicts.append(example)
+    # Counts are additive; percentages are not. Rebuild dimension shares from
+    # merged category counts, or weight source shares by the primary order count.
+    primary = next((metric for marker, metric in (("锁单", "交车锁单"), ("小订", "小订"), ("大定", "大定"))
+                    if marker in matches[0][0].path.name), "")
+    category_totals, resolved_ratios = {}, set()
+    ratio_columns = {column for _, column in ratio_sources}
+    for labels in rows:
+        if len(labels) != 3 or labels[1] != "数量" or labels[2] == "数量":
+            continue
+        for column in ratio_columns:
+            entry = values.get((labels, column))
+            number = _quantity_value(entry[0]) if entry else None
+            if number is not None:
+                group = labels[0], column
+                category_totals[group] = category_totals.get(group, 0) + number
+    for (row_key, col_key), source_rates in ratio_sources.items():
+        period = next((part for part in col_key if _week_period(part)), "")
+        if period not in boundary_reports:
+            continue
+        count = values.get(((row_key[0], "数量", row_key[2]), col_key))
+        denominator = category_totals.get((row_key[0], col_key), 0)
+        ratio = None
+        if count is not None and denominator > 0 and _quantity_value(count[0]) is not None:
+            ratio = _quantity_value(count[0]) / denominator
+        else:
+            weights = boundary_parts.get(((primary, "数量", "数量"), col_key), [])
+            if len(weights) > 1 and sum(weight for _, weight in weights) > 0 and all(
+                weight == 0 or math.isfinite(source_rates.get(source, float("nan"))) for source, weight in weights
+            ):
+                ratio = sum(source_rates.get(source, 0) * weight for source, weight in weights if weight > 0) / sum(weight for _, weight in weights)
+        if ratio is not None:
+            old = values[(row_key, col_key)]
+            values[(row_key, col_key)] = ratio, old[1], "n", old[3]
+            resolved_ratios.add((row_key, col_key))
+    for key, example in ratio_conflicts:
+        if key not in resolved_ratios:
+            conflict_count += 1
+            if len(conflicts) < 3:
+                conflicts.append(example)
     book = Workbook()
     target = book.active
     target.title = matches[0][1].title
@@ -458,6 +591,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflicts
+    target._boundary_week_merges = list(boundary_reports.values())
     return target
 
 
@@ -467,6 +601,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
     columns, records = {}, {}
     first_header = None
     conflict_count, conflicts = 0, []
+    boundary_parts, boundary_reports = {}, {}
     for item, sheet in matches:
         header_row = None
         for row in range(1, min(sheet.max_row, 15) + 1):
@@ -512,13 +647,23 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
                 if cell.value in (None, ""):
                     continue
                 previous = record.get(field)
+                value = (_source_key(cell.value) if col in key_cols and isinstance(cell.value, str)
+                         and _week_period(clean_text(cell.value)) else cell.value)
                 if previous is None:
-                    record[field] = (cell.value, cell.number_format, cell.data_type, item.path.name)
-                elif previous[0] != cell.value:
-                    conflict_count += 1
-                    if len(conflicts) < 3:
-                        conflicts.append(f"{'/'.join(row_key)} @ {'/'.join(field)}: "
-                                         f"{previous[3]}={previous[0]} / {item.path.name}={cell.value}")
+                    record[field] = (value, cell.number_format, cell.data_type, item.path.name)
+                else:
+                    period = next((part for part in row_key if _week_period(part)), "")
+                    labels = tuple(_source_key(label) for label, _ in columns[field])
+                    merged = (_add_boundary_week(previous, (value, cell.number_format, cell.data_type, item.path.name),
+                                                 (row_key, field), period, boundary_parts, boundary_reports)
+                              if _quantity_field(labels, cell.number_format) else None)
+                    if merged is not None:
+                        record[field] = merged
+                    elif previous[0] != value:
+                        conflict_count += 1
+                        if len(conflicts) < 3:
+                            conflicts.append(f"{'/'.join(row_key)} @ {'/'.join(field)}: "
+                                             f"{previous[3]}={previous[0]} / {item.path.name}={value}")
     target = Workbook().active
     target.title = matches[0][1].title
     if first_header > 1:
@@ -536,6 +681,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflicts
+    target._boundary_week_merges = list(boundary_reports.values())
     return target
 
 
@@ -574,6 +720,7 @@ def _merge_option_fee(matches):
     target._source_matches = matches
     target._merge_conflict_count = merged._merge_conflict_count
     target._merge_conflict_examples = merged._merge_conflict_examples
+    target._boundary_week_merges = getattr(merged, "_boundary_week_merges", [])
     return target
 
 
@@ -615,6 +762,7 @@ def _merge_partitioned(matches, *, horizontal):
     target.title = matches[0][1].title
     offset = 0
     conflict_count, conflict_examples = 0, []
+    boundary_reports = []
     for title, parts in groups.items():
         if horizontal:
             first = parts[0][1]
@@ -622,7 +770,8 @@ def _merge_partitioned(matches, *, horizontal):
                                   if re.match(r"^(?:20)?\d{2}(?:WK|[-/.])", clean_text(first.cell(2, col).value), re.I)), None)
             if period_column is None:
                 return None
-            merged = _merge_matrix(parts, 2, period_column - 1)
+            merged = _merge_matrix(parts, 2, period_column - 1,
+                                   quantity_columns=title in {"累计锁单", "锁单数量", "订单数量"})
             conflict_count += merged._merge_conflict_count
             conflict_examples.extend(merged._merge_conflict_examples[:max(0, 3 - len(conflict_examples))])
             _copy_cells(merged, target, col_offset=offset)
@@ -633,9 +782,11 @@ def _merge_partitioned(matches, *, horizontal):
             conflict_examples.extend(merged._merge_conflict_examples[:max(0, 3 - len(conflict_examples))])
             _copy_cells(merged, target, row_offset=offset)
             offset += merged.max_row + 1
+        boundary_reports.extend(getattr(merged, "_boundary_week_merges", []))
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflict_examples
+    target._boundary_week_merges = boundary_reports
     return target
 
 def merge_source_sheets(matches):
@@ -695,6 +846,7 @@ class WorkbookStore:
         self._source_aliases: dict[tuple[str, str], list[tuple[WorkbookItem, Any]]] = {}
         self._subject_sheets_cache: dict[tuple[Any, ...], list[tuple[WorkbookItem, Any]]] = {}
         self.multi_source_groups: dict[str, int] = {}
+        self._boundary_chart_logs: set[tuple] = set()
 
     def load(self, exclude_names: Iterable[str] = (), *, data_only_view: bool = False) -> None:
         if not self.input_dir.exists():
@@ -704,6 +856,7 @@ class WorkbookStore:
         self._source_aliases.clear()
         self._subject_sheets_cache.clear()
         self.multi_source_groups.clear()
+        self._boundary_chart_logs.clear()
         excluded = set(exclude_names)
         paths = sorted(path for path in self.input_dir.glob("*.xlsx") if not path.name.startswith("~$") and path.name not in excluded)
         if not paths:
@@ -737,12 +890,14 @@ class WorkbookStore:
                 groups.setdefault(compact_text(sheet.title), []).append((item, sheet))
         sheets = []
         conflict_count, conflict_sheets, conflict_examples = 0, 0, []
+        boundary_reports = []
         for matches in groups.values():
             title = matches[0][1].title
             combined = merge_source_sheets(matches)
             if combined is not None:
                 sheets.append(combined[1])
                 merged = combined[1]
+                boundary_reports.extend(getattr(merged, "_boundary_week_merges", []))
                 count = getattr(merged, "_merge_conflict_count", 0)
                 if count:
                     conflict_count += count
@@ -762,6 +917,7 @@ class WorkbookStore:
         self._combined_cache[keyword] = result
         self.multi_source_groups[keyword] = len(items)
         LOGGER.debug("多文件来源: %s | 共%d个文件全部纳入: %s", keyword, len(items), "、".join(item.path.name for item in items))
+        _log_boundary_weeks(f"类别={keyword}", boundary_reports)
         if conflict_count:
             LOGGER.warning("[多文件数值冲突] 类别=%s | %d个Sheet共%d项 | 保留原文件顺序中首个非空值，其他文件仍保留为来源 | 示例=%s",
                            keyword, conflict_sheets, conflict_count, "；".join(conflict_examples))
@@ -931,8 +1087,7 @@ class WorkbookStore:
         exact = self.find_chart_data(keyword, subject, grain)
         return (exact[0], exact[1], [exact[2]]) if exact else None
 
-    @staticmethod
-    def _merge_chart_data(matches):
+    def _merge_chart_data(self, matches):
         if len(matches) == 1:
             data = matches[0][2]
             return {**data, "totals": [0 if value is None else value for value in data["totals"]],
@@ -941,23 +1096,57 @@ class WorkbookStore:
         periods, series, totals = set(), {}, {}
         conflicts = 0
         samples = []
+        boundary_parts, boundary_reports, observations, total_sources = {}, {}, {}, {}
+        rate_conflicts, resolved_rates = [], set()
         for item, sheet, data in matches:
-            periods.update(data["periods"])
-            for index, period in enumerate(data["periods"]):
+            for index, raw_period in enumerate(data["periods"]):
+                period = _source_key(raw_period)
+                periods.add(period)
                 value = data["totals"][index]
+                boundary = bool(_week_period(period) and _week_period(period)[3])
+                if boundary:
+                    observations.setdefault(period, {}).setdefault(item.path.name, {
+                        "rates": {entry["name"]: entry["values"][index] for entry in data["series"]},
+                    })
                 if value is not None and period not in totals:
                     totals[period] = value
-                elif value is not None and totals[period] != value:
-                    conflicts += 1
-                    if len(samples) < 3:
-                        samples.append(period)
+                    total_sources[period] = item.path.name
+                elif value is not None:
+                    merged = _add_boundary_week((totals[period], "", "n", total_sources[period]),
+                                                (value, "", "n", item.path.name), (period, "总量"), period,
+                                                boundary_parts, boundary_reports)
+                    if merged is not None:
+                        totals[period] = merged[0]
+                    elif totals[period] != value:
+                        conflicts += 1
+                        if len(samples) < 3:
+                            samples.append(period)
                 for entry in data["series"]:
                     values = series.setdefault(entry["name"], {})
                     value = entry["values"][index]
                     if value is not None and period not in values:
                         values[period] = value
                     elif value is not None and values[period] != value:
-                        conflicts += 1
+                        if boundary:
+                            rate_conflicts.append((entry["name"], period))
+                        else:
+                            conflicts += 1
+        for (period, _), weights in boundary_parts.items():
+            denominator = sum(weight for _, weight in weights)
+            if len(weights) < 2 or denominator <= 0:
+                continue
+            names = {name for source, _ in weights for name in observations[period][source]["rates"]}
+            for name in names:
+                pieces = [(observations[period][source]["rates"].get(name, 0), weight) for source, weight in weights]
+                if any(weight > 0 and (rate is None or not math.isfinite(rate)) for rate, weight in pieces):
+                    continue
+                series.setdefault(name, {})[period] = sum(rate * weight for rate, weight in pieces if weight > 0) / denominator
+                resolved_rates.add((name, period))
+        conflicts += sum(key not in resolved_rates for key in rate_conflicts)
+        log_key = tuple((str(item.path), sheet.title, data["subject"], data.get("headline", "")) for item, sheet, data in matches)
+        if boundary_reports and log_key not in self._boundary_chart_logs:
+            _log_boundary_weeks(f"图表主体={matches[0][2]['subject']}", list(boundary_reports.values()))
+            self._boundary_chart_logs.add(log_key)
         order = sorted(periods, key=_period_sort)
         if conflicts:
             LOGGER.warning("[多文件图表冲突] 主体=%s | 共%d项 | 重叠周期保留首个值，不重复累加 | 周期示例=%s",
@@ -977,6 +1166,8 @@ class WorkbookStore:
         for col in range(3, sheet.max_column + 1):
             cell = sheet.cell(header_row, col)
             value = display_period(cell.value, cell.number_format)
+            if _week_period(value):
+                value = _source_key(value)
             if not value or value == "总计":
                 continue
             columns.append(col)
