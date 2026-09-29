@@ -213,8 +213,13 @@ const templates=path.resolve(__dirname,'../templates');
  if(process.env.BRIDGE_REAL_DATA){
    const html=fs.readFileSync(process.env.BRIDGE_REAL_DATA,'utf8');
    const data=JSON.parse(zlib.gunzipSync(Buffer.from(html.match(/window\.DASHBOARD_DATA_B64\s*=\s*["']([^"']+)/)[1],'base64')));
+   const external=html.match(/window\.DASHBOARD_BLOCKS_B64=(.*?);<\/script>/);
+   if(external)data.dashboard_blocks=JSON.parse(external[1]);
+   const decoderSource=fs.readFileSync(path.join(__dirname,'../templates/dashboard.js'),'utf8');
+   const decoder=decoderSource.slice(decoderSource.indexOf('  function unpackDashboard'),decoderSource.indexOf('  const DATA ='));
+   const unpack=new Function(decoder+';return unpackDashboard;')();
    const key=Object.keys(data.dashboard_blocks).find(key=>key.endsWith('|sales_forecast'));
-   const block=JSON.parse(zlib.gunzipSync(Buffer.from(data.dashboard_blocks[key],'base64')));
+   const block=unpack(JSON.parse(zlib.gunzipSync(Buffer.from(data.dashboard_blocks[key],'base64'))));
    const f=Object.values(Object.values(block.views)[0].pages)[0].workspace.data;
    for(const t of f.targets.filter(t=>t.name.includes('M9')&&t.stage==='ended')){
      const chosen={...f,target:{...t,launch_days:t.days,total_small:t.small,launch_node:t.node}};

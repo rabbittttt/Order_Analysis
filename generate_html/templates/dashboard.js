@@ -5,7 +5,25 @@
     const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
     return JSON.parse(await new Response(stream).text());
   }
+  function unpackDashboard(value){
+    if(value?.format!=='shared-v1')return value;
+    const memo=new Map();
+    function restore(item){
+      if(!item||typeof item!=='object')return item;
+      if(Array.isArray(item))return item.map(restore);
+      if(Object.hasOwn(item,'$shared')){
+        const index=item.$shared;
+        if(!Number.isInteger(index)||index<0||index>=value.pool.length)throw new Error('Invalid shared dashboard reference');
+        if(!memo.has(index))memo.set(index,restore(value.pool[index]));
+        return memo.get(index);
+      }
+      const entries=Object.hasOwn(item,'$literal')?item.$literal:Object.entries(item);
+      return Object.fromEntries(entries.map(([key,child])=>[key,restore(child)]));
+    }
+    return restore(value.root);
+  }
   const DATA = await decompressJson(window.DASHBOARD_DATA_B64);
+  DATA.dashboard_blocks=window.DASHBOARD_BLOCKS_B64||DATA.dashboard_blocks||{};
   window.DASHBOARD_DATA = DATA;
   const {protectCompletion,distributeInteger,genericDailyShape,genericHourlyCompletion,isKnownAttribute,smallReferenceScore,steadyReferenceScore,completedSmallOrderDays}=window.ForecastMath;
   const RAW_BLOCKS = window.DASHBOARD_RAW_B64 || {};
@@ -188,7 +206,7 @@
     const key=`${ownerId}|${moduleId}`;
     if(!(key in boardCache)){
       const b64=(DATA.dashboard_blocks||{})[key];
-      boardCache[key]=b64?await decompressJson(b64):null;
+      boardCache[key]=b64?unpackDashboard(await decompressJson(b64)):null;
     }
     return boardCache[key];
   }

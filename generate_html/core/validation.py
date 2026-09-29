@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import math
 from typing import Any
 
 
@@ -13,8 +13,21 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
     for key, dashboard in manifest.get("dashboards", {}).items():
         if dashboard.get("subject_id") not in subject_ids:
             warnings.append(f"看板主体不存在: {key}")
-        text = json.dumps(dashboard, ensure_ascii=False)
-        if "NaN" in text or "undefined" in text:
+        seen = set()
+        def invalid(value):
+            if isinstance(value, str):
+                return "NaN" in value or "undefined" in value
+            if isinstance(value, float):
+                return not math.isfinite(value)
+            if isinstance(value, (dict, list)):
+                if id(value) in seen:
+                    return False
+                seen.add(id(value))
+                if isinstance(value, dict):
+                    return any(invalid(k) or invalid(v) for k, v in value.items())
+                return any(invalid(v) for v in value)
+            return False
+        if invalid(dashboard):
             warnings.append(f"看板包含无效值: {key}")
         for source in dashboard.get("sources", []):
             if not source.get("file") or not source.get("sheet"):

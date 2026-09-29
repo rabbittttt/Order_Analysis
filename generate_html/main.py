@@ -142,37 +142,6 @@ def serializable(value: Any) -> Any:
     return str(value)
 
 
-def log_payload_sizes(manifest: dict[str, Any]) -> None:
-    """记录单HTML的主要体积来源，超阈值时提醒分页/延迟渲染。"""
-    dashboard_sizes = {
-        key: len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        for key, value in manifest.get("dashboards", {}).items()
-    }
-    raw_sizes = {
-        key: len(value.encode("ascii"))
-        for key, value in manifest.get("raw_blocks", {}).items()
-    }
-    dashboard_total = sum(dashboard_sizes.values())
-    raw_total = sum(raw_sizes.values())
-    largest_dashboard = max(dashboard_sizes.items(), key=lambda item: item[1], default=("-", 0))
-    largest_raw = max(raw_sizes.items(), key=lambda item: item[1], default=("-", 0))
-    LOGGER.info(
-        "HTML载荷: 看板JSON %.1fMB，底表压缩块 %.1fMB；最大看板=%s %.1fMB，最大底表块=%s %.1fMB",
-        dashboard_total / 1024 / 1024,
-        raw_total / 1024 / 1024,
-        largest_dashboard[0],
-        largest_dashboard[1] / 1024 / 1024,
-        largest_raw[0],
-        largest_raw[1] / 1024 / 1024,
-    )
-    if largest_raw[1] > 5 * 1024 * 1024:
-        LOGGER.warning(
-            "[性能校验] 单个底表压缩块超过5MB: %s（%.1fMB），建议对该Sheet分页或虚拟滚动",
-            largest_raw[0],
-            largest_raw[1] / 1024 / 1024,
-        )
-
-
 def split_parallel_blocks(name: str, rows: list[list]) -> list[dict[str, Any]]:
     """Split side-by-side blocks (like SKU's 表格A/B/C) into separate tables."""
     if len(rows) < 2:
@@ -213,21 +182,24 @@ def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, st
         for sheet in item.workbook.worksheets:
             if getattr(sheet, "sheet_state", "visible") != "visible":
                 continue
+            rows_by_index, occupied = {}, set()
+            # Normal Workbook cells already implement merged-cell semantics.
+            # Do not materialize every blank cell in a sparse styled rectangle.
+            for cell in sheet._cells.values():
+                if cell.value is None:
+                    continue
+                value = format_excel_cell(cell)
+                if value not in (None, ""):
+                    rows_by_index.setdefault(cell.row, {})[cell.column] = value
+                    occupied.add(cell.column)
+            columns = sorted(occupied)
             rows = []
-            for row in sheet.iter_rows(min_row=1, max_row=sheet.max_row, max_col=sheet.max_column):
-                values = [format_excel_cell(cell) for cell in row]
-                while values and values[-1] in (None, ""):
-                    values.pop()
-                if any(value not in (None, "") for value in values):
-                    rows.append(values)
-            # 去掉整列全空的列，让并排区块（如 SKU 的 A/B/C 表）紧凑连排
-            if rows:
-                width = max(len(row) for row in rows)
-                keep = [
-                    col for col in range(width)
-                    if any(col < len(row) and row[col] not in (None, "") for row in rows)
-                ]
-                rows = [[row[col] if col < len(row) else None for col in keep] for row in rows]
+            for _, values in sorted(rows_by_index.items()):
+                last_column = max(values)
+                rows.append([
+                    values.get(column, None if column > last_column else "")
+                    for column in columns
+                ])
             for block in split_parallel_blocks(sheet.title, rows):
                 block_rows = block["rows"]
                 # 首行是区块大标题（单值）、次行才是列名时，去掉冗余标题行让列名成为表头
@@ -348,12 +320,13 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
             "raw_files": raw_files,
             "raw_blocks": raw_blocks,
         }
+        validation_started = perf_counter()
         validation_warnings = validate_manifest(manifest)
         for warning in validation_warnings:
             LOGGER.warning("[生成校验] %s", warning)
+        validation_seconds = perf_counter() - validation_started
         LOGGER.info("开始写入 HTML（主体 %d 个，看板 %d 个）", len(subjects), len(dashboards))
         stage_started = perf_counter()
-        log_payload_sizes(manifest)
         render_dashboard(manifest, ROOT / "templates", output_file)
         render_seconds = perf_counter() - stage_started
         output_size = output_file.stat().st_size
@@ -396,14 +369,16 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
         LOGGER.info("模块耗时: %s", module_summary)
         LOGGER.info(
             "性能汇总: 预测刷新 %.2fs | Excel加载 %.2fs | 主体识别 %.2fs | 模块生成 %.2fs | "
-            "底表整理 %.2fs | HTML输出 %.2fs | 清单/诊断 %.2fs | 总计 %.2fs",
+            "底表整理 %.2fs | 数据校验 %.2fs | HTML输出 %.2fs | 清单/诊断 %.2fs | 其他编排 %.2fs | 总计 %.2fs",
             refresh_seconds,
             load_seconds,
             discovery_seconds,
             sum(module_seconds.values()),
             raw_seconds,
+            validation_seconds,
             render_seconds,
             manifest_seconds,
+            perf_counter() - build_started - sum((refresh_seconds, load_seconds, discovery_seconds, sum(module_seconds.values()), raw_seconds, validation_seconds, render_seconds, manifest_seconds)),
             perf_counter() - build_started,
         )
         return manifest, warnings

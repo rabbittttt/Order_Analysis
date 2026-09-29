@@ -1075,7 +1075,12 @@ class WorkbookStore:
 
     def resolve_dashboard_sources(self, dashboard):
         """Keep physical source links valid for merged/secondary-file sheets."""
+        seen = set()
         def visit(value):
+            if isinstance(value, (dict, list)):
+                if id(value) in seen:
+                    return
+                seen.add(id(value))
             if isinstance(value, dict):
                 matches = self._source_aliases.get((value.get("file"), value.get("sheet")))
                 if matches:
