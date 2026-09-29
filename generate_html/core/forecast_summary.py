@@ -755,7 +755,7 @@ def read_public_forecast(book, history, today=None):
                 continue
             if not isinstance(row.get("交车锁单"), (int, float)) or row["交车锁单"] < 0:
                 continue
-            weeks.append({"period": row["周期"], "start_date": a, "end_date": b, "lock": row["交车锁单"]})
+            weeks.append({"period": row["周期"], "start_date": a, "end_date": b, "lock": row["交车锁单"], "gross": row.get("大定") if isinstance(row.get("大定"), (int, float)) and row["大定"] >= 0 else None})
         weeks.sort(key=lambda r: r["start_date"])
         if any((date.fromisoformat(b["start_date"])-date.fromisoformat(a["start_date"])).days != 7 for a, b in zip(weeks, weeks[1:])):
             weeks = []

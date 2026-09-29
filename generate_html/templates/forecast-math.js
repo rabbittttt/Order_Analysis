@@ -169,6 +169,32 @@
     return {error:'',observed,total,remaining,start,last,actual,forecast,predictedHours,curve};
   }
 
+
+  // Preserve launch and closing impulses; resample only the cumulative middle.
+  function stretchCompletion(curve, length) {
+    const n=curve.length, m=Math.round(length);
+    if(!n||m<1||!curve.every((v,i)=>Number.isFinite(v)&&v>=0&&(!i||v>=curve[i-1]))||!(curve[n-1]>0))return [];
+    const normalized=curve.map(v=>v/curve[n-1]);
+    if(n===m)return normalized;
+    if(n<5||m<5)return [];
+    const at=x=>{const lo=Math.floor(x),fraction=x-lo;return normalized[lo]+fraction*(normalized[Math.min(lo+1,n-1)]-normalized[lo]);};
+    return Array.from({length:m},(_,i)=>i<2?normalized[i]:i>=m-2?normalized[n-m+i]:at(1+(i-1)*(n-4)/(m-4)));
+  }
+
+  function normalizedShapeSimilarity(current, reference) {
+    if(current.length<3||reference.length<3)return NaN;
+    if(!current.every(v=>Number.isFinite(v)&&v>=0)||!reference.every(v=>Number.isFinite(v)&&v>=0))return NaN;
+    const mass=(values,n)=>{let sum=0;const c=[0,...values.map(v=>(sum+=v))];if(!sum)return [];
+      const at=x=>{const i=Math.floor(x);return (c[i]+(x-i)*((c[i+1]??c[i])-c[i]))/sum;};
+      return Array.from({length:n},(_,i)=>at((i+1)*values.length/n)-at(i*values.length/n));};
+    const a=mass(current,Math.max(current.length,reference.length)),b=mass(reference,a.length);
+    return a.length&&b.length?Math.max(0,1-a.reduce((sum,v,i)=>sum+Math.abs(v-b[i]),0)/2):NaN;
+  }
+
+  function launchHourlyItem(item={}) {
+    return {small_hourly_curve:item.hourly_curve||[],small_start_hour:item.launch_start_hour};
+  }
+
   function steadyReferenceScore(item = {}, target = {}, current = {}, minimumEvidence = 3) {
     const parts = [];
     const add = (key, value, evidence) => parts.push({ key, value, evidence });
@@ -186,7 +212,17 @@
     add('lock', currentLockRate > 0 && itemLockRate > 0
       ? 1 - Math.min(Math.abs(currentLockRate - itemLockRate), 1) : NaN,
     `${(currentLockRate * 100 || 0).toFixed(1)}% ↔ ${(itemLockRate * 100 || 0).toFixed(1)}%`);
-    return scoredEvidence(parts, minimumEvidence);
+    const source=item.direct_curve||[],horizon=current.launch_days||source.length;
+    const adapted=source.length&&(!item.launch_days||source.length===Number(item.launch_days))?stretchCompletion(source.reduce((out,v)=>{out.push((out.at(-1)||0)+v);return out;},[]),horizon):[];
+    const reference=adapted.map((v,i)=>v-(i?adapted[i-1]:0)).slice(0,(current.direct_curve||[]).length);
+    add('launch_shape',normalizedShapeSimilarity(current.direct_curve||[],reference),'全首销已观测段直接大定归一化形状；不比较绝对量');
+    add('steady_shape',normalizedShapeSimilarity(current.steady_curve||[],(item.steady_curve||[]).slice(0,(current.steady_curve||[]).length)),'相同平销进度窗口的日历还原趋势');
+    const result=scoredEvidence(parts,minimumEvidence),weights={tier:.05,energy:.05,node:.05,lock:.1,launch_shape:.55,steady_shape:.2};
+    result.parts=result.parts.map(part=>({...part,weight:weights[part.key]}));
+    const total=result.parts.reduce((sum,part)=>sum+part.weight,0);
+    result.score=total?result.parts.reduce((sum,part)=>sum+part.value*part.weight,0)/total:0;
+    result.eligible=result.eligible&&result.parts.some(part=>part.key==='launch_shape');
+    return result;
   }
 
   function completedSmallOrderDays(start, end, today, primary = [], fallback = []) {
@@ -288,7 +324,7 @@
     if (today <= launchDate) return unavailable('尚无已结束首销日');
     const last = new Date(Math.min(Date.parse(endDate+'T00:00:00Z'), Date.parse(today+'T00:00:00Z')-86400000));
     if (!Number.isFinite(last.getTime())) return unavailable('首销日期无效');
-    const count = Math.min(14, Math.floor((last-Date.parse(launchDate+'T00:00:00Z'))/86400000)+1);
+    const count = Math.floor((last-Date.parse(launchDate+'T00:00:00Z'))/86400000)+1;
     if (count <= 0) return unavailable('首销日期范围无效');
     const byDate = new Map();
     for (const row of rows) byDate.set(row.date, byDate.has(row.date)?null:row);
@@ -304,8 +340,10 @@
     if (gross<=0) return unavailable('首销大定为0，无法计算锁单率');
     const lockRate=lock/gross,values=sample.map(row=>row.direct*lockRate/row.factor);
     const average=items=>items.reduce((sum,value)=>sum+value,0)/items.length;
-    const level=average(values.slice(-7)),previous=values.length===14?average(values.slice(0,7)):null;
-    return {available:true,level,ratio:previous>0?level/previous:1,lockRate,days:count,first:sample[0].date,last:sample.at(-1).date,flatTrend:!(previous>0),reason:''};
+    const level=average(values),xMean=(values.length-1)/2,y=values.map(v=>Math.log1p(v)),yMean=average(y);
+    const denominator=values.reduce((sum,_,i)=>sum+(i-xMean)**2,0);
+    const slope=denominator?y.reduce((sum,v,i)=>sum+(i-xMean)*(v-yMean),0)/denominator:0;
+    return {available:true,level,ratio:count>=3?Math.exp(Math.max(-.7,Math.min(.7,slope*7))):1,lockRate,days:count,first:sample[0].date,last:sample.at(-1).date,flatTrend:count<3,curve:sample.map(row=>row.direct/row.factor),reason:''};
   }
 
   function applyObservedFloor(values, observed){
@@ -368,6 +406,9 @@
   }
 
   return {
+    stretchCompletion,
+    normalizedShapeSimilarity,
+    launchHourlyItem,
     applyObservedFloor,
     intradayReference,
     intradayComponents,

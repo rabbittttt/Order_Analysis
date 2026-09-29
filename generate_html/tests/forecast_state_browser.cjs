@@ -60,10 +60,10 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
    await page.waitForFunction(stage=>document.querySelector('[data-forecast-import="'+stage+'"] [data-forecast-import-status]').textContent.includes('导入成功'),stage);
    return panel;
   };
-  let launch=await upload('launch','first.csv',[[d1,100]]);await launch.locator('input[value="all"]').check();
-  check('单日外部预测显示数据点',await launch.locator('[data-forecast-import-result] svg circle').count()===1);
+  let launch=await upload('launch','first.csv',[[d1,100]]);check('不再需要选择纳入范围',await launch.locator('input[type="radio"]').count()===0);
+  check('单日外部预测显示数据点',await launch.locator('[data-forecast-import-result] svg circle[stroke="#7C3AED"]').count()===1);
   await upload('launch','second.csv',[[d2,200]]);
-  check('多日外部预测显示折线',await launch.locator('[data-forecast-import-result] svg polyline').count()===1&&await launch.locator('[data-forecast-import-result] svg circle').count()===2);
+  check('多日外部预测显示折线',await launch.locator('[data-forecast-import-result] svg polyline[stroke="#7C3AED"]').count()===1&&await launch.locator('[data-forecast-import-result] svg circle[stroke="#7C3AED"]').count()===2);
   check('默认合并保留原有日期',(await records(page)).length===2&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('300'));
   await upload('launch','correction.csv',[[d2,250]]);
   check('同阶段同日更新而非重复相加',(await records(page)).length===2&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('350'));
@@ -74,9 +74,9 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   check('错误文件不改内存或本机保存数据',JSON.stringify(await records(page))===beforeBad);
   await page.reload();await ready(page);
   launch=page.locator('[data-forecast-import="launch"]');
-  check('刷新恢复外部预测及整个阶段范围',await launch.locator('input[value="all"]').isChecked()&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('350'));
-  check('刷新恢复外部预测折线',await launch.locator('[data-forecast-import-result] svg circle').count()===2);
-  const small=await upload('small','small.csv',[[d1,7]]);await small.locator('input[value="all"]').check();
+  check('刷新恢复全部日期外部预测',await launch.locator('input[type="radio"]').count()===0&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('350'));
+  check('刷新恢复外部预测折线',await launch.locator('[data-forecast-import-result] svg circle[stroke="#7C3AED"]').count()===2);
+  const small=await upload('small','small.csv',[[d1,7]]);
   const overlap=await records(page);check('交界同日不同阶段不互相覆盖',overlap.filter(r=>r.date===d1).length===2&&overlap.some(r=>r.stage==='small'&&r.quantity===7)&&overlap.some(r=>r.stage==='launch'&&r.quantity===100));
   await page.locator('[data-forecast-stage-switch="launch"]').click();
   await launch.locator('[data-forecast-import-mode]').selectOption('replace');
@@ -88,7 +88,7 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   await upload('launch','replace.csv',[[d1,9]]);
   check('确认全部替换后仅保留本文件',(await records(page)).length===1&&(await records(page))[0].quantity===9);
   assert.deepStrictEqual(await values(page),original);check('本次界面和导入操作不改变已结束日真实结果',true);
-  await page.locator('.forecast-source-details summary').click();
+
   page.once('dialog',dialog=>dialog.accept());await page.locator('[data-forecast-reset]').click();
   await page.waitForFunction(v=>document.querySelector('[data-forecast-input="conversion"]')?.value===v,defaultConversion);
   check('恢复系统参数不删除外部导入',(await records(page)).length===1&&(await storage(page)).drafts.length===0);
@@ -97,6 +97,24 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   await page.locator('[data-forecast-import="launch"] [data-forecast-import-clear]').click();
   await page.reload();await ready(page);
   check('清除导入同步删除本机保存',(await records(page)).length===0);
+  // One shared template separates small/gross and filters each stage by date.
+  const smallDate=config.target.small_start_date,steadyDate=config.target.steady_start_date;
+  const shared='车型（代际）,日期,预测小订,预测大定\n'+[[target,smallDate,80,''],[target,d1,'',100],[target,steadyDate,'',200]].map(row=>row.join(',')).join('\n');
+  await page.locator('[data-forecast-import="launch"] [data-forecast-import-file]').setInputFiles({name:'shared.csv',mimeType:'text/csv',buffer:Buffer.from(shared)});
+  await page.waitForFunction(()=>document.querySelector('[data-forecast-import="launch"] [data-forecast-import-status]').textContent.includes('导入成功'));
+  check('统一模板保存小订和总大定两个指标',(await records(page)).some(row=>row.metric==='small')&&(await records(page)).filter(row=>row.metric==='gross').length===2);
+  const launchDates=await page.locator('[data-forecast-import="launch"] svg text').allTextContents();
+  check('首销外部曲线不包含平销日期',!launchDates.includes(steadyDate));
+  check('外部图同时保留实际曲线',await page.locator('[data-forecast-import="launch"] svg circle[stroke="#1677FF"]').count()>0);
+  await page.locator('[data-forecast-stage-switch="steady"]').click();
+  const rate=Number(await page.locator('[data-forecast-input="lock"]').inputValue())/100;
+  check('平销按总大定到锁单率换算',Number.isFinite(rate)&&(await page.locator('[data-forecast-import="steady"] [data-forecast-import-result]').innerText()).includes(Math.round(200*rate).toLocaleString('zh-CN')));
+  check('平销KPI不再展示逐周绝对值',await page.locator('[data-steady-kpi^="w"]').count()===0&&await page.locator('[data-steady-kpi="basis"]').count()===1);
+  await page.locator('[data-forecast-stage-switch="small"]').click();
+  check('小订移除预测完成度KPI',await page.locator('[data-small-kpi="completion"]').count()===0);
+  check('小订共享同一次导入',(await page.locator('[data-forecast-import="small"] [data-forecast-import-result]').innerText()).includes('80'));
+  await page.locator('[data-forecast-stage-switch="launch"]').click();
+  check('恢复系统推荐按钮不折叠',await page.locator('[data-forecast-reset]').isVisible());
   // Closing and reopening a page in the same browser context retains local storage.
   await enter('[data-forecast-input="conversion"]','42.7');
   await page.close();page=await context.newPage();page.on('pageerror',e=>report.errors.push(e.message));await page.goto(url.href);await ready(page);
@@ -109,7 +127,7 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   await page.selectOption('#subjectSelect',{label:target});await ready(page);
   check('切回原车型恢复该车型自己的参数',await page.locator('[data-forecast-input="conversion"]').inputValue()==='42.7');
   // Restore defaults before layout screenshots.
-  await page.locator('.forecast-source-details summary').click();page.once('dialog',d=>d.accept());await page.locator('[data-forecast-reset]').click();await page.waitForFunction(v=>document.querySelector('[data-forecast-input="conversion"]')?.value===v,defaultConversion);
+  page.once('dialog',d=>d.accept());await page.locator('[data-forecast-reset]').click();await page.waitForFunction(v=>document.querySelector('[data-forecast-input="conversion"]')?.value===v,defaultConversion);
   await page.waitForFunction(()=>!document.querySelector('#toast').classList.contains('show'));
   await page.locator('[data-forecast-stage-switch="launch"]').click();
   for(const width of [1440,1024,768,390]){
@@ -138,7 +156,39 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   await blocked.locator('[data-forecast-input="conversion"]').fill('43.5');
   await blocked.waitForFunction(()=>document.querySelector('[data-forecast-feedback]').textContent.includes('保存失败'));
   check('浏览器空间不足时明确提示但不阻断计算',await blocked.locator('.forecast-workspace').getAttribute('aria-busy')==='false');
-  await limited.close();check('没有脚本异常',report.errors.length===0);
+  await limited.close();
+  // Exercise D1 on the real generated page, with an in-memory snapshot only.
+  // No extra HTML/test report is generated and no source workbook is changed.
+  for(const missing of [false,true]){
+    const d1Context=await browser.newContext({viewport:{width:1440,height:1000}});
+    await d1Context.addInitScript(({name,asOf,missing})=>{
+      const original=JSON.parse;
+      JSON.parse=function(text,...args){
+        const data=original.call(this,text,...args);
+        if(data?.config&&data.subjects)data.config.forecast_as_of_date=asOf;
+        if(data?.target?.name===name&&Array.isArray(data.actuals)&&Array.isArray(data.history)){
+          const canonical=value=>String(value||'').replace(/\\s/g,'');
+          for(const item of data.history)item.hourly_curve=[...Array(18).fill(0),.2,.4,.6,.8,.9,1];
+          const patch=profile=>{
+            profile.days=[];profile.hard_errors=[];
+            profile.hourly_days=missing?[]:[{date:asOf,last_hour:19,gross:80,small_to_big:40,direct:40,hours:[{hour:18,gross:40,small_to_big:20,direct:20},{hour:19,gross:40,small_to_big:20,direct:20}]}];
+          };
+          for(const profile of data.actuals)if(canonical(profile.model)===canonical(name)){
+            patch(profile);Object.values(profile.stage_profiles||{}).forEach(patch);
+          }
+        }
+        return data;
+      };
+    },{name:target,asOf:d1,missing});
+    const d1Page=await d1Context.newPage();d1Page.on('pageerror',e=>report.errors.push(e.message));
+    await d1Page.goto(url.href);await d1Page.waitForFunction(()=>document.querySelector('.forecast-workspace')?._forecastComparison);
+    const result=await d1Page.locator('.forecast-workspace').evaluate(n=>n._forecastComparison);
+    check(missing?'首销无D1分时不阻断方法二':'首销D1真实80加未来120得到200',missing?result.scenarios.parameter.available&&!result.scenarios.progress.available:result.hourly.observed===80&&result.hourly.terminal===200);
+    if(missing)check('首销无分时明确提示',(await d1Page.locator('[data-forecast-d1-note]').innerText()).includes('无D1分时数据'));
+    else check('首销D1发布前没有伪造零值',result.hourlyActual.slice(0,18).every(v=>v===null));
+    await d1Context.close();
+  }
+  check('没有脚本异常',report.errors.length===0);
  }finally{await browser.close();fs.writeFileSync(path.join(out,'verification.json'),JSON.stringify(report,null,2));}
  console.log(JSON.stringify({checks:report.checks.length,layout:report.layout.map(({width,scoreBottom,targetHeight})=>({width,scoreBottom,targetHeight})),errors:report.errors},null,2));
 })().catch(error=>{console.error(error);process.exitCode=1});

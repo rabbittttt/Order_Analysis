@@ -177,12 +177,15 @@ class PublicForecastTablesTests(TestCase):
         sheet = book[WEEKLY_SHEET]
         # Launch ends Fri Jan 9; the Jan 5 week is not a complete steady week.
         sheet.append(['测试车', '26WK02', '平销', datetime(2026, 1, 10), datetime(2026, 1, 11), None, None, 3])
-        sheet.append(['测试车', '26WK03', '平销', datetime(2026, 1, 12), datetime(2026, 1, 18), None, None, 7])
+        sheet.append(['测试车', '26WK03', '平销', datetime(2026, 1, 12), datetime(2026, 1, 18), 20, 12, 7])
         sheet.append(['测试车', '26WK04', '平销', datetime(2026, 1, 19), datetime(2026, 1, 25), None, None, 9])
         for row in range(2, 5):
             sheet.cell(row, 11, '锁单选配比例分析.xlsx｜测试车by周')
         steady = read_public_forecast(book, [], today=date(2026, 1, 25))[3]
         self.assertEqual([w['period'] for w in steady[0]['weeks']], ['26WK03'])
+        self.assertEqual(steady[0]['weeks'][0]['gross'], 20)  # Not retained orders (12).
+        sheet.cell(3, 6, 0)
+        self.assertEqual(read_public_forecast(book, [], today=date(2026, 1, 25))[3][0]['weeks'][0]['gross'], 0)
         sheet.cell(3, 11, '大定选配比例分析.xlsx｜测试车by周')
         self.assertEqual(read_public_forecast(book, [], today=date(2026, 1, 25))[3], [])
         book.close()

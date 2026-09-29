@@ -28,6 +28,7 @@ const names = [
 const subjects = names.map((name, index) => ({id: String(index), name, parent: name.slice(0, 2), type: 'generation'}));
 const actual = select({subjects});
 const expected = [
+  '问界 F2N 2026款汇总', '尚界 X6M 2026款汇总', '尚界 SHB 2026款汇总',
   '问界 M5 2025款', '问界 M8 2025款', '问界 M9 2026款',
   '问界 M9 Ultimate 2026款', '享界 S9 2026款',
   '尊界 S800 2025款', '尊界 S800 典藏大观 2026款',
@@ -37,3 +38,6 @@ const expected = [
 ];
 assert.deepStrictEqual([...actual].sort(), [...expected].sort());
 assert.strictEqual(subjects.length, names.length, 'source subjects must remain untouched');
+
+const coexist=select({subjects:['问界 M5 2026款','问界 M5 2026款汇总','问界 M5 2025款汇总'].map(name=>({name,type:'generation',parent:'问界'}))});
+assert.deepStrictEqual(coexist.sort(),['问界 M5 2026款','问界 M5 2026款汇总'].sort());

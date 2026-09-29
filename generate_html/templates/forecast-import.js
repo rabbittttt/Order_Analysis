@@ -40,16 +40,24 @@
     const model = index(['车型（代际）','车型','代际','代际名','历史传播名']);
     const date = index(['日期','预测日期']);
     const quantity = index(['预测数量','预测销量','逐日预测销量']);
-    if ([model,date,quantity].includes(-1)) throw Error('表头需要：车型（代际）、日期、预测数量');
+    const small=index(['预测小订']),gross=index(['预测大定','预测总大定']);
+    if(model<0||date<0||(quantity<0&&small<0&&gross<0))throw Error('表头需要：车型（代际）、日期、预测小订、预测大定；大定为总大定，不是留存大定');
     const seen = new Set();
     return rows.slice(1).map((row,i) => {
       const name = String(row[model] ?? '').trim(), day = isoDate(row[date], date1904);
-      const raw = row[quantity], value = Number(raw);
-      if (!name || !day || raw == null || String(raw).trim() === '' || !Number.isSafeInteger(value) || value < 0)
-        throw Error('第' + (i+2) + '行错误：车型不能为空，日期须为有效日期，数量须为非负整数');
-      const key = name + '\0' + day;
-      if (seen.has(key)) throw Error('第' + (i+2) + '行重复：同一车型同一天只能有一条记录');
-      seen.add(key); return {model:name, date:day, quantity:value};
+      if(!name||!day)throw Error('第'+(i+2)+'行：车型或日期无效');
+      const key=name+'\\0'+day;
+      if(seen.has(key))throw Error('第'+(i+2)+'行重复：同一车型同一天只能有一条记录');
+      seen.add(key);
+      const result={model:name,date:day};
+      for(const [field,column] of (small>=0||gross>=0?[['small',small],['gross',gross]]:[['quantity',quantity]])){
+        if(column<0)continue;
+        const raw=row[column];if(raw==null||String(raw).trim()==='')continue;
+        const value=Number(raw);if(!Number.isSafeInteger(value)||value<0)throw Error('第'+(i+2)+'行数量须为非负整数');
+        result[field]=value;
+      }
+      if(Object.keys(result).length===2)throw Error('第'+(i+2)+'行至少填写一种预测数量');
+      return result;
     });
   }
   async function xlsxRows(buffer) {

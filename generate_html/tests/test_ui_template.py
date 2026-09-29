@@ -429,12 +429,12 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertIn("const smallScoreRules=", script)
         self.assertIn("smallReferenceScore(item,target,current,minimumEvidence)", script)
         self.assertIn("const steadyScoreRules=", script)
-        self.assertIn("steadyReferenceScore(item,target,targetLaunch(target)||{},minimumEvidence)", script)
+        self.assertIn("steadyReferenceScore({...item,...right},target,left,minimumEvidence)", script)
         self.assertIn("有效单项相似度之和", script)
         self.assertIn("实际对比、评分规则与贡献", script)
         self.assertIn("排序与本页明细直接调用同一个逐项评分结果", script)
         self.assertIn("主辅权重只影响后续预测加权，不反向改变候选车型得分", script)
-        self.assertIn("产品档位、能源类型、发布类型和首销期大定到锁单率共同决定参考", script)
+        self.assertIn("以全首销直接大定归一化形状为主", script)
         self.assertIn("证据不足的车型仍可人工选择", script)
         self.assertIn("event_id||item.model", script)
         self.assertNotIn("小订转化率、小转大占比仅参与相似度", script)
@@ -451,8 +451,8 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertIn("rebasedForecastCompletionCurve(item,field,days)", script)
         self.assertIn("const lockValues=item=>", script)
         self.assertIn("const recentRatio=item=>", script)
-        self.assertIn("当前与主辅参考的平销交车锁单", script)
-        self.assertIn("仅展示首销截止后完整自然周的交车锁单", script)
+        self.assertIn("全首销直接大定曲线规律", script)
+        self.assertIn("仅完整自然周，剔除日历影响", script)
         self.assertIn(".forecast-lifecycle-reference-chart{grid-column:1/-1", css)
         self.assertIn(".forecast-lifecycle-line-scroll svg{height:auto;aspect-ratio:920/245}", css)
         self.assertIn("function renderForecastEvidenceLines", script)
@@ -624,7 +624,7 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn("const rebasedForecastCompletionCurve=", script)
         self.assertIn("comparison?.progressRows?.length", script)
         self.assertNotIn("values=cumulativeNormalized(values.slice(0,count))", script)
-        self.assertIn("由${sourceDays}天外推至${targetDays}天", script)
+        self.assertIn("保留头两天、尾两天各日占比，中间按比例拉伸", script)
         self.assertIn("const adaptedDailyOrders=", script)
         self.assertIn("past_missing", script)
         self.assertIn("过期缺失补估", script)
@@ -673,7 +673,7 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn('data-forecast-data-error role="alert" aria-live="assertive"', script)
         self.assertIn("rawDataError", script)
         self.assertIn("parameterAvailable=!rawDataError", script)
-        self.assertIn("progressAvailable=!rawDataError", script)
+        self.assertIn("progressAvailable=!d1Unavailable&&!rawDataError", script)
         self.assertIn("原始数据错误，当前对象已停止预测", script)
         self.assertIn(".forecast-data-error", css)
 
@@ -701,8 +701,8 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
     def test_import_boundary_dates_follow_the_selected_stage(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn('return windows[preferred]?preferred:', script)
-        self.assertIn('stage:stageFor(row.date,target,stage)', script)
-        self.assertIn('stageFor(row.date,target,row.stage)===stage', script)
+        self.assertIn("metric,quantity,stage:metric==='small'", script)
+        self.assertIn('stageFor(row.date,target,stage)===stage', script)
         self.assertIn("status.dataset.state='error'", script)
 
     def test_navigation_discards_stale_pages_and_source_jump_preserves_back_path(self):
@@ -725,9 +725,9 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
 
     def test_import_merge_identity_includes_stage_and_explicit_replace_is_confirmed(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn('<option value="merge">合并（同阶段同日更新）</option>', script)
+        self.assertIn('<option value="merge">合并（同指标同日更新）</option>', script)
         self.assertIn("mode==='replace'&&previous?.rows.length&&!window.confirm(", script)
-        self.assertIn("const key=row.stage+'|'+row.date", script)
+        self.assertIn("const key=metricOf(row)+'|'+row.date", script)
         self.assertIn("source:file.name", script)
 
     def test_vehicle_parameters_stay_expanded_at_all_widths(self):

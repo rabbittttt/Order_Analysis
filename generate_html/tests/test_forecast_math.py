@@ -12,6 +12,47 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is required for forecast math numeric tests")
 class ForecastMathTests(unittest.TestCase):
+    def test_completion_stretch_preserves_four_edge_days_and_middle_mass(self):
+        source = [.2, .3, .35, .42, .5, .58, .65, .75, .85, 1]
+        for length in (5, 8, 10, 18, 90):
+            result = self.run_node(f"m.stretchCompletion({json.dumps(source)},{length})")
+            self.assertEqual(len(result), length)
+            self.assertEqual(result[:2], source[:2])
+            self.assertAlmostEqual(result[-2], .85)
+            self.assertAlmostEqual(result[-1], 1)
+            self.assertAlmostEqual(result[-3], .75)
+            self.assertTrue(all(a <= b for a, b in zip(result, result[1:])))
+
+    def test_completion_stretch_rejects_incompatible_short_or_missing_curves(self):
+        self.assertEqual(self.run_node("m.stretchCompletion([.2,.4,.8,1],8)"), [])
+        self.assertEqual(self.run_node("m.stretchCompletion([.2,.4,.8,1],4)"), [.2,.4,.8,1])
+        self.assertEqual(self.run_node("m.stretchCompletion([.1,.2,null,.8,1],10)"), [])
+        self.assertEqual(self.run_node("m.stretchCompletion([.1,.4,.3,.8,1],10)"), [])
+
+    def test_full_launch_baseline_retains_early_and_middle_observations(self):
+        result = self.run_node("(()=>{const rows=Array.from({length:30},(_,i)=>({date:'2026-09-'+String(i+1).padStart(2,'0'),direct:i===0?300:30,gross:500,lock:400}));const args={rows,launchDate:'2026-09-01',endDate:'2026-09-30',today:'2026-10-01'};const a=m.launchDirectLockBaseline(args);rows[10].direct=400;return [a,m.launchDirectLockBaseline(args)];})()")
+        self.assertEqual(result[0]['days'], 30)
+        self.assertNotEqual(result[0]['level'], result[1]['level'])
+        self.assertNotEqual(result[0]['ratio'], result[1]['ratio'])
+
+    def test_steady_reference_compares_shape_not_absolute_sales(self):
+        result = self.run_node("(()=>{const base={tier:'SUV',energy:'增程',node:'新车',lock_rate:.8,direct_curve:[10,8,6,4,2],steady_curve:[5,4,3]};const target={tier:'SUV',energy:'增程',node:'新车'},current={...base,launch_days:5};return [m.steadyReferenceScore(base,target,current),m.steadyReferenceScore({...base,direct_curve:base.direct_curve.map(v=>v*100),steady_curve:base.steady_curve.map(v=>v*100)},target,current),m.steadyReferenceScore({...base,direct_curve:[2,4,6,8,10]},target,current)];})()")
+        self.assertTrue(result[0]['eligible'])
+        self.assertAlmostEqual(result[0]['score'], result[1]['score'])
+        self.assertGreater(result[0]['score'], result[2]['score'])
+
+    def test_launch_hourly_adapter_preserves_release_hour_and_absolute_invariance(self):
+        result = self.run_node("(()=>{const hours=[{hour:18,orders:40},{hour:19,orders:40}],curve=[...Array(18).fill(0),.2,.4,.6,.8,.9,1];return [100,100000].map(d1_gross=>m.smallHourlyForecast({hours,references:[{item:m.launchHourlyItem({hourly_curve:curve,d1_gross}),weight:100}]}));})()")
+        self.assertEqual(result[0], result[1])
+        self.assertEqual(result[0]['total'], 200)
+        self.assertTrue(all(v is None for v in result[0]['actual'][:18]))
+
+    def test_shared_import_keeps_separate_small_and_gross_columns(self):
+        importer = json.dumps(str(ROOT / "templates" / "forecast-import.js"))
+        result = self.run_node(f"require({importer}).normalize([['车型','日期','预测小订','预测大定'],['A','2026-09-01',0,120],['A','2026-09-02','',150]])")
+        self.assertEqual(result, [{'model':'A','date':'2026-09-01','small':0,'gross':120},{'model':'A','date':'2026-09-02','gross':150}])
+
+
     def test_small_hourly_prediction_uses_shape_and_freezes_observations(self):
         expression = "(()=>{const item={small_start_hour:18,small_hourly_curve:[...Array(18).fill(null),.2,.4,.6,.8,.9,1]},hours=[{hour:18,orders:40},{hour:19,orders:40}];return [100,100000].map(total=>m.smallHourlyForecast({hours,references:[{item:{...item,total,d1_gross:total},weight:100}]}))})()"
         low, high = self.run_node(expression)
@@ -216,7 +257,7 @@ class ForecastMathTests(unittest.TestCase):
         self.assertEqual(insufficient["evidenceCount"], 2)
         self.assertFalse(insufficient["eligible"])
         self.assertEqual(eligible["evidenceCount"], 3)
-        self.assertTrue(eligible["eligible"])
+        self.assertFalse(eligible["eligible"])  # Metadata alone cannot establish a trend match.
 
 
 if __name__ == "__main__":
