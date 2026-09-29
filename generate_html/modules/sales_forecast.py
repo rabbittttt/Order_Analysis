@@ -81,29 +81,6 @@ def _optional_number(value: Any) -> float | None:
         return None
 
 
-def _stable_implied_total(
-    numerators: list[Any],
-    rates: list[Any],
-    *,
-    minimum_points: int = 2,
-    relative_tolerance: float = .05,
-) -> tuple[int, bool, str]:
-    """Infer a fixed denominator only when repeated cumulative ratios agree."""
-    candidates = [
-        _number(numerator) / _number(rate)
-        for numerator, rate in zip(numerators, rates)
-        if _number(numerator) > 0 and _number(rate) > 0
-    ]
-    if len(candidates) < minimum_points:
-        return (int(round(candidates[-1])) if candidates else 0, False, "有效反推点不足")
-    ordered = sorted(candidates)
-    median = ordered[len(ordered) // 2]
-    spread = max(abs(value - median) / max(abs(median), 1) for value in candidates)
-    if spread > relative_tolerance:
-        return int(round(candidates[-1])), False, f"多期反推分母波动{spread:.1%}"
-    return int(round(median)), True, f"{len(candidates)}期反推一致"
-
-
 def _optional_count(values: list[Any], index: int) -> int | None:
     value = values[index] if index < len(values) else None
     if not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0:
@@ -1608,9 +1585,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 profile["days"] = actual_days
                 profile["launch_date"] = actual_days[0]["date"] if actual_days else ""
                 cumulative_small = rows.get("累计小订转大定数量", [])
-                cumulative_rate = rows.get("累计小订转化率", [])
                 explicit_small = next((_number(value) for value in reversed(rows.get("总小订", [])) if _number(value) > 0), 0)
-                inferred_small, inferred_valid, inferred_reason = _stable_implied_total(cumulative_small, cumulative_rate)
                 cumulative_latest = max((_number(value) for value in cumulative_small), default=0)
                 explicit_valid = explicit_small > 0 and explicit_small >= cumulative_latest
                 if explicit_small > 0 and not explicit_valid:
@@ -1619,10 +1594,10 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                         "处理=总小订按缺失处理，不用反推值强行兜底",
                         model, sheet.title, int(round(explicit_small)), int(round(cumulative_latest)),
                     )
-                profile["launch_total_small"] = int(round(explicit_small or inferred_small))
-                profile["launch_total_small_valid"] = bool(explicit_valid or (not explicit_small and inferred_valid))
-                profile["launch_total_small_estimated"] = bool(not explicit_small and inferred_valid)
-                profile["launch_total_small_reason"] = "首销节奏明确总小订" if explicit_valid else inferred_reason
+                profile["launch_total_small"] = int(round(explicit_small))
+                profile["launch_total_small_valid"] = bool(explicit_valid)
+                profile["launch_total_small_estimated"] = False
+                profile["launch_total_small_reason"] = "首销节奏明确总小订" if explicit_valid else "显式总小订缺失或无效"
                 profile["total_small"] = profile["launch_total_small"] if profile["launch_total_small_valid"] else 0
                 profile["day_source"] = SourceRef(launch_item.path.name, sheet.title, "已发生首销日真实数据").to_dict()
                 sources.append(SourceRef(launch_item.path.name, sheet.title, "已发生首销日真实数据"))
@@ -1817,12 +1792,10 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 row["cancel"] = latest_cancel
             if cancel_rows:
                 latest = cancel_rows[-1]
-                inferred_small, inferred_valid, inferred_reason = _stable_implied_total(
-                    [row["cancel"] for row in cancel_rows], [row["cancel_rate"] for row in cancel_rows]
-                )
-                profile["cancel_total_small"] = inferred_small
-                profile["cancel_total_small_valid"] = inferred_valid
-                profile["cancel_total_small_reason"] = inferred_reason
+                # Rates are not raw quantities: never reconstruct a missing total.
+                profile["cancel_total_small"] = 0
+                profile["cancel_total_small_valid"] = False
+                profile["cancel_total_small_reason"] = "未提供明确总小订"
                 profile["cancel_days"] = cancel_rows
                 profile["cancel_latest_date"] = latest["date"]
             profile["cancel_source"] = SourceRef(cancel_item.path.name, sheet.title, "逐日真实退订进度").to_dict()
@@ -2177,11 +2150,10 @@ def _resolve_actual_profiles(
                 "total_small": int(_number(target.get("history_small"))),
                 "day_source": history_source.to_dict(),
             }
-        has_explicit_history_small = _number(history_profile.get("total_small")) > 0
         launch_small = (
             raw.get("launch_total_small") if raw.get("launch_total_small_valid") else 0
         ) if "launch_total_small" in raw else raw.get("total_small")
-        if has_explicit_history_small and raw.get("launch_total_small_estimated") and stage != "ended":
+        if raw.get("launch_total_small_estimated"):
             launch_small = 0
         cancel_small = (
             raw.get("cancel_total_small") if raw.get("cancel_total_small_valid") else 0
@@ -2219,19 +2191,6 @@ def _resolve_actual_profiles(
             for stage_key in ("before", "active", "ended")
         }
         current_profile = stage_profiles.get(stage) or _resolve_stage_candidate(candidates, "unknown")
-        total_small_source = current_profile.get("total_small_source")
-        if total_small_source == "launch" and raw.get("launch_total_small_estimated"):
-            LOGGER.warning(
-                "[销量预测估算] 代际=%s | 总小订=%d为首销累计进度反推值（%s）| "
-                "处理=按阶段来源优先级使用该反推值作为预测分母",
-                name, int(_number(current_profile.get("total_small"))), raw.get("launch_total_small_reason") or "反推口径",
-            )
-        elif total_small_source == "cancel" and raw.get("cancel_total_small_valid"):
-            LOGGER.warning(
-                "[销量预测估算] 代际=%s | 总小订=%d为累计退订/退订率反推值（%s）| "
-                "处理=按阶段来源优先级使用该反推值作为预测分母",
-                name, int(_number(current_profile.get("total_small"))), raw.get("cancel_total_small_reason") or "反推口径",
-            )
         priority = current_profile["priority"]
         selected = current_profile["selected_source"]
         days = current_profile["days"]

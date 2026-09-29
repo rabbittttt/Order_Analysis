@@ -29,7 +29,6 @@ from modules.sales_forecast import (
     _resolve_actual_profiles,
     _same_model,
     _small_order_stage,
-    _stable_implied_total,
     _target_options,
 )
 
@@ -900,14 +899,6 @@ class SalesForecastStageTests(unittest.TestCase):
         self.assertIn("三来源D1", message)
         self.assertIn("字段来源={}", message)
 
-    def test_implied_total_requires_a_stable_denominator(self):
-        total, valid, _ = _stable_implied_total([10, 20, 30], [.01, .02, .03])
-        self.assertEqual(total, 1000)
-        self.assertTrue(valid)
-        _, valid, reason = _stable_implied_total([10, 20, 185], [.18, .18, .208568])
-        self.assertFalse(valid)
-        self.assertIn("波动", reason)
-
     def test_generation_window_from_summary_overrides_incomplete_launch_sheet(self):
         profiles = [{"model": "问界 M6 2026款", "launch_date": "2026-08-05", "days": [{"gross": 1}], "total_small": 10}]
         windows = {"m62026": {"generation": "问界 M6 2026款", "launch_date": "2026-09-01", "end_date": "2026-10-10", "days": 40}}
@@ -918,7 +909,7 @@ class SalesForecastStageTests(unittest.TestCase):
         self.assertEqual(options[0]["stage"], "before")
         self.assertEqual(options[0]["date_source_label"], "小订及首销数据整理 · 车型汇总")
 
-    def test_inferred_total_small_is_flagged_as_estimate(self):
+    def test_launch_rate_does_not_reconstruct_missing_total_small(self):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "尊界 G9by天"
@@ -944,15 +935,12 @@ class SalesForecastStageTests(unittest.TestCase):
                     SourceRef("历史.xlsx", "历史", "历史"),
                 )
 
-        self.assertTrue(profiles[0]["launch_total_small_valid"])
-        self.assertEqual(profiles[0]["total_small"], 1000)
-        message = "\n".join(logs.output)
-        self.assertIn("[销量预测估算]", message)
-        self.assertIn("总小订=1000为首销累计进度反推值", message)
-        self.assertIn("累计进度反推值", message)
+        self.assertFalse(profiles[0]["launch_total_small_valid"])
+        self.assertEqual(profiles[0]["total_small"], 0)
+        self.assertEqual(len(profiles[0]["days"]), 3)
         workbook.close()
 
-    def test_cancel_side_total_small_estimate_is_logged(self):
+    def test_cancel_rate_does_not_reconstruct_missing_total_small(self):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "尊界 G9_日度退订"
@@ -978,11 +966,9 @@ class SalesForecastStageTests(unittest.TestCase):
                     SourceRef("历史.xlsx", "历史", "历史"),
                 )
 
-        self.assertTrue(profiles[0]["cancel_total_small_valid"])
-        self.assertEqual(profiles[0]["cancel_total_small"], 1000)
-        message = "\n".join(logs.output)
-        self.assertIn("[销量预测估算]", message)
-        self.assertIn("总小订=1000为累计退订/退订率反推值", message)
+        self.assertFalse(profiles[0]["cancel_total_small_valid"])
+        self.assertEqual(profiles[0]["cancel_total_small"], 0)
+        self.assertEqual(profiles[0]["cancel_days"][-1]["cancel"], 300)
         workbook.close()
 
     def test_conflicting_explicit_total_small_is_logged_not_silently_dropped(self):
