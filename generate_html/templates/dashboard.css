@@ -3546,3 +3546,31 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   .forecast-workspace.forecast-v2 .forecast-target-sources{flex-basis:100%;justify-content:space-between;flex-wrap:wrap}
   .forecast-workspace.forecast-v2 .forecast-result-actions button{min-height:40px}
 }
+
+
+/* Compact reference controls: reference and its weight stay adjacent. */
+.forecast-workspace.forecast-v2 .forecast-ref-card .forecast-ref-selects:has(.forecast-ref-weights){
+  grid-template-columns:minmax(0,1fr) 70px minmax(0,1fr) 70px auto;
+  align-items:end;gap:6px;
+}
+.forecast-workspace.forecast-v2 .forecast-ref-selects:has(.forecast-ref-weights)>label:nth-child(1){grid-column:1;grid-row:1;min-width:0}
+.forecast-workspace.forecast-v2 .forecast-ref-selects:has(.forecast-ref-weights)>label:nth-child(2){grid-column:3;grid-row:1;min-width:0}
+.forecast-workspace.forecast-v2 .forecast-ref-card .forecast-ref-weights{display:contents}
+.forecast-workspace.forecast-v2 .forecast-ref-weights>label{display:grid;grid-template-columns:1fr;gap:5px;grid-row:1;min-width:0}
+.forecast-workspace.forecast-v2 .forecast-ref-weights>label:nth-of-type(1){grid-column:2}
+.forecast-workspace.forecast-v2 .forecast-ref-weights>label:nth-of-type(2){grid-column:4}
+.forecast-workspace.forecast-v2 .forecast-ref-weights input{width:100%;min-height:36px}
+.forecast-workspace.forecast-v2 .forecast-ref-weights>b{display:none}
+.forecast-workspace.forecast-v2 .forecast-ref-weights>em{grid-column:5;grid-row:1;align-self:end;margin-bottom:7px;padding:3px}
+.module-bar .module-nav{gap:0}
+.module-bar .module-subnav{gap:0;margin-bottom:0}
+@media(max-width:720px){
+  .forecast-workspace.forecast-v2 .forecast-ref-card .forecast-ref-selects:has(.forecast-ref-weights){grid-template-columns:minmax(0,1fr) 64px}
+  .forecast-workspace.forecast-v2 .forecast-ref-selects:has(.forecast-ref-weights)>label:nth-child(2){grid-column:1;grid-row:2}
+  .forecast-workspace.forecast-v2 .forecast-ref-weights>label:nth-of-type(2){grid-column:2;grid-row:2}
+  .forecast-workspace.forecast-v2 .forecast-ref-weights>em{grid-column:1/-1;grid-row:3;justify-self:start;margin:0}
+}
+
+.forecast-task-chart .forecast-task-chart-title{flex-direction:column;align-items:flex-start;gap:4px}
+.forecast-task-chart .forecast-task-chart-title strong{flex-shrink:0}
+.forecast-task-chart .forecast-task-chart-title span{line-height:1.6}

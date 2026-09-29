@@ -683,10 +683,13 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn('class="forecast-target-settings"', script)
         self.assertIn('class="forecast-source-details"', script)
         self.assertIn('data-forecast-stage-switch=', script)
-        self.assertIn('data-forecast-jump="curve"', script)
-        self.assertIn('data-forecast-jump="import"', script)
-        self.assertIn('class="forecast-quick-actions forecast-result-actions"', script)
-        self.assertIn("pane.querySelector('.forecast-scenarios,.forecast-lifecycle-kpis')", script)
+        self.assertNotIn('data-forecast-jump="curve"', script)
+        self.assertNotIn('data-forecast-jump="import"', script)
+        self.assertNotIn('class="forecast-quick-actions forecast-result-actions"', script)
+        self.assertIn('data-forecast-import-file', script)
+        self.assertIn("role:'reference',dashed:true", script)
+        self.assertIn("hourly:!!spec.hourly,extra:'',table:true", script)
+        self.assertIn("D1、D2及最后两天的日占比保持不变", script)
         header = script.split('<section class="forecast-target">', 1)[1].split('</section>', 1)[0]
         self.assertNotIn("data-forecast-jump", header)
 
