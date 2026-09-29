@@ -184,8 +184,12 @@ const templates=path.resolve(__dirname,'../templates');
  };
  const closed=await assertClosed();
  await page.evaluate(()=>{window.fixture.history.push({...window.fixture.history[0],model:'current',generation:'current',launch_date:'2026-08-27',days:8,gross:800,lock:700});window.renderClosed()});
+ assert.equal((await page.locator('[data-forecast-value="parameter-lock"]').textContent()).replaceAll(',',''),'640');
+ assert((await page.locator('.forecast-scenario-lock').first().textContent()).includes('完整真实日锁单合计'));
+ await page.evaluate(()=>{window.fixture.actuals[0].days[0].lock=null;window.renderClosed()});
  assert.equal((await page.locator('[data-forecast-value="parameter-lock"]').textContent()).replaceAll(',',''),'700');
- assert((await page.locator('.forecast-scenario-lock').first().textContent()).includes('整理表同车型同首销窗口终值优先'));
+ assert((await page.locator('.forecast-scenario-lock').first().textContent()).includes('逐日锁单未完整'));
+ await page.evaluate(()=>{window.fixture.actuals[0].days[0].lock=80});
  await page.evaluate(()=>{window.fixture.history.pop();window.renderClosed()});
  await page.evaluate(()=>{
    const root=document.querySelector('.forecast-workspace');

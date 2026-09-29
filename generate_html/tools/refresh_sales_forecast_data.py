@@ -27,7 +27,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
 from core.model_identity import model_key, usable_attribute
-from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, public_forecast_tables, summary_scope, summary_quality
+from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -796,12 +796,16 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         quality_status = "需复核" if quality_issues else "通过" if field_completeness >= 0.75 and consistency >= 0.8 else "数据不足"
         base_rows.append([
             model, generation, mapping_status, brand, tier, energy, launch_date, release_type, end_date,
-            int(as_number(record.get("首销期天数"), 35)), int(total_small), int(small_to_big), conversion,
-            int(gross), int(direct), direct_share, int(cancel), cancel_rate,
+            int(as_number(record.get("首销期天数"), 35)),
+            int(total_small) if record.get("总小订") not in (None, "") else None,
+            int(small_to_big) if record.get("小订转大定量") not in (None, "") else None, conversion,
+            int(gross) if record.get("大定量") not in (None, "") else None,
+            int(direct) if record.get("直接大定量") not in (None, "") else None, direct_share,
+            int(cancel) if record.get("小订后退定") not in (None, "") else None, cancel_rate,
             field_completeness, consistency, quality_status, "；".join(quality_issues),
             "历史首销参考数量汇总；映射与车型属性来自车型基本信息.xlsx单表", weekday_name(launch_date),
-            release_period, int(as_number(net)), as_number(net_rate),
-            int(as_number(lock)), as_number(lock_rate),
+            release_period, int(as_number(net)) if record.get("首销期留存大定") not in (None, "") else None, as_number(net_rate),
+            int(as_number(lock)) if record.get("首销期锁单") not in (None, "") else None, as_number(lock_rate),
         ])
 
         small_curve = pad_curve(curve_for(model, raw_curves["small"], mapping, aliases, "小转大"), day_count)
@@ -860,19 +864,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     base_headers = ["传播名", "代际名", "映射状态", "品牌", "产品档位", "能源类型", "发布日", "发布类型", "首销截止", "首销天数", "总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "字段完整度", "口径一致性", "质量状态", "质量问题", "数据来源", "发布星期", "发布时段", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率"]
     write_rows(workbook, "预测基准总表", base_headers, base_rows, "ForecastBaseline", PERCENT_FIELDS)
 
-    d12_headers = [
-        "传播名", "代际名", "映射状态", "产品档位", "首销天数", "总小转大", "总直接大定", "总大定", "总小订",
-        "D1小转大", "D1小转大/总小转大", "D2小转大", "D2小转大/总小转大",
-        "D1+D2小转大", "D1+D2小转大/总小转大", "D2小转大/D1小转大", "D1小转大/D1+D2小转大",
-        "D1直接大", "D1直接大/总直接大", "D2直接大", "D2直接大/总直接大",
-        "D1+D2直接大", "D1+D2直接大/总直接大", "D2直接大/D1直接大", "D1直接大/D1+D2直接大",
-        "D1大定", "D1小转大/D1大定", "D1直接大/D1大定",
-        "D2大定", "D2小转大/D2大定", "D2直接大/D2大定",
-        "D1+D2大定", "D1+D2小转大/D1+D2大定", "D1+D2直接大/D1+D2大定",
-        "D1退订", "D1退订率", "D2退订", "D2退订率", "D1+D2退订", "D1+D2退订率",
-        "D2退订/D1退订", "D1退订/D1+D2退订",
-        "D1口径状态", "D2口径状态", "D1+D2口径状态", "结构异常说明",
-    ]
+    d12_headers = D12_HEADERS
     d12_rows = []
     for item in model_data:
         s1, s2 = (item["small_curve"] + [None, None])[:2]
@@ -1127,7 +1119,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
     workbook["汇总说明"].column_dimensions["B"].width = 105
 
 
-def forecast_weekly_orders(store, dashboard, today):
+def forecast_weekly_orders(store, dashboard, today, daily_output=None):
     """Collect quantities after file-boundary merging, split stage-boundary weeks by day."""
     from modules.sales_forecast import (_iso_week_bounds, _as_date, _canonical_model,
         _read_model_mapping, _fill_sparse_dates)
@@ -1173,6 +1165,8 @@ def forecast_weekly_orders(store, dashboard, today):
                     filled = _fill_sparse_dates(observed, (field,), coverage, end=today)
                     for entry in filled:
                         daily[(model, entry["date"], field)] = (entry.get(field), source)
+    if daily_output is not None:
+        daily_output.update(daily)
     # Launch/day selections already carry the shared stage priority. For steady
     # sales the mix sheets remain primary; do not extend launch data over them.
     resolved = {}
@@ -1180,7 +1174,7 @@ def forecast_weekly_orders(store, dashboard, today):
         for row in profile.get("days", []):
             if row.get("date"):
                 for field in ("gross", "net", "lock"):
-                    resolved[(profile["model"], row["date"], field)] = (row.get(field), row.get("_field_sources", {}).get(field))
+                    resolved[(profile["model"], row["date"], field)] = (row.get(field), DAILY_SHEET + "｜字段来源")
     periods = {(model, period) for model, period, _ in weekly}
     for model, day, _ in {*daily, *resolved}:
         parsed = date.fromisoformat(day)
@@ -1209,7 +1203,7 @@ def forecast_weekly_orders(store, dashboard, today):
                     current += timedelta(days=1)
                 valid_days = all(c is not None for c in values_by_day)
                 raw_week = weekly.get((model, period, field)) if whole else None
-                if stage == "平销" and raw_week is not None:
+                if stage == "平销" and raw_week is not None and raw_week[0] is not None:
                     value, source = raw_week
                 elif valid_days:
                     value = sum(c[0] for c in values_by_day)
@@ -1244,8 +1238,14 @@ def append_forecast_views(path, as_of_date, workbook=None):
         dashboard = module._build_from_sources(summary["store"], Subject("summary", "鸿蒙智行", "group"))
         if dashboard is None:
             raise ValueError("汇总未生成有效销量预测数据，请检查原始历史基准")
-        weekly_rows = forecast_weekly_orders(summary["store"], dashboard, module.as_of_date or date.today())
+        mix_daily = {}
+        weekly_rows = forecast_weekly_orders(summary["store"], dashboard, module.as_of_date or date.today(), mix_daily)
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
+    data["mix_daily"] = mix_daily
+    data["reference_daily"] = {
+        name: {row[0]: list(row[1:]) for row in book[name].iter_rows(min_row=2, values_only=True) if row[0]}
+        for name in ("小转大当日数量", "直接大定当日数量", "总大定当日数量", "退订当日数量") if name in book.sheetnames
+    }
 
     def emit(name, headers, rows, percent_headers=None):
         if name in book.sheetnames:

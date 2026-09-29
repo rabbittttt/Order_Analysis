@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
+from types import SimpleNamespace
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles.numbers import is_date_format
@@ -555,6 +556,11 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     conflict_count = 0
     boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
+    mix_days = set()
+    if header_rows == 1 and key_columns == 3:
+        for item, sheet in matches:
+            if "选配比例" in item.path.name and grain_from_sheet(sheet.title) == "day" and "图表" not in sheet.title:
+                mix_days.update(day for cell in sheet[1][3:] if (day := _coverage_date(cell)))
     for item, sheet in matches:
         row_keys, col_keys = {}, {}
         inherited = {}
@@ -602,10 +608,26 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 key = tuple(_source_key(value) for value, _ in labels)
             col_keys[col] = key
             columns.setdefault(key, labels)
+        span = coverage.get(item.path.name)
+        if mix_days and span:
+            present = set(col_keys.values())
+            for day in sorted(mix_days):
+                key = (_source_key(day),)
+                if span[0] <= day <= span[1] and key not in present:
+                    # A missing date column means zero for this physical export;
+                    # an existing blank cell remains unknown. Do this before
+                    # merging so another file's columns cannot erase that fact.
+                    col_keys[-len(col_keys)-1] = key
+                    columns.setdefault(key, [(day, "yyyy-mm-dd")])
         column_periods = {col: next((part for part in key if _week_period(part)), "") for col, key in col_keys.items()}
         for row, row_key in row_keys.items():
             for col, col_key in col_keys.items():
-                cell = sheet.cell(row, col)
+                if col < 0:
+                    if not _quantity_field(row_key, "0"):
+                        continue
+                    cell = SimpleNamespace(value=0, number_format="0", data_type="n")
+                else:
+                    cell = sheet.cell(row, col)
                 if cell.value in (None, ""):
                     continue
                 key = row_key, col_key

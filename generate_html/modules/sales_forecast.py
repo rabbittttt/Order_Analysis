@@ -1546,19 +1546,19 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 direct = rows.get("当日直接大定数量", [])
                 locks = rows.get("当日交车锁单数量", [])
                 actual_days = []
-                for index, value in enumerate(gross):
-                    if index >= len(dates) or not dates[index] or not isinstance(value, (int, float)):
+                for index in range(len(dates)):
+                    value = gross[index] if index < len(gross) else None
+                    if not dates[index]:
                         continue
-                    if not math.isfinite(float(value)) or float(value) < 0:
+                    if isinstance(value, (int, float)) and (not math.isfinite(float(value)) or float(value) < 0):
                         LOGGER.warning(
                             "[销量预测字段校验] 代际=%s | Sheet=%s | 行=%d | "
-                            "当日大定=%r | 处理=负数或非有限数已拒绝，该日不进入真实进度",
+                            "当日大定=%r | 处理=负数或非有限数已拒绝，该字段置为缺失，其他已填字段保留",
                             model,
                             sheet.title,
                             index + 1,
                             value,
                         )
-                        continue
                     for label, values in (
                         ("当日留存大定数量", net),
                         ("当日小订转大定数量", small),
@@ -1578,10 +1578,12 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                                 label,
                                 component,
                             )
+                    if all(_optional_count(values, index) is None for values in (gross, net, small, direct, locks)):
+                        continue
                     actual_days.append({
-                        "day": f"D{len(actual_days) + 1}",
+                        "day": f"D{index + 1}",
                         "date": _iso(dates[index]),
-                        "gross": int(round(_number(value))),
+                        "gross": _optional_count(gross, index),
                         "net": _optional_count(net, index),
                         "small_to_big": _optional_count(small, index),
                         "direct": _optional_count(direct, index),
@@ -1902,6 +1904,7 @@ SOURCE_LABELS = {
     "small_mix": "小订选配比例分析",
     "missing": "数据缺失",
     "mixed": "多来源逐日回退",
+    "summary": "销量数据汇总（已按字段取值）",
 }
 
 
@@ -1949,6 +1952,7 @@ def _merge_day_fields(
     *,
     log_issues: bool = False,
     diagnostic_context: str = "",
+    field_priorities=None,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Use one date spine and fill fields without crossing different absolute dates."""
     base_rows, base_source = None, "missing"
@@ -1959,6 +1963,14 @@ def _merge_day_fields(
             break
     if not base_rows:
         return [], {}
+    if all(_iso(row.get("date")) for row in base_rows):
+        union = {_iso(row["date"]): row for row in base_rows}
+        for source in priority:
+            for row in candidates.get(source, {}).get("days", []):
+                day = _iso(row.get("date"))
+                if day and any(isinstance(row.get(k), (int, float)) for k in ("gross", "net", "small_to_big", "direct", "lock")):
+                    union.setdefault(day, row)
+        base_rows = [union[day] for day in sorted(union)]
     lookups: dict[str, tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]] = {}
     for source in priority:
         rows = list(candidates.get(source, {}).get("days") or [])
@@ -1977,7 +1989,7 @@ def _merge_day_fields(
             row[field] = None
         row_sources: dict[str, str] = {}
         for field in fields:
-            for source in priority:
+            for source in (field_priorities or {}).get(field, priority):
                 by_date, by_day, rows = lookups[source]
                 candidate = _candidate_for_lifecycle_row(base, index, by_date, by_day, rows)
                 value = candidate.get(field)
@@ -2041,7 +2053,7 @@ def _anchor_lifecycle_rows(rows: list[dict[str, Any]], launch_date: Any) -> list
 
 
 PRE_LAUNCH_SOURCE_PRIORITY = ("cancel", "history")
-POST_LAUNCH_SOURCE_PRIORITY = ("history", "launch", "cancel")
+POST_LAUNCH_SOURCE_PRIORITY = ("launch", "cancel", "history")
 
 
 STAGE_SOURCE_PRIORITIES: dict[str, tuple[str, ...]] = {
@@ -2070,9 +2082,11 @@ def _resolve_stage_candidate(
         priority,
         log_issues=log_issues,
         diagnostic_context=diagnostic_context,
+        field_priorities={"cancel": ("cancel", "launch", "history")} if stage == "ended" else None,
     )
     hourly_days, hourly_source = _field_value(candidates, priority, "hourly_days", lambda value: bool(value))
-    total_small, total_small_source = _field_value(candidates, priority, "total_small", lambda value: _number(value) > 0)
+    total_priority = ("cancel", "launch", "history") if stage == "ended" else priority
+    total_small, total_small_source = _field_value(candidates, total_priority, "total_small", lambda value: _number(value) > 0)
     day_source, day_source_owner = _field_value(candidates, priority, "day_source", lambda value: bool(value))
     missing_fields = []
     if not days and stage != "before":
@@ -2126,6 +2140,28 @@ def _resolve_actual_profiles(
         raw = next((profile for profile in profiles if _same_model(profile.get("model"), name)), None) or {}
         reference = _history_record(history, name)
         stage = target.get("stage") or "unknown"
+        if raw.get("_summary_resolved"):
+            label = SOURCE_LABELS["summary"]
+            days = list(raw.get("days") or [])
+            hourly = list(raw.get("hourly_days") or [])
+            total = int(_number(raw.get("total_small")))
+            fields = {"首销日明细": label, "总小订": label if total > 0 else SOURCE_LABELS["missing"],
+                      "分时进度": label, **{f"首销日·{k}": label for k in ("gross", "net", "small_to_big", "direct", "lock", "cancel")}}
+            latest = max((r.get("date", "") for r in [*days, *hourly]), default="")
+            selected = "summary" if days or hourly or total > 0 or raw.get("small_daily_days") else "missing"
+            stages = {}
+            for key in ("before", "active", "ended", "unknown"):
+                missing = (["首销日真实进度"] if not days and key != "before" else []) + (["总小订"] if total <= 0 else [])
+                stages[key] = {"stage": key, "priority": ("summary",), "days": days, "hourly_days": hourly,
+                    "total_small": total, "total_small_source": "summary", "day_source": raw.get("day_source"),
+                    "selected_source": selected, "selected_source_label": SOURCE_LABELS[selected], "field_sources": fields,
+                    "missing_fields": missing, "data_missing": selected == "missing", "source_latest_date": latest}
+            current = stages.get(stage, stages["unknown"])
+            profile = {**raw, **current, "model": name, "stage_profiles": stages}
+            target.update({k: current[k] for k in ("selected_source", "selected_source_label", "field_sources", "missing_fields", "data_missing", "source_latest_date")})
+            target["small"] = total
+            resolved.append(profile)
+            continue
 
         history_profile = _profile_from_history(
             name,
@@ -2145,7 +2181,7 @@ def _resolve_actual_profiles(
         launch_small = (
             raw.get("launch_total_small") if raw.get("launch_total_small_valid") else 0
         ) if "launch_total_small" in raw else raw.get("total_small")
-        if has_explicit_history_small and raw.get("launch_total_small_estimated"):
+        if has_explicit_history_small and raw.get("launch_total_small_estimated") and stage != "ended":
             launch_small = 0
         cancel_small = (
             raw.get("cancel_total_small") if raw.get("cancel_total_small_valid") else 0
@@ -2187,13 +2223,13 @@ def _resolve_actual_profiles(
         if total_small_source == "launch" and raw.get("launch_total_small_estimated"):
             LOGGER.warning(
                 "[销量预测估算] 代际=%s | 总小订=%d为首销累计进度反推值（%s）| "
-                "处理=当前无显式总小订可用，反推值作为预测分母",
+                "处理=按阶段来源优先级使用该反推值作为预测分母",
                 name, int(_number(current_profile.get("total_small"))), raw.get("launch_total_small_reason") or "反推口径",
             )
         elif total_small_source == "cancel" and raw.get("cancel_total_small_valid"):
             LOGGER.warning(
                 "[销量预测估算] 代际=%s | 总小订=%d为累计退订/退订率反推值（%s）| "
-                "处理=当前无显式总小订可用，反推值作为预测分母",
+                "处理=按阶段来源优先级使用该反推值作为预测分母",
                 name, int(_number(current_profile.get("total_small"))), raw.get("cancel_total_small_reason") or "反推口径",
             )
         priority = current_profile["priority"]

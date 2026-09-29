@@ -70,20 +70,20 @@ class PublicForecastTablesTests(TestCase):
         book = self.make_public()
         profiles, windows, small, _ = read_public_forecast(book, [])
         self.assertEqual(small[0]['daily_orders'], [0, 10])
-        self.assertEqual(small[0]['standard_progress'], [0, .1, .8, 1])
+        self.assertEqual(small[0]['standard_progress'], [0, 1])
         self.assertEqual(small[0]['small_hourly_curve'], [])
         self.assertEqual(profiles[0]['days'][0]['gross'], 30)
         self.assertEqual(profiles[0]['small_hourly_days'][0]['hours'][0]['hour'], 15)
         sheet = book[DAILY_SHEET]
         headers = [c.value for c in sheet[1]]
         for row in sheet.iter_rows(min_row=2):
-            if row[headers.index('来源类型')].value == '首销订单':
+            if '首销' in row[headers.index('订单阶段')].value:
                 row[headers.index('大定')].value = 99
         updated = read_public_forecast(book, [])[0]
         self.assertEqual(updated[0]['days'][0]['gross'], 99)
         history = [{'model': '历史车'}]
         read_public_forecast(book, history)
-        self.assertEqual(history[0]['daily_orders'], [20])
+        self.assertEqual(history[0]['daily_orders'], [99])
         book.close()
 
     def test_current_window_does_not_overwrite_historical_reference_dates(self):
@@ -125,7 +125,7 @@ class PublicForecastTablesTests(TestCase):
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
         self.assertEqual(book[MASTER_SHEET].max_column, 27)
         for name in (SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET):
-            self.assertEqual(book[name].max_column, 5)
+            self.assertEqual(book[name].max_column, 5 if name == SMALL_HOURLY_SHEET else 8)
             self.assertEqual(book[name].cell(1, 5).value, '来源文件')
         book.close()
 
@@ -134,6 +134,7 @@ class PublicForecastTablesTests(TestCase):
             item = data['small_order_history'][0]
             item.update(daily_orders=[0, None], total=0, total_complete=False,
                         total_source='小订by天已填累计（非终值）')
+            data['actuals'][0]['small_daily_days'][1]['orders'] = None
         book = self.make_public(customize=customize)
         item = read_public_forecast(book, [])[2][0]
         self.assertEqual(item['daily_orders'], [0, None])
@@ -147,6 +148,7 @@ class PublicForecastTablesTests(TestCase):
             item = data['small_order_history'][0]
             item.update(daily_actual=False, source_sheet='小订进度', standard_progress=[.333, 1])
             item.pop('total_complete', None)
+            data['actuals'][0]['small_daily_days'] = []
         book = self.make_public(customize=customize)
         item = read_public_forecast(book, [])[2][0]
         self.assertEqual(item['total'], 100)
@@ -155,10 +157,10 @@ class PublicForecastTablesTests(TestCase):
         self.assertFalse(item['daily_actual'])
         self.assertEqual(item['small_progress'], [])
         from core.forecast_summary import table_records
-        self.assertFalse(any(r['来源类型'] == '历史小订' for r in table_records(book, DAILY_SHEET)))
+        self.assertFalse(any(r['小订数量'] is not None for r in table_records(book, DAILY_SHEET)))
         book.close()
 
-    def test_hourly_components_survive_without_hourly_snapshot_columns(self):
+    def test_hourly_components_live_in_hourly_table_not_duplicate_daily_rows(self):
         def customize(data):
             data['actuals'][0]['hourly_days'] = [{'date': '2026-01-03', 'last_hour': 15,
                 'gross': 9, 'small_to_big': 0, 'direct': 9, 'lock': None,
@@ -185,7 +187,7 @@ class PublicForecastTablesTests(TestCase):
         self.assertEqual(read_public_forecast(book, [], today=date(2026, 1, 25))[3], [])
         book.close()
 
-    def test_stage_priority_is_reapplied_after_summary_read(self):
+    def test_summary_result_is_authoritative_across_stages(self):
         from modules.sales_forecast import _resolve_actual_profiles
         from core.models import SourceRef
         book = self.make_public()
@@ -196,7 +198,7 @@ class PublicForecastTablesTests(TestCase):
         targets = [{'name': '测试车', 'stage': 'ended', 'launch_date': '2026-01-03'}]
         result = _resolve_actual_profiles(history, raw, targets, SourceRef('summary.xlsx', MASTER_SHEET))[0]
         self.assertEqual(result['stage_profiles']['active']['days'][0]['gross'], 30)
-        self.assertEqual(result['stage_profiles']['ended']['days'][0]['gross'], 20)
+        self.assertEqual(result['stage_profiles']['ended']['days'][0]['gross'], 30)
         book.close()
 
     def weekly_fixture(self, *, complete_days=True, cutoff='2026-01-01'):

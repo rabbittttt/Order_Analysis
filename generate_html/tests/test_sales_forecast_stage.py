@@ -720,8 +720,8 @@ class SalesForecastStageTests(unittest.TestCase):
             targets.append({"name": name, "stage": stage, "small": 0})
 
         resolved = _resolve_actual_profiles(history, profiles, targets, SourceRef("整理.xlsx", "预测基准总表", "历史"))
-        self.assertEqual([item["selected_source"] for item in resolved], ["history", "cancel", "launch"])
-        self.assertEqual([target["small"] for target in targets], [1000, 1100, 900])
+        self.assertEqual([item["selected_source"] for item in resolved], ["launch", "cancel", "launch"])
+        self.assertEqual([target["small"] for target in targets], [1100, 1100, 900])
 
     def test_active_and_before_stages_do_not_use_a_third_out_of_stage_source(self):
         history = [{
@@ -802,12 +802,12 @@ class SalesForecastStageTests(unittest.TestCase):
             {"name": "车型A", "stage": "active", "small": 0},
         ]
         resolved = _resolve_actual_profiles(history, [profile], targets, SourceRef("整理.xlsx", "预测基准总表", "历史"))
-        self.assertEqual([target["small"] for target in targets], [1000, 1100, 1000])
+        self.assertEqual([target["small"] for target in targets], [1100, 1100, 1000])
         self.assertEqual(
             [target["field_sources"]["总小订"] for target in targets],
-            ["小订及首销数据整理", "小订退订分析", "小订及首销数据整理"],
+            ["小订退订分析", "小订退订分析", "小订及首销数据整理"],
         )
-        self.assertEqual(resolved[0]["stage_profiles"]["ended"]["priority"], ("history", "launch", "cancel"))
+        self.assertEqual(resolved[0]["stage_profiles"]["ended"]["priority"], ("launch", "cancel", "history"))
         self.assertEqual(resolved[1]["stage_profiles"]["before"]["priority"], ("cancel", "history"))
         self.assertEqual(resolved[2]["selected_source"], "launch")
 

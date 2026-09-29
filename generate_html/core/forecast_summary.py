@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import math
 
 from openpyxl import load_workbook
 
@@ -97,6 +98,19 @@ def source_text(value):
 
 SMALL_CURVE_SHEET = "小订参考曲线"
 SMALL_TOTAL_SHEET = "小订来源总量"
+D12_HEADERS = [
+    "传播名", "代际名", "映射状态", "产品档位", "首销天数", "总小转大", "总直接大定", "总大定", "总小订",
+    "D1小转大", "D1小转大/总小转大", "D2小转大", "D2小转大/总小转大",
+    "D1+D2小转大", "D1+D2小转大/总小转大", "D2小转大/D1小转大", "D1小转大/D1+D2小转大",
+    "D1直接大", "D1直接大/总直接大", "D2直接大", "D2直接大/总直接大",
+    "D1+D2直接大", "D1+D2直接大/总直接大", "D2直接大/D1直接大", "D1直接大/D1+D2直接大",
+    "D1大定", "D1小转大/D1大定", "D1直接大/D1大定",
+    "D2大定", "D2小转大/D2大定", "D2直接大/D2大定",
+    "D1+D2大定", "D1+D2小转大/D1+D2大定", "D1+D2直接大/D1+D2大定",
+    "D1退订", "D1退订率", "D2退订", "D2退订率", "D1+D2退订", "D1+D2退订率",
+    "D2退订/D1退订", "D1退订/D1+D2退订",
+    "D1口径状态", "D2口径状态", "D1+D2口径状态", "结构异常说明",
+]
 
 
 def _source_parts(value):
@@ -142,7 +156,7 @@ def summary_quality(
 
 
 def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, raw_profiles=None):
-    """Store business inputs, not resolved stage choices or program state."""
+    """Resolve each business cell once; every downstream table uses these cells."""
     master = table_records(book, MASTER_SHEET)
     baseline = table_records(book, "预测基准总表")
     aliases = {"传播名": "历史传播名", "代际名": "订单分析代际名", "发布日": "首销开始", "首销截止": "首销结束"}
@@ -189,7 +203,6 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         rows.append({"订单分析代际名": model, "历史传播名": historical, "日期": date_cell(day.get("date")),
                      "订单阶段": stage, "生命周期": day.get("day"), **values,
                      "来源类型": kind, "来源文件": filename, "来源Sheet": sheet})
-    totals = []
     for raw in raw_profiles:
         model, target = raw["model"], targets.get(raw["model"], {})
         for day in raw.get("days", []):
@@ -199,24 +212,6 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         for day in raw.get("small_daily_days", []):
             add(model, target.get("history_model"), day, "小订", "逐日小订", raw.get("small_daily_sources", {}).get(day.get("date")),
                 {"小订数量": day.get("orders")})
-        for kind, prefix, source_key in (("首销订单", "launch", "day_source"), ("小订退订", "cancel", "cancel_source")):
-            value = raw.get(prefix + "_total_small")
-            valid = raw.get(prefix + "_total_small_valid", value is not None and value > 0)
-            dates = [d.get("date") for d in raw.get("cancel_days" if prefix == "cancel" else "days", []) if d.get("date")]
-            filename, sheet = _source_parts(raw.get(source_key))
-            if value is not None or dates or filename:
-                basis = "退订进度反推" if prefix == "cancel" else "首销累计进度反推" if raw.get("launch_total_small_estimated") else "原表总量"
-                totals.append([model, kind, value if valid else None, basis, filename, sheet,
-                               date_cell(min(dates)) if dates else None, date_cell(max(dates)) if dates else None])
-        # Preserve genuine intraday cumulative components in the daily business table;
-        # the source type and timestamp prevent treating these as completed-day totals.
-        for day in raw.get("hourly_days", []):
-            stamp = day.get("date")
-            if stamp:
-                stamp += f"T{int(day.get('last_hour', 0)):02d}:00:00"
-            if any(day.get(k) is not None for k in ("small_to_big", "direct", "lock")):
-                add(model, target.get("history_model"), {"date": stamp}, "首销", "首销分时累计", raw.get("hour_source"),
-                    {ORDER_FIELDS[k]: day.get(k) for k in ("small_to_big", "direct", "lock")})
     for item in data.get("history", []):
         for index, value in enumerate(item.get("daily_orders", [])):
             start = item.get("launch_date")
@@ -242,19 +237,32 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         for day in item.get("daily", []):
             add(item["model"], None, day, "平销", "平销锁单",
                 {"file": item.get("source_file"), "sheet": "、".join(item.get("daily_source_sheets", []))}, {"交车锁单": day.get("lock")})
+    rows = resolved_daily_rows(rows, data, master, history_file, as_of_date or date.today())
     headers = ["订单分析代际名", "历史传播名", "日期", "订单阶段", "生命周期", "小订数量",
-               *ORDER_FIELDS.values(), "来源类型", "来源文件", "来源Sheet"]
-    # Exact duplicate source records are not duplicated or summed.
-    unique = {tuple(row.get(k) for k in headers): row for row in rows}
-    emit(DAILY_SHEET, headers, [[r.get(k) for k in headers] for r in sorted(unique.values(),
-         key=lambda r: (r.get("订单分析代际名") or "", str(r.get("日期") or ""), r["来源类型"], str(r.get("生命周期") or "")))])
+               *ORDER_FIELDS.values(), "退订数量", "字段来源"]
+    emit(DAILY_SHEET, headers, [[r.get(k) for k in headers] for r in rows])
     for sheet, key, field, label, source_key in (
         (SMALL_HOURLY_SHEET, "small_hourly_days", "orders", "小时小订", "small_hour_source"),
         (LAUNCH_HOURLY_SHEET, "hourly_days", "gross", "小时大定", "hour_source")):
-        records = [[raw["model"], date_cell(day.get("date")), hour.get("hour"), hour.get(field),
-                    _source_parts(raw.get(source_key))[0]]
-                   for raw in raw_profiles for day in raw.get(key, []) for hour in day.get("hours", [])]
-        emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件"], records)
+        records = {}
+        extras = ["累计小转大", "累计直接大定", "累计交车锁单"] if key == "hourly_days" else []
+        for raw in raw_profiles:
+            for day in raw.get(key, []):
+                hours = list(day.get("hours", []))
+                last = day.get("last_hour", max((h["hour"] for h in hours), default=0))
+                if extras and not any(h["hour"] == last for h in hours) and any(day.get(k) is not None for k in ("small_to_big", "direct", "lock")):
+                    hours.append({"hour": last})
+                for hour in hours:
+                    record = [raw["model"], date_cell(day.get("date")), hour.get("hour"), hour.get(field),
+                              _source_parts(raw.get(source_key))[0]]
+                    if extras:
+                        record += [day.get(k) if hour["hour"] == last else None for k in ("small_to_big", "direct", "lock")]
+                    identity = (raw["model"], iso_day(day.get("date")), hour.get("hour"))
+                    if identity not in records:
+                        records[identity] = record
+                    else:
+                        records[identity] = [a if a is not None else b for a, b in zip(records[identity], record)]
+        emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件", *extras], [records[k] for k in sorted(records)])
     weekly = [list(r[:11]) for r in weekly_rows]
     for item in data.get("steady_history", []):
         for week in item.get("weeks", []):
@@ -266,22 +274,22 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
                 match[7] = week.get("lock")
                 match[10] = source_text({"file": item.get("source_file"), "sheet": item.get("source_sheet")})
     emit(WEEKLY_SHEET, ["订单分析代际名", "周期", "订单阶段", "统计开始", "统计结束", "大定", "留存大定", "交车锁单",
-         "大定来源", "留存大定来源", "锁单来源"], sorted(weekly, key=lambda r: (r[0], iso_day(r[3]), r[2])))
+         "大定来源", "留存大定来源", "锁单来源", *[stage + field for stage in ("首销", "平销") for field in ("大定", "留存大定", "交车锁单")]],
+         resolved_weekly_rows(weekly))
     emit(SMALL_CURVE_SHEET, ["历史传播名", "订单分析代际名", "小订开始", "小订结束", "小订天数", "总小订", "总量来源",
          "线索数", "热度", "原始名称", "来源文件", "来源Sheet", "首条数据日期", *[f"D{i+1}" for i in range(max_curve)]],
          small_records, {f"D{i+1}" for i in range(max_curve)})
-    emit(SMALL_TOTAL_SHEET, ["订单分析代际名", "来源类型", "总小订", "总量口径", "来源文件", "来源Sheet", "数据开始", "数据结束"], totals)
     guide = [
         ["口径", "数量与空值", "单位：单；0是已知无销量，空白是未知。未来日期不视为真实完成日。", None, None],
-        ["口径", "订单by天", "按来源保留数量；不同来源是候选值，不跨来源累加。首销分时累计是时间戳时点快照，不是日新增。", None, None],
+        ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。分时累计只放by时。", None, None],
         ["口径", "参考曲线", "小订参考曲线仅保存标准曲线和参考基准；真实小订累计完成度由by天和有效总小订计算。", None, None],
         ["口径", "小订", "小订选配比例分析by天 → 小订退订分析分时汇总 → 历史小订by天", None, None],
         ["口径", "首销前", "小订退订分析 → 整理表", None, None],
         ["口径", "首销中", "首销期订单节奏 → 整理表", None, None],
-        ["口径", "首销结束及平销关联首销", "整理表 → 首销期订单节奏 → 小订退订分析", None, None],
+        ["口径", "首销结束及平销关联首销", "首销期订单节奏／小订退订分析按字段优先 → 整理表补缺", None, None],
         ["口径", "平销", "预测交车锁单。完整周按周起止和阶段日期判断；不足完整周不当作完整周参考。", None, None],
-        ["口径", "分母来源", "小订来源总量保留各候选来源的有效总量和统计范围；阶段切换重新应用优先级。", None, None],
-        ["口径", "字段完整度", "保留原始表字段填写比例用于参考评分；口径一致性和质量状态由汇总中的数量重新计算。", None, None],
+        ["口径", "预测指标", "D1/D2和后续曲线使用同一份多来源取值结果；未来实际值、未知终局分母留空，不用预测补真实值。", None, None],
+        ["口径", "字段完整度", "按汇总最终字段是否有值计算；口径一致性和质量状态由同一组数量计算。", None, None],
         ["生成", "数据判定日期", (as_of_date or date.today()).isoformat(), None, None],
     ]
     for record in sources:
@@ -291,11 +299,261 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         info = dict(book["汇总说明"].iter_rows(min_row=2, values_only=True))
         book.properties.identifier = info.get("刷新签名")
     emit(GUIDE_SHEET, ["类型", "项目", "内容", "数据开始", "数据结束"], guide)
+    refresh_reference_tables(book, data, emit, rows, as_of_date or date.today())
     for name in ("汇总说明", "字段说明", INDEX_SHEET, "预测基准总表", "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时", SNAPSHOT_SHEET):
         if name in book.sheetnames:
             del book[name]
     first = [GUIDE_SHEET, MASTER_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, DAILY_SHEET, WEEKLY_SHEET]
     book._sheets = [book[name] for name in first] + [s for s in book.worksheets if s.title not in first]
+
+
+def resolved_daily_rows(candidates, data, masters, history_file, today):
+    """One model/date row, field-wise precedence, never sum overlapping sources."""
+    targets = {r["name"]: r for r in data.get("targets", [])}
+    references = data.get("reference_daily", {})
+    cancel_cumulative = data.setdefault("resolved_cancel_cumulative", {})
+    for profile in data.get("actuals", []):
+        previous_cancel = {iso_day(r.get("date")): r.get("cancel") for r in profile.get("cancel_days", [])}
+        for day in profile.get("days", []):
+            filename, sheet = _source_parts(profile.get("day_source"))
+            provenance = {}
+            for key, field in ORDER_FIELDS.items():
+                owner = day.get("_field_sources", {}).get(key)
+                provenance[field] = source_text({"file": history_file, "sheet": {"gross": "总大定当日数量", "small_to_big": "小转大当日数量", "direct": "直接大定当日数量"}.get(key, "车型汇总")}) if owner == "history" else source_text({"file": filename, "sheet": sheet})
+            candidates.append({"订单分析代际名": profile["model"], "日期": date_cell(day.get("date")),
+                "订单阶段": "首销", "生命周期": day.get("day"), **{c: day.get(k) for k, c in ORDER_FIELDS.items()},
+                "来源类型": "已解析", "来源文件": filename, "来源Sheet": sheet, "_origins": provenance})
+            value = day.get("cancel")
+            if day.get("_field_sources", {}).get("cancel") == "cancel" and isinstance(value, (int, float)):
+                day_key = iso_day(day.get("date"))
+                cancel_cumulative[(profile["model"], day_key)] = value
+                prior_day = (date.fromisoformat(day_key)-timedelta(days=1)).isoformat()
+                prior = previous_cancel.get(prior_day)
+                if prior is None and day_key == targets.get(profile["model"], {}).get("small_start_date"):
+                    prior = 0
+                if isinstance(prior, (int, float)) and value >= prior:
+                    filename, sheet = _source_parts(profile.get("cancel_source"))
+                    candidates.append({"订单分析代际名": profile["model"], "日期": date_cell(day_key),
+                        "订单阶段": "首销", "退订数量": value-prior, "来源类型": "首销订单",
+                        "来源文件": filename, "来源Sheet": sheet})
+    for item in data.get("history", []):
+        model = item.get("generation") or item["model"]
+        start = item.get("launch_date")
+        if not start:
+            continue
+        for field, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", "总大定当日数量"), ("退订数量", "退订当日数量")):
+            values = references.get(sheet, {}).get(item["model"], [])
+            for index, value in enumerate(values[:max(int(item.get("days") or len(values)), 0)]):
+                candidates.append({"订单分析代际名": model, "历史传播名": item["model"],
+                    "日期": date_cell((date.fromisoformat(start) + timedelta(days=index)).isoformat()),
+                    "订单阶段": "首销", "生命周期": f"D{index+1}", field: value,
+                    "来源类型": "历史首销", "来源文件": history_file, "来源Sheet": sheet})
+    for (model, day, field), (value, source) in data.get("mix_daily", {}).items():
+        target = targets.get(model, {})
+        # Mix data is the primary steady-period source, not a substitute for
+        # launch rhythm/history within the launch period.
+        if target.get("end_date") and day > target["end_date"]:
+            filename, sheet = _source_parts(source)
+            candidates.append({"订单分析代际名": model, "日期": date_cell(day), "订单阶段": "平销",
+                ORDER_FIELDS[field]: value, "来源类型": "平销锁单", "来源文件": filename, "来源Sheet": sheet})
+    rows, ranks, origins = {}, {}, {}
+    priority = {"逐日小订": 0, "首销订单": 0, "平销锁单": 0, "已解析": 1, "历史首销": 2, "历史小订": 2}
+    fields = ["小订数量", *ORDER_FIELDS.values(), "退订数量"]
+    for source in candidates:
+        if source.get("来源类型") == "首销分时累计":
+            continue
+        day = iso_day(source.get("日期"))
+        model = source.get("订单分析代际名")
+        if not model or not day or day[:10] > today.isoformat():
+            continue
+        day = day[:10]
+        key = (model, day)
+        row = rows.setdefault(key, {"订单分析代际名": model, "日期": date_cell(day)})
+        for label in ("历史传播名", "生命周期"):
+            if source.get(label) and not row.get(label):
+                row[label] = source[label]
+        for field in fields:
+            if field in source:
+                row.setdefault(field, None)
+            value = source.get(field)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
+                continue
+            gross = source.get("大定")
+            if field in {"小转大", "直接大定", "留存大定", "交车锁单"} and isinstance(gross, (int, float)) and value > gross * 1.02 + 5:
+                continue
+            rank = priority.get(source.get("来源类型"), 3)
+            identity = (*key, field)
+            if identity in ranks and rank >= ranks[identity]:
+                continue
+            ranks[identity] = rank
+            row[field] = value
+            origins.setdefault(key, {})[field] = source.get("_origins", {}).get(field) or source_text({"file": source.get("来源文件"), "sheet": source.get("来源Sheet")})
+    result = []
+    for key, row in sorted(rows.items()):
+        model, day = key
+        target = targets.get(model, {})
+        stages = []
+        if "小订数量" in row:
+            stages.append("小订")
+        if any(c in row for c in ORDER_FIELDS.values()) or "退订数量" in row:
+            stages.append("平销" if target.get("end_date") and day > target["end_date"] else "首销")
+        row["订单阶段"] = "/".join(stages)
+        if target.get("launch_date") and day >= target["launch_date"]:
+            row["生命周期"] = f"D{(date.fromisoformat(day)-date.fromisoformat(target['launch_date'])).days+1}"
+        by_origin = {}
+        for field, origin in origins.get(key, {}).items():
+            by_origin.setdefault(origin, []).append(field)
+        row["字段来源"] = "；".join(f"{'/'.join(fields)}={origin}" for origin, fields in by_origin.items())
+        result.append(row)
+    return result
+
+
+def resolved_weekly_rows(candidates):
+    grouped = {}
+    for row in candidates:
+        grouped.setdefault((row[0], row[1]), {}).setdefault(row[2], row)
+    result = []
+    for _, stages in sorted(grouped.items()):
+        parts = list(stages.values())
+        row = list(parts[0][:11])
+        row[2] = "/".join(s for s in ("首销", "平销") if s in stages)
+        row[3] = min((p[3] for p in parts), key=iso_day)
+        row[4] = max((p[4] for p in parts), key=iso_day)
+        for i in range(5, 8):
+            values = [p[i] for p in parts]
+            row[i] = sum(values) if all(isinstance(v, (int, float)) for v in values) else None
+            row[i+3] = "、".join(dict.fromkeys(str(p[i+3]) for p in parts if p[i+3]))
+        # Only transition weeks need separate stage quantities. Ordinary weeks
+        # already have an unambiguous stage and must not duplicate all measures.
+        row += [stages[s][i] if len(parts) > 1 and s in stages else None for s in ("首销", "平销") for i in range(5, 8)]
+        result.append(row)
+    return result
+
+
+def refresh_reference_tables(book, data, emit, daily, today):
+    """Rebuild reference features from the same resolved quantities as actuals."""
+    from tools.refresh_sales_forecast_data import safe_div, cumulative, day_structure_quality
+    masters = table_records(book, MASTER_SHEET)
+    headers = [c.value for c in book[MASTER_SHEET][1]]
+    lookup = {(r["订单分析代际名"], iso_day(r["日期"])): r for r in daily}
+    actuals = {p["model"]: p for p in data.get("actuals", [])}
+    mapping_status = {p["model"]: p.get("mapping_status") for p in data.get("history", [])}
+    targets = {p["name"]: p for p in data.get("targets", [])}
+    derived = {name: [] for name in ("小转大当日数量", "直接大定当日数量", "小转大累计完成度",
+        "直接大定累计完成度", "累计大定完成度", "累计小订转化率", "累计退订率", "累计直接大定占比", "每日直接大定占比")}
+    metric_rows = []
+    max_days = max((int(r.get("首销天数") or 0) for r in masters), default=0)
+    for r in masters:
+        model, name = r.get("订单分析代际名"), r.get("历史传播名")
+        start, finish = iso_day(r.get("首销开始")), iso_day(r.get("首销结束"))
+        if not model or not name or not start:
+            continue
+        count = int(r.get("首销天数") or ((date.fromisoformat(finish)-date.fromisoformat(start)).days+1 if finish else 0))
+        max_days = max(max_days, count)
+        dates = [(date.fromisoformat(start)+timedelta(days=i)).isoformat() for i in range(max(count, 0))]
+        selected = [lookup.get((model, d), {}) if d <= today.isoformat() else {} for d in dates]
+        s, d, g, c = ([day.get(field) for day in selected] for field in ("小转大", "直接大定", "大定", "退订数量"))
+        ended = bool(finish and finish < today.isoformat())
+        for field, total in (("小转大", "总小转大"), ("直接大定", "总直接大定"), ("大定", "总大定"),
+                             ("留存大定", "首销期留存大定"), ("交车锁单", "首销期锁单"), ("退订数量", "总退订")):
+            values = [day.get(field) for day in selected]
+            if ended and values and all(v is not None for v in values):
+                r[total] = sum(values)
+            elif not ended or r.get(total) in (None, ""):
+                r[total] = None
+        small_finish = iso_day(r.get("小订结束"))
+        profile = actuals.get(model, {})
+        if start == targets.get(model, {}).get("launch_date") and profile.get("total_small", 0) > 0:
+            r["总小订"] = profile["total_small"]
+        if small_finish and small_finish >= today.isoformat():
+            r["总小订"] = None
+        for output, numerator, denominator in (("小订转化率", "总小转大", "总小订"), ("直接大定占比", "总直接大定", "总大定"),
+            ("退订率", "总退订", "总小订"), ("留存大定率", "首销期留存大定", "总大定"), ("大定到锁单率", "首销期锁单", "总大定")):
+            r[output] = safe_div(r.get(numerator), r.get(denominator))
+        terminal_cancel = data.get("resolved_cancel_cumulative", {}).get((model, finish)) if ended else None
+        if terminal_cancel is not None:
+            r["总退订"] = terminal_cancel
+            r["退订率"] = safe_div(terminal_cancel, r.get("总小订"))
+        fields = ("总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率")
+        r["字段完整度"] = sum(r.get(k) is not None for k in fields)/len(fields)
+        derived["小转大当日数量"].append([name, *s])
+        derived["直接大定当日数量"].append([name, *d])
+        for title, values, denominator in (("小转大累计完成度", s, "总小转大"), ("直接大定累计完成度", d, "总直接大定"),
+            ("累计大定完成度", g, "总大定"), ("累计小订转化率", s, "总小订"), ("累计退订率", c, "总小订")):
+            progress = cumulative(values, r.get(denominator) or 0)
+            if title == "累计退订率":
+                progress = [safe_div(data["resolved_cancel_cumulative"][(model, day)], r.get(denominator))
+                            if (model, day) in data.get("resolved_cancel_cumulative", {}) else value
+                            for day, value in zip(dates, progress)]
+            derived[title].append([name, *progress])
+        cg, cd = cumulative(g), cumulative(d)
+        derived["累计直接大定占比"].append([name, *[safe_div(a, b) for a, b in zip(cd, cg)]])
+        derived["每日直接大定占比"].append([name, *[safe_div(a, b) for a, b in zip(d, g)]])
+        s1, s2 = (s+[None, None])[:2]
+        d1, d2 = (d+[None, None])[:2]
+        g1, g2 = (g+[None, None])[:2]
+        c1, c2 = (c+[None, None])[:2]
+        def pair(a, b):
+            return a+b if a is not None and b is not None else None
+        s12, d12, g12, c12 = pair(s1, s2), pair(d1, d2), pair(g1, g2), pair(c1, c2)
+        checks = [day_structure_quality(a, b, v, label) if all(x is not None for x in (a, b, v)) else (False, label+"数量未完整")
+                  for a, b, v, label in ((s1, d1, g1, "D1"), (s2, d2, g2, "D2"), (s12, d12, g12, "D1+D2"))]
+        valid = [(a, b, v) if check[0] else (None, None, None) for (a, b, v), check in zip(((s1, d1, g1), (s2, d2, g2), (s12, d12, g12)), checks)]
+        (vs1, vd1, vg1), (vs2, vd2, vg2), (vs12, vd12, vg12) = valid
+        status = mapping_status.get(name) or ("已映射" if model != name else "未映射·暂按传播名")
+        metric_rows.append([name, model, status, r.get("产品档位"), count, r.get("总小转大"), r.get("总直接大定"), r.get("总大定"), r.get("总小订"),
+            s1, safe_div(vs1, r.get("总小转大")), s2, safe_div(vs2, r.get("总小转大")), s12, safe_div(vs12, r.get("总小转大")), safe_div(vs2, vs1), safe_div(vs1, vs12),
+            d1, safe_div(vd1, r.get("总直接大定")), d2, safe_div(vd2, r.get("总直接大定")), d12, safe_div(vd12, r.get("总直接大定")), safe_div(vd2, vd1), safe_div(vd1, vd12),
+            g1, safe_div(vs1, vg1), safe_div(vd1, vg1), g2, safe_div(vs2, vg2), safe_div(vd2, vg2), g12, safe_div(vs12, vg12), safe_div(vd12, vg12),
+            c1, safe_div(c1, r.get("总小订")), c2, safe_div(c2, r.get("总小订")), c12, safe_div(c12, r.get("总小订")), safe_div(c2, c1), safe_div(c1, c12),
+            *["通过" if ok else "数据不足或异常" for ok, _ in checks], "；".join(issue for _, issue in checks if issue)])
+    emit(MASTER_SHEET, headers, [[r.get(k) for k in headers] for r in masters], {k for k in headers if k.endswith("率") or "占比" in k or k == "字段完整度"})
+    emit("D1_D2预测指标", D12_HEADERS, metric_rows, {k for k in D12_HEADERS if "/" in k or k.endswith("率")})
+    day_headers = [f"D{i+1}" for i in range(max_days)]
+    for title, records in derived.items():
+        padded = [row+[None]*(max_days+1-len(row)) for row in records]
+        emit(title, ["传播名", *day_headers], padded, set(day_headers) if "当日数量" not in title else set())
+    curves = table_records(book, SMALL_CURVE_SHEET)
+    curve_headers = [c.value for c in book[SMALL_CURVE_SHEET][1]]
+    for row in curves:
+        model = row.get("订单分析代际名") or row.get("历史传播名")
+        start, end = iso_day(row.get("小订开始")), iso_day(row.get("小订结束"))
+        if not start or not end:
+            continue
+        values = [lookup.get((model, (date.fromisoformat(start)+timedelta(days=i)).isoformat()), {}).get("小订数量")
+                  for i in range(max((date.fromisoformat(end)-date.fromisoformat(start)).days+1, 0))]
+        if end >= today.isoformat():
+            row["总小订"] = None
+        elif values and all(v is not None for v in values):
+            row["小订天数"] = len(values)
+            master = next((r for r in masters if r.get("订单分析代际名") == model and
+                iso_day(r.get("小订开始")) == start and iso_day(r.get("小订结束")) == end), {})
+            row["总小订"] = master.get("总小订") if master.get("总小订") is not None else sum(values)
+            row["总量来源"] = "车型基本信息" if master.get("总小订") is not None else "汇总实际小订合计"
+            row["来源文件"], row["来源Sheet"] = SUMMARY_NAME, DAILY_SHEET
+            row["首条数据日期"] = date_cell(start)
+            for key in list(row):
+                if key.startswith("D") and key[1:].isdigit():
+                    row[key] = None
+            for i, value in enumerate(cumulative(values, sum(values) or 0)):
+                key = f"D{i+1}"
+                if key not in curve_headers:
+                    curve_headers.append(key)
+                row[key] = value
+    emit(SMALL_CURVE_SHEET, curve_headers, [[row.get(k) for k in curve_headers] for row in curves],
+         {k for k in curve_headers if k.startswith("D") and k[1:].isdigit()})
+    # A source directory lists all inputs; this business table needs only the
+    # selected denominator, not another set of competing candidate quantities.
+    totals = []
+    seen = set()
+    for row in masters:
+        model = row.get("订单分析代际名")
+        if not row.get("订单来源文件") or model in seen:
+            continue
+        seen.add(model)
+        totals.append([model, "汇总取值", row.get("总小订"), "按阶段及字段优先级取值", SUMMARY_NAME, MASTER_SHEET,
+                       row.get("小订开始"), row.get("小订结束")])
+    emit(SMALL_TOTAL_SHEET, ["订单分析代际名", "来源类型", "总小订", "总量口径", "来源文件", "来源Sheet", "数据开始", "数据结束"], totals)
 
 
 def read_public_forecast(book, history, today=None):
@@ -305,19 +563,43 @@ def read_public_forecast(book, history, today=None):
     current = today or date.today()
     masters = table_records(book, MASTER_SHEET)
     days = table_records(book, DAILY_SHEET)
+    canonical = "字段来源" in [c.value for c in book[DAILY_SHEET][1]]
     mapping, model_master = _read_model_mapping(), _read_model_master()
     grouped = {}
     for row in days:
-        grouped.setdefault((row.get("订单分析代际名"), row.get("来源类型")), []).append(row)
+        model = row.get("订单分析代际名")
+        if canonical:
+            if "首销" in str(row.get("订单阶段")):
+                grouped.setdefault((model, "首销订单"), []).append(row)
+            if "小订" in str(row.get("订单阶段")):
+                grouped.setdefault((model, "逐日小订"), []).append(row)
+                grouped.setdefault((model, "历史小订"), []).append(row)
+            if "平销" in str(row.get("订单阶段")) and row.get("交车锁单") is not None:
+                grouped.setdefault((model, "平销锁单"), []).append(row)
+        else:
+            grouped.setdefault((model, row.get("来源类型")), []).append(row)
     def lifecycle(row):
         return int(str(row.get("生命周期") or "D0")[1:])
     for item in history:
-        selected = sorted([r for r in days if r.get("来源类型") == "历史首销" and r.get("历史传播名") == item["model"]], key=lifecycle)
+        if canonical:
+            master = next((r for r in masters if r.get("历史传播名") == item["model"]), {})
+            model = item.get("generation") or master.get("订单分析代际名")
+            start = item.get("launch_date") or iso_day(master.get("首销开始"))
+            end = item.get("end_date") or iso_day(master.get("首销结束"))
+            selected = sorted([r for r in days if r.get("订单分析代际名") == model and start and
+                start <= iso_day(r.get("日期")) and (not end or iso_day(r.get("日期")) <= end)], key=lambda r: iso_day(r["日期"]))
+            by_date = {iso_day(r["日期"]): r for r in selected}
+            last = max((d for d, r in by_date.items() if r.get("大定") is not None), default="")
+            selected = [by_date.get((date.fromisoformat(start)+timedelta(days=i)).isoformat(), {})
+                        for i in range((date.fromisoformat(last)-date.fromisoformat(start)).days+1)] if last else []
+        else:
+            selected = sorted([r for r in days if r.get("来源类型") == "历史首销" and r.get("历史传播名") == item["model"]], key=lifecycle)
         item["daily_orders"] = [r.get("大定") for r in selected]
         item["hourly_curve"] = []
 
     profiles, windows = [], {}
     by_model = {}
+    cancel_curves = {r.get("传播名"): r for r in table_records(book, "累计退订率")}
     for row in masters:
         if not row.get("订单来源文件"):
             continue
@@ -331,18 +613,29 @@ def read_public_forecast(book, history, today=None):
         profile = {"model": model, "launch_date": windows[model_key(model)]["launch_date"],
                    "days": [], "cancel_days": [], "hourly_days": [], "small_hourly_days": [],
                    "small_daily_days": [], "small_daily_sources": {}}
+        if canonical:
+            profile.update(_summary_resolved=True, total_small=row.get("总小订") or 0,
+                day_source={"file": SUMMARY_NAME, "sheet": DAILY_SHEET})
         for r in grouped.get((model, "首销订单"), []):
+            if canonical and not (windows[model_key(model)]["launch_date"] <= iso_day(r.get("日期")) <= (windows[model_key(model)]["end_date"] or "9999")):
+                continue
             profile["days"].append({"date": iso_day(r.get("日期")), "day": r.get("生命周期"),
                                     **{k: r.get(c) for k, c in ORDER_FIELDS.items()}})
-            profile["day_source"] = {"file": r.get("来源文件"), "sheet": r.get("来源Sheet")}
+            if canonical:
+                index = (date.fromisoformat(iso_day(r["日期"]))-date.fromisoformat(profile["launch_date"])).days+1
+                rate = cancel_curves.get(row.get("历史传播名"), {}).get(f"D{index}")
+                if isinstance(rate, (int, float)) and profile["total_small"] > 0:
+                    profile["days"][-1]["cancel"] = rate * profile["total_small"]
+            if not canonical:
+                profile["day_source"] = {"file": r.get("来源文件"), "sheet": r.get("来源Sheet")}
         profile["days"].sort(key=lambda r: (r.get("date") or "", int(str(r.get("day") or "D0")[1:])))
         for r in grouped.get((model, "逐日小订"), []):
             d = iso_day(r.get("日期"))
             profile["small_daily_days"].append({"date": d, "orders": r.get("小订数量")})
-            profile["small_daily_sources"][d] = {"file": r.get("来源文件"), "sheet": r.get("来源Sheet")}
+            profile["small_daily_sources"][d] = {"file": SUMMARY_NAME, "sheet": DAILY_SHEET} if canonical else {"file": r.get("来源文件"), "sheet": r.get("来源Sheet")}
         profiles.append(profile)
         by_model[model] = profile
-    for row in table_records(book, SMALL_TOTAL_SHEET):
+    for row in ([] if canonical else table_records(book, SMALL_TOTAL_SHEET)):
         profile = by_model.get(row.get("订单分析代际名"))
         if profile is None:
             continue
@@ -375,10 +668,15 @@ def read_public_forecast(book, history, today=None):
             bucket["hours"].append({"hour": hour, field: value})
             if isinstance(value, (int, float)):
                 bucket[field] += value
+            if canonical and key == "hourly_days":
+                for metric, column in (("small_to_big", "累计小转大"), ("direct", "累计直接大定"), ("lock", "累计交车锁单")):
+                    if row.get(column) is not None:
+                        bucket[metric] = row[column]
         for (model, d), bucket in sorted(buckets.items()):
             bucket["hours"].sort(key=lambda r: r["hour"])
             if key == "hourly_days":
-                bucket.update(small_to_big=None, direct=None, lock=None)
+                for metric in ("small_to_big", "direct", "lock"):
+                    bucket.setdefault(metric, None)
                 for row in grouped.get((model, "首销分时累计"), []):
                     if iso_day(row.get("日期")) == d:
                         bucket.update({k: row[c] for k, c in ORDER_FIELDS.items() if row.get(c) is not None})
@@ -389,10 +687,10 @@ def read_public_forecast(book, history, today=None):
         start, end = iso_day(row.get("小订开始")), iso_day(row.get("小订结束"))
         first_date = iso_day(row.get("首条数据日期"))
         selected = [r for r in grouped.get((generation or name, "历史小订"), [])
-                    if r.get("历史传播名") == name and
+                    if (canonical and start and start <= iso_day(r.get("日期")) <= (end or "9999")) or (not canonical and r.get("历史传播名") == name and
                     (not first_date or iso_day(r.get("日期")) ==
-                     (date.fromisoformat(first_date) + timedelta(days=lifecycle(r)-1)).isoformat())]
-        selected.sort(key=lifecycle)
+                     (date.fromisoformat(first_date) + timedelta(days=lifecycle(r)-1)).isoformat()))]
+        selected.sort(key=lambda r: iso_day(r.get("日期")) if canonical else lifecycle(r))
         daily = [r.get("小订数量") for r in selected]
         dates = [iso_day(r.get("日期")) for r in selected]
         curve = [v for k, v in row.items() if k.startswith("D") and k[1:].isdigit()]
@@ -401,7 +699,7 @@ def read_public_forecast(book, history, today=None):
         final_total = row.get("总小订")
         complete = isinstance(final_total, (int, float)) and final_total > 0
         total = final_total if complete else sum(v for v in daily if v is not None)
-        actual = row.get("来源Sheet") != "小订进度"
+        actual = bool(canonical and selected) or row.get("来源Sheet") != "小订进度"
         cumulative, running, prefix_complete = [], 0, True
         for value in daily:
             prefix_complete = prefix_complete and value is not None
@@ -466,7 +764,7 @@ def read_public_forecast(book, history, today=None):
         for i, week in enumerate(weeks, 1):
             week["week"] = i
         attrs = _master_record(model_master, model) or {}
-        filename = daily_rows[0].get("来源文件") if daily_rows else SUMMARY_NAME
+        filename = (daily_rows[0].get("来源文件") if daily_rows else None) or SUMMARY_NAME
         sheets = list(dict.fromkeys(r.get("来源Sheet") for r in daily_rows if r.get("来源Sheet")))
         steady.append({"model": model, "generation": model, "mapped": True,
             "brand": attrs.get("品牌") or _brand(model), "tier": attrs.get("产品档位") or "未维护",
