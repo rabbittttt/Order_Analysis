@@ -105,8 +105,116 @@ def _match_model_phase(records, row, day):
     return matches[0]
 
 
+def _model_name(row):
+    return row.get('二级代际名') or row.get('订单分析代际名') or row.get('代际名')
+
+
+def _field_sources(value):
+    """Expand metric/source assignments; never borrow another metric's source."""
+    result = {}
+    for part in re.split(r'[；;\n]', str(value or '')):
+        if '=' not in part: continue
+        fields, source = part.split('=', 1)
+        source = source.strip()
+        for field in fields.split('/'):
+            field = field.strip()
+            if field in result and result[field] != source:
+                raise ValueError('字段来源冲突：'+field)
+            result[field] = source
+    return result
+
+
+def read_resolved_panel(wb, audit):
+    """The current workbook already resolves each metric; respect its provenance."""
+    cutoff = date.today()
+    if '说明与来源' in wb.sheetnames:
+        _, notes = _workbook_records(wb, '说明与来源')
+        for _, row in notes:
+            if row.get('项目') == '数据判定日期' and dt(row.get('内容')):
+                cutoff = min(cutoff, dt(row['内容']))
+    info = defaultdict(list)
+    if '车型基本信息' in wb.sheetnames:
+        _, model_rows = _workbook_records(wb, '车型基本信息')
+        for _, row in model_rows:
+            names = {_model_name(row), row.get('代际名'), row.get('订单分析代际名')}
+            for name in names:
+                if name: info[str(name)].append(row)
+    head, rows = _workbook_records(wb, UNIFIED_DAILY_SHEET)
+    required = {'日期', '订单阶段', '字段来源'}
+    if required-set(head) or not ({'代际名','订单分析代际名'} & set(head)):
+        raise ValueError(UNIFIED_DAILY_SHEET+'缺少字段：日期、代际名、订单阶段或字段来源')
+    columns = {'小订数量':'小订数量'} if '小订数量' in head else {}
+    for metric, aliases in ORDER_METRIC_COLUMNS.items():
+        present = [column for column, _ in aliases if column in head]
+        if present:
+            columns[metric] = present[0]
+            if len(present)>1: audit[metric+'新旧字段同时存在，优先新字段'] += 1
+    if not columns: raise ValueError(UNIFIED_DAILY_SHEET+'没有可识别的订单指标列')
+    panel, seen = [], {}
+    for rowno, row in rows:
+        audit[UNIFIED_DAILY_SHEET+'原始行'] += 1
+        d, model = dt(row.get('日期')), _model_name(row)
+        if not d or not model:
+            audit['无效日期或车型'] += 1
+            continue
+        if d > cutoff:
+            audit['未来或超过数据判定日期排除'] += 1
+            continue
+        sources = _field_sources(row.get('字段来源'))
+        raw_stage = str(row.get('订单阶段') or '').strip()
+        stages = [part.strip() for part in raw_stage.split('/') if part.strip()]
+        for metric, column in columns.items():
+            value = row.get(column)
+            if value is None:
+                audit[metric+'缺失'] += 1
+                continue
+            if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value):
+                audit[metric+'非数值'] += 1
+                continue
+            source = sources.get(column, '')
+            if not source or any(word in source for word in ('预测','合成','模拟','缺失','累计','快照','参考曲线','未更新')):
+                audit[metric+'字段来源排除'] += 1
+                continue
+            if metric == '小订数量':
+                stage = '小订阶段'
+            else:
+                order_stages = [part for part in stages if part not in ('小订','小订阶段')]
+                if len(order_stages) != 1:
+                    audit[metric+'阶段不明确排除'] += 1
+                    continue
+                stage = order_stages[0]
+            if len(stages)>1: audit['复合阶段按指标拆分'] += 1
+            model_info = _match_model_phase(info.get(str(model), []),dict(row,订单阶段=stage),d)
+            prefix = '小订' if stage == '小订阶段' else '首销'
+            start, end = dt(model_info.get(prefix+'开始')), dt(model_info.get(prefix+'结束'))
+            match = re.fullmatch(r'D(\d+)',str(row.get('生命周期') or ''),re.I)
+            same_stage = (raw_stage in ('小订', '小订阶段')) if stage == '小订阶段' else raw_stage == stage
+            life = int(match[1]) if match and len(stages)==1 and same_stage else None
+            anchor = d-timedelta(days=life-1) if life and life>0 else None
+            if stage in ('小订阶段','首销') and start and end and start<=d<=end:
+                anchor, life = start,(d-start).days+1
+            if stage == '平销': life, anchor = None,None
+            cycle = str(anchor) if anchor else stage
+            key = (str(model),d,metric)
+            signature = (value,stage,source,cycle)
+            if key in seen:
+                if seen[key] != signature: raise ValueError('已合并逐日表重复键冲突：'+str(key))
+                audit['相同重复去重'] += 1
+                continue
+            seen[key] = signature
+            if value<0: audit[metric+'负值不参与倍率'] += 1
+            panel.append(dict(model=str(model),date=d,metric=metric,stage=stage,source=source,
+                              cycle=cycle,value=float(value),life=life,sheet=UNIFIED_DAILY_SHEET,row=rowno))
+    audit['字段级来源表已识别'] = 1
+    attach_model_classes(wb,panel,audit)
+    return panel,dict(audit)
+
+
 def read_unified_panel(wb, audit):
     """Resolve daily source candidates without adding snapshots or weekly totals."""
+    header = next(wb[UNIFIED_DAILY_SHEET].iter_rows(values_only=True), ())
+    if '字段来源' in header:
+        return read_resolved_panel(wb, audit)
     cutoff = date.today()
     if '说明与来源' in wb.sheetnames:
         _, notes = _workbook_records(wb, '说明与来源')
@@ -350,12 +458,13 @@ def attach_model_classes(wb, panel, audit):
         it = wb['车型基本信息'].iter_rows(values_only=True)
         headers = next(it)
         for values in it:
-            r = dict(zip(headers, values)); model = r.get('订单分析代际名')
+            r = dict(zip(headers, values)); model = _model_name(r)
             if not model:
                 continue
             for key, field in zip(definitions, fields):
                 if r.get(field):
-                    mapping[str(model)][key].add(str(r[field]).strip())
+                    for name in {model, r.get('代际名'), r.get('订单分析代际名')} - {None, ''}:
+                        mapping[str(name)][key].add(str(r[field]).strip())
     for r in panel:
         r['role'] = order_role(r['metric'])
         for key in definitions:
@@ -595,7 +704,7 @@ def main():
     if sha256_file(src)!=digest:
         raise RuntimeError('分析期间源文件发生变化，已停止导出')
     payload=dict(sample=a.sample_data and not a.real_data,source=str(src),sha256=digest,
-                 source_sheets=sorted({r['sheet'] for r in panel}),audit=audit,calendar_years=sorted(c['years']),calendar_sources=c['sources'],
+                 source_sheets=sorted({r['sheet'] for r in panel}),source_mode='字段级来源' if audit.get('字段级来源表已识别') else '来源候选',audit=audit,calendar_years=sorted(c['years']),calendar_sources=c['sources'],
                  analysis_end=max(r['date'] for r in panel),results=result,forecast=forecast,
                  calendar_events=[dict(year=y,holiday=n,start=a,end=b) for y,n,a,b in c['events']])
     log('正在准备离线交互网页...')

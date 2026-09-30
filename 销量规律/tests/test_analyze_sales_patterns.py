@@ -280,6 +280,7 @@ class UnifiedDailyTests(unittest.TestCase):
                 '生命周期','历史传播名','小订数量','大定','留存大定','交车锁单']
         head = headers if headers is not None else list(dict.fromkeys(base+[k for r in rows for k in r]))
         model_head = ['订单分析代际名','历史传播名','首销开始','首销结束','小订开始','小订结束','品牌','产品档位','能源类型']
+        model_head = list(dict.fromkeys(model_head+[k for r in models for k in r]))
         book = Book([], [])
         book.sheets = {
             m.UNIFIED_DAILY_SHEET: Sheet([head]+[[r.get(k) for k in head] for r in rows]),
@@ -371,6 +372,76 @@ class UnifiedDailyTests(unittest.TestCase):
         row=self.row(留存大定=10)
         with self.assertRaisesRegex(ValueError,'来源Sheet'):
             self.read([row],headers=[k for k in row if k!='来源Sheet'])
+
+
+    def resolved(self, rows, models=()):
+        headers = ['代际名','二级代际名','日期','订单阶段','生命周期','字段来源',
+                   '小订数量','大定','留存大定','小转大','直接大定','交车锁单']
+        return self.read(rows,models,headers=headers)
+
+    def resolved_row(self, **changes):
+        row = dict(代际名='新代际', 日期=date(2025,8,1), 订单阶段='平销',
+                   字段来源='大定/留存大定=大定选配.xlsx｜新代际by天；交车锁单=锁单选配.xlsx｜新代际by天',
+                   留存大定=10,交车锁单=15)
+        row.update(changes)
+        return row
+
+    def test_resolved_sources_are_metric_specific_and_values_are_not_reselected(self):
+        panel,audit=self.resolved([self.resolved_row(大定=12)])
+        net=next(r for r in panel if r['metric']=='留存大定')
+        lock=next(r for r in panel if r['metric']=='交车锁单')
+        self.assertEqual(net['value'],10)
+        self.assertEqual(lock['value'],15)
+        self.assertEqual(net['source'],'大定选配.xlsx｜新代际by天')
+        self.assertEqual(lock['source'],'锁单选配.xlsx｜新代际by天')
+        self.assertEqual(audit['字段级来源表已识别'],1)
+
+    def test_resolved_secondary_models_keep_distinct_values_and_properties(self):
+        models=[dict(代际名='新代际',二级代际名='增程版',品牌='品牌甲',产品档位='SUV',能源类型='增程'),
+                dict(代际名='新代际',二级代际名='纯电版',品牌='品牌甲',产品档位='SUV',能源类型='纯电')]
+        panel,audit=self.resolved([self.resolved_row(二级代际名='增程版'),
+                                   self.resolved_row(二级代际名='纯电版',留存大定=20)],models)
+        self.assertEqual({r['model'] for r in panel},{'增程版','纯电版'})
+        self.assertEqual({r['model']:r['energy'] for r in panel},{'增程版':'增程','纯电版':'纯电'})
+        self.assertEqual(audit['属性冲突车型数'],0)
+
+    def test_resolved_composite_stage_uses_each_metric_window(self):
+        row=self.resolved_row(订单阶段='小订/首销',日期=date(2025,9,1),生命周期='D32',小订数量=30,
+                             字段来源='小订数量=小订.xlsx｜by天；大定/留存大定/交车锁单=首销.xlsx｜by天')
+        models=[dict(代际名='新代际',小订开始='2025-09-01',小订结束='2025-09-30',
+                     首销开始='2025-08-01',首销结束='2025-09-30')]
+        panel,_=self.resolved([row],models)
+        small=next(r for r in panel if r['metric']=='小订数量')
+        net=next(r for r in panel if r['metric']=='留存大定')
+        self.assertEqual((small['stage'],small['cycle'],small['life']),('小订阶段','2025-09-01',1))
+        self.assertEqual((net['stage'],net['cycle'],net['life']),('首销','2025-08-01',32))
+        regular,_=self.resolved([self.resolved_row(订单阶段='小订/平销',小订数量=0,
+                                字段来源='小订数量=小订.xlsx｜by天；留存大定=大定.xlsx｜by天；交车锁单=锁单.xlsx｜by天')])
+        self.assertEqual({r['stage'] for r in regular},{'小订阶段','平销'})
+        outside,_=self.resolved([self.resolved_row(订单阶段='首销',日期=date(2025,10,1),生命周期='D62',
+                               小订数量=30,字段来源='小订数量=小订.xlsx｜by天；留存大定=首销.xlsx｜by天')],models)
+        small=next(r for r in outside if r['metric']=='小订数量')
+        self.assertIsNone(small['life'])
+        self.assertEqual(small['cycle'],'小订阶段')
+
+    def test_resolved_missing_metric_source_is_not_borrowed_and_zero_is_preserved(self):
+        row=self.resolved_row(留存大定=0,交车锁单=0,字段来源='留存大定=大定.xlsx｜by天')
+        panel,audit=self.resolved([row])
+        self.assertEqual([(r['metric'],r['value']) for r in panel],[('留存大定',0)])
+        self.assertEqual(audit['交车锁单字段来源排除'],1)
+        empty,_=self.resolved([self.resolved_row(留存大定=None,交车锁单=None)])
+        self.assertEqual(empty,[])
+
+    def test_resolved_future_snapshots_and_duplicate_conflicts(self):
+        rows=[self.resolved_row(), self.resolved_row(日期=date(2026,1,1)),
+              self.resolved_row(日期=date(2025,8,2),字段来源='留存大定/交车锁单=首销.xlsx｜分时累计')]
+        panel,audit=self.resolved(rows)
+        self.assertEqual(len(panel),2)
+        self.assertEqual(audit['未来或超过数据判定日期排除'],1)
+        with self.assertRaisesRegex(ValueError,'字段来源冲突'):
+            self.resolved([self.resolved_row(字段来源='留存大定=a；留存大定=b')])
+        with self.assertRaisesRegex(ValueError,'重复键冲突'):
+            self.resolved([self.resolved_row(),self.resolved_row(留存大定=99)])
 
 
 if __name__=='__main__': unittest.main()

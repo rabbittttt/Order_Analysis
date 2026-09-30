@@ -10,7 +10,8 @@ from statistics import median
 ALL_MODELS = "全部车型"
 FIELDS = ("category", "metric", "stage", "pattern", "typical", "p25", "p75",
           "models", "samples", "periods", "years", "conclusion", "train_ratio",
-          "validation_year", "validation_ratio", "validation_status", "validation_note", "unit", "detail_sheet")
+          "validation_year", "validation_ratio", "validation_status", "validation_note", "unit", "detail_sheet",
+          "validation_models", "validation_train_years")
 
 
 def _date(value):
@@ -287,10 +288,17 @@ def build_rule_summary(results, model_map, categories, selected_metrics=None):
                              if val_year is not None and s["year"] <= val_year
                              and s["year"] in complete.get(s["key"], set())]
         train, validation, status, note = _validate(validation_values, val_year)
+        train_keys = {s["key"] for s in validation_values if s["year"] < val_year}
+        hold_keys = {s["key"] for s in validation_values if s["year"] == val_year}
+        common_keys = train_keys & hold_keys
+        validation_models = len({key[0] for key in common_keys})
+        validation_train_years = len({s["year"] for s in validation_values
+                                      if s["year"] < val_year and s["key"] in common_keys})
         summary.update(category=cat, metric=metric, stage=stage, pattern=pattern,
                        conclusion="", train_ratio=train, validation_year=val_year,
                        validation_ratio=validation, validation_status=status,
-                       validation_note=note, unit="比例", detail_sheet=detail)
+                       validation_note=note, unit="比例", detail_sheet=detail,
+                       validation_models=validation_models, validation_train_years=validation_train_years)
         summary["conclusion"] = _conclusion(summary)
         output.append({field: summary.get(field) for field in FIELDS})
     return output

@@ -56,6 +56,8 @@ class RuleSummaryTests(unittest.TestCase):
         rows = build_rule_summary(results, models, ["A", "B"])
         self.assertEqual(find_rule(rows, "A")["validation_year"], 2023)
         self.assertEqual(find_rule(rows, "A")["validation_status"], "同向")
+        self.assertEqual(find_rule(rows, "A")["validation_models"], 2)
+        self.assertEqual(find_rule(rows, "A")["validation_train_years"], 2)
         self.assertEqual(find_rule(rows, "B")["validation_status"], "不同向")
         self.assertLess(find_rule(rows, "A")["train_ratio"], 1)
         self.assertGreater(find_rule(rows, "B")["validation_ratio"], 1)

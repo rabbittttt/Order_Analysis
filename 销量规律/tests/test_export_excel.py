@@ -62,7 +62,10 @@ class ExportTests(unittest.TestCase):
                 self.assertEqual(wb["月内明细"]["H8"].value, "月初基线为零")
                 main_values = {cell.value for row in wb["分析总览"] for cell in row if cell.value is not None}
                 self.assertIn("留存大定", main_values)
-                self.assertEqual(wb["规律汇总"].freeze_panes, "C8")
+                self.assertTrue(all(ws.freeze_panes is None for ws in wb))
+                self.assertEqual(wb["分析总览"]["A5"].value,"发现的普适性规律｜净大定、锁单分别列示")
+                self.assertEqual(wb["分析总览"]["A8"].value,"预测口径")
+                self.assertIn("尚无",wb["分析总览"]["A6"].value)
                 self.assertTrue(wb["节假日明细"].tables)
                 self.assertLess(len(wb._cell_styles), 80)
             finally:
@@ -101,13 +104,30 @@ class ExportTests(unittest.TestCase):
             wb=load_workbook(target)
             try:
                 self.assertEqual(len(wb.sheetnames),17)
-                self.assertEqual(wb.sheetnames[1],"预测辅助")
+                self.assertEqual(wb.sheetnames,list(e.REPORT_SHEET_ORDER))
+                self.assertTrue(all(ws.freeze_panes is None for ws in wb))
                 self.assertEqual(wb["预测辅助"]["A8"].value,"净大定（留存大定）")
                 self.assertEqual(wb["预测辅助"]["A9"].value,"锁单")
                 self.assertEqual(wb["预测辅助"]["J8"].value,120)
                 self.assertEqual(wb["预测辅助"]["J9"].value,140)
                 self.assertEqual(wb["预测回测明细"]["H8"].value,115)
             finally:wb.close()
+
+    def test_headlines_require_actual_multi_model_validation_and_current_direction(self):
+        base=dict(category="全部车型",metric="留存大定",stage="平销",pattern="周末/工作日（日均）",
+                  typical=1.2,p25=1.1,p75=1.3,models=5,periods=10,years=3,
+                  validation_status="同向",train_ratio=1.1,validation_ratio=1.2,
+                  validation_models=2,validation_train_years=2,detail_sheet="周内明细")
+        candidate=e._headline_findings([base])[0]
+        self.assertTrue(candidate["cross_year_candidate"])
+        self.assertIn("120.0%",candidate["finding"])
+        self.assertFalse(e._headline_findings([dict(base,validation_models=1)])[0]["cross_year_candidate"])
+        self.assertFalse(e._headline_findings([dict(base,typical=.8)])[0]["cross_year_candidate"])
+        self.assertFalse(e._headline_findings([dict(base,periods=2)])[0]["cross_year_candidate"])
+        self.assertEqual(e._headline_findings([dict(base,metric="大定")]),[])
+        first=e._headline_findings([dict(base,metric="交车锁单",stage="首销"),base])[0]
+        self.assertEqual(first["metric"],"留存大定")
+        self.assertEqual(first["stage"],"平销")
 
     def test_failed_save_preserves_previous_file_and_only_removes_own_temp(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -128,6 +128,61 @@ def _as_date(value):
     return date.fromisoformat(str(value)[:10])
 
 
+REPORT_SHEET_ORDER = (
+    "分析总览", "规律汇总", "全年月份", "下订周期规律", "锁单周期规律",
+    "预测辅助", "预测回测明细", "车型分组", "数据覆盖与方法",
+    "周内明细", "月内明细", "年度季节性", "节假日明细", "生命周期明细",
+    "锁单滞后", "月份证据", "周期比例明细",
+)
+
+
+def _headline_findings(rules):
+    """Put forecast targets first; describe observed direction without overstating it."""
+    focus = [r for r in rules if r.get("metric") in ("留存大定", "交车锁单")
+             and isinstance(r.get("typical"), (int, float)) and math.isfinite(r["typical"])]
+    overall = [r for r in focus if r.get("category") == "全部车型"]
+    focus = overall or focus
+    result = []
+    for row in focus:
+        r = dict(row)
+        enough = r.get("models", 0) >= 2 and r.get("periods", 0) >= 3
+        direction = lambda value: 1 if value > 1 else -1 if value < 1 else 0
+        train, hold = r.get("train_ratio"), r.get("validation_ratio")
+        across_years = (enough and r.get("years", 0) >= 2 and r.get("validation_status") == "同向"
+                        and r.get("validation_models", 0) >= 2 and r.get("validation_train_years", 0) >= 1
+                        and train is not None and hold is not None
+                        and direction(train) == direction(hold) == direction(r["typical"]))
+        p25, p75 = r.get("p25"), r.get("p75")
+        stable = p25 is not None and p75 is not None and (p25 > 1 or p75 < 1 or p25 == p75 == 1)
+        r["cross_year_candidate"] = across_years
+        if not enough:
+            status = "样本不足，仅作描述"
+        elif across_years:
+            status = f"跨年同向候选；共同验证{r['validation_models']}车型、{r['validation_train_years']}个训练年；仍须回测"
+        elif stable:
+            status = "样本内方向较一致，待跨年验证"
+        else:
+            status = "历史周期有波动，待验证"
+        pattern = r["pattern"]
+        if pattern == "周末/工作日（日均）":
+            finding = f"周末日均约为工作日日均的{r['typical']:.1%}"
+        elif pattern == "月末7天/其余日期（日均）":
+            finding = f"月末7天日均约为当月其余日期的{r['typical']:.1%}"
+        elif "月/上月" in pattern:
+            finding = f"{pattern.split('/')[0]}日均约为上月的{r['typical']:.1%}"
+        elif "年度季节指数" in pattern:
+            finding = f"该月日均约为同年全年日均的{r['typical']:.1%}"
+        else:
+            finding = f"该项历史典型比例为{r['typical']:.1%}，相对于同星期控制日"
+        if r.get("stage") == "首销": finding += "；适用首销批次"
+        r.update(finding=finding, evidence_level=status)
+        result.append(r)
+    result.sort(key=lambda r: (not r["cross_year_candidate"], r.get("stage") != "平销",
+                              r.get("metric") != "留存大定", -r.get("years", 0),
+                              -r.get("periods", 0), r["pattern"], r["category"]))
+    return result[:12]
+
+
 class ExcelBuilder:
     """Reuse workbook styles and report sheet progress without retaining preview files."""
     def __init__(self, sample=False, log=None):
@@ -230,7 +285,6 @@ class ExcelBuilder:
         self.table(ws, 7, headers, rows, formats, True)
         if not rows:
             self.note(ws, 8, "当前没有满足条件的可比样本，详见“数据覆盖与方法”。")
-        ws.freeze_panes = "C8"
         ws.print_title_rows = "7:7"
         return ws
 
@@ -316,18 +370,39 @@ def export_workbook(payload, output_path, log=None):
             ))
 
     b = ExcelBuilder(payload.get("sample", False), log=log)
-    overview = b.sheet("分析总览", [22, 12, 24, 24, 24, 24, 24, 15])
+    overview = b.sheet("分析总览", [22, 14, 28, 52, 16, 28, 42, 22])
     overview.sheet_properties.tabColor = TITLE
-    b.section(overview, 5, "车型分组｜" + grouping["reason"], 8)
+    b.section(overview, 5, "发现的普适性规律｜净大定、锁单分别列示", 8)
+    findings = _headline_findings(rule_rows)
+    candidate_count = sum(r["cross_year_candidate"] for r in findings)
+    headline = (f"发现{candidate_count}项多车型、多周期、跨年同向的规律候选；方向对照仍须结合预测回测。"
+                if candidate_count else "当前尚无经跨年同向验证的普适性规律；下面先列本次已观察到的规律及适用范围。")
+    b.note(overview, 6, headline)
+    overview.merge_cells("A6:H6")
+    overview["A6"].alignment = Alignment(vertical="center", wrap_text=True)
+    overview.row_dimensions[6].height = 38
+    targets = {"留存大定": "净大定（留存大定）", "交车锁单": "锁单"}
+    findings_end = b.table(overview, 8,
+        ["预测口径", "阶段", "规律", "发现与适用范围", "典型比例", "样本依据", "普适性验证", "明细工作表"],
+        [[targets[r["metric"]], r["stage"], r["pattern"], r["finding"], r["typical"],
+          f"{r['models']}个车型 / {r['periods']}个周期 / {r['years']}年", r["evidence_level"], r["detail_sheet"]]
+         for r in findings], {4: "0.0%"})
+    if not findings:
+        b.note(overview, findings_end, "净大定、锁单暂缺合格倍率样本；数据覆盖与方法页说明缺失范围。")
+        findings_end += 1
+    b.note(overview, findings_end + 1, "典型比例先车型内、再车型等权；P25/P75及完整验证依据见规律汇总。100%表示持平。")
+    class_start = findings_end + 4
+    b.section(overview, class_start, "车型分组｜" + grouping["reason"], 8)
     class_rows = [[c, sum(r["category"] == c for r in model_map.values()),
                    "、".join(r["model"] for r in model_map.values() if r["category"] == c)] for c in categories]
-    b.table(overview, 6, ["车型组", "车型数", "车型成员（代际）"], class_rows)
-    overview.merge_cells("C6:H6")
+    b.table(overview, class_start + 1, ["车型组", "车型数", "车型成员（代际）"], class_rows)
+    overview.merge_cells(start_row=class_start + 1, start_column=3, end_row=class_start + 1, end_column=8)
     for i in range(len(categories)):
-        overview.merge_cells(start_row=7 + i, start_column=3, end_row=7 + i, end_column=8)
+        member_row = class_start + 2 + i
+        overview.merge_cells(start_row=member_row, start_column=3, end_row=member_row, end_column=8)
         member_width = sum(overview.column_dimensions[get_column_letter(c)].width for c in range(3, 9))
-        overview.row_dimensions[7 + i].height = max(44, _row_height(class_rows[i][2], member_width))
-    note_row = 8 + len(categories)
+        overview.row_dimensions[member_row].height = max(44, _row_height(class_rows[i][2], member_width))
+    note_row = class_start + 3 + len(categories)
     summary_start = note_row + 3
     b.note(overview, note_row, "类别及车型自动读取；不合并原始类别、不凑固定组数。分组维度可在report_config.json中指定。")
     b.section(overview, summary_start - 1, "预测目标优先｜净大定（留存大定）、锁单分别分析；100%＝持平", 8)
@@ -345,7 +420,6 @@ def export_workbook(payload, output_path, log=None):
     b.note(overview, end + 1, "全年月份页：逐月看日均比、月度日均量及覆盖；月份证据页：看总量比、年份、跨年方向。")
     b.note(overview, end + 2, "周末比例先车型内取中位数，再车型等权；空白＝无合格样本，0%才表示真实为零。")
     b.note(overview, end + 3, "首销及小订受上市节奏影响；常年季节性应优先检验平销，并控制上市、促销和节假日。")
-    overview.freeze_panes = "A7"
 
     selected_note = ("主视图按配置展示：" + "、".join(selected_metrics) + "；未展示：" + "、".join(omitted_metrics)
                      if omitted_metrics else "主视图展示本次数据中全部可用指标，指标和销售阶段分别统计。")
@@ -399,7 +473,6 @@ def export_workbook(payload, output_path, log=None):
                         months.cell(ridx, cidx).fill = PatternFill("solid", fgColor="DCEFE8" if value > 1.02 else "FBE7DD" if value < .98 else "EDF0F3")
         row += len(rows) + 4
     b.note(months, row, "不同月份的车型构成可能不同，完整月日均量不可直接用于淡旺季排名；应以同车型相邻月和分年复核为主。")
-    months.freeze_panes = "D9"
 
     b.feature("月份证据",
         ["车型组", "指标", "阶段", "月份", "单车型日均中位数", "完整月车型数", "完整车型月数", "相邻月车型数", "相邻月比较对数",
@@ -445,7 +518,7 @@ def export_workbook(payload, output_path, log=None):
         ("月", "完整自然月；月末最后7天与其余日期日均比较，未调整星期与节日。"),
         ("年", "完整年度逐年显示；通用季节性需多年度验证。零月保留，全年为零时指数留空。"),
         ("节假日", "平销节前7天、节中、节后7天均须完整；同星期匹配前后对照。"),
-        ("缺失与来源", "缺失不补零；预测、合成、模拟和缺失来源排除。新版逐日表按来源优先级择一，累计快照、参考曲线和未来数据排除；周表不拆成日销量。负值保留在观测合计，含负值周期不算倍率。"),
+        ("缺失与来源", "缺失不补零；预测、合成、模拟和缺失来源排除。字段级来源表直接使用原表已选定值，旧候选表按来源优先级择一；累计快照、参考曲线和未来数据排除，周表不拆成日销量。负值保留在观测合计，含负值周期不算倍率。"),
         ("统计边界", "规律汇总提供完整年度的留出方向验证；未做回归、置信区间或因果识别。"),
         ("日历", "已配置年份：" + "、".join(map(str, payload.get("calendar_years", []))) + "；未配置年份不判断普通周与节日。"),
         ("首页分类", grouping["reason"]),
@@ -457,7 +530,6 @@ def export_workbook(payload, output_path, log=None):
         methods.cell(i, 2, text).font = b.font
         methods.cell(i, 2).alignment = Alignment(vertical="center", wrap_text=True)
         methods.row_dimensions[i].height = 36
-    methods.freeze_panes = "A7"
 
     metric_rank = ["小订数量", "大定", "交车锁单", "留存大定", "小转大", "直接大定"]
     stage_rank = ["平销", "首销", "小订阶段"]
@@ -579,12 +651,17 @@ def export_workbook(payload, output_path, log=None):
             [26, 30, 12, 10, 16, 16, 16, 18, 18, 18, 14, 20, 55],
             {**{i: "yyyy-mm-dd" for i in (4, 5, 6)}, **{i: "#,##0.0" for i in (7, 8, 9)}},
             "滚动回测逐期先拟合、再核对实际。WAPE＝绝对误差合计/实际绝对值合计；相同有效窗口对照基准。")
-        b.wb.move_sheet("预测辅助", offset=1-b.wb.sheetnames.index("预测辅助"))
         b.note(methods, methods.max_row + 2, "研究宗旨：各种规律均用于辅助销量预测；净大定（源字段留存大定）与交车锁单分别校准。")
         for note in forecast.get("notes", []):
             b.note(methods, methods.max_row + 1, str(note))
         b.note(methods, methods.max_row + 1, "交互网页与Excel由同一次分析生成，支持筛选、图形对比、预测试算与明细导出。")
 
+    ordered = [name for name in REPORT_SHEET_ORDER if name in b.wb.sheetnames]
+    for position, name in enumerate(ordered):
+        b.wb.move_sheet(name, offset=position-b.wb.sheetnames.index(name))
+    for ws in b.wb:
+        ws.freeze_panes = None
+    b.wb.active = 0
     _atomic_save(b.wb, output_path, log)
     return output_path
 
