@@ -12,10 +12,10 @@ from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel
 
 from core.china_calendar import calendar_payload
-from core.model_identity import model_key, usable_attribute
+from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation
 from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type
 from core.models import Dashboard, SourceRef, Subject
-from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, input_path, open_input, summary_scope
+from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, input_path, open_input, summary_scope, table_records
 
 
 LOGGER = logging.getLogger(__name__)
@@ -37,6 +37,7 @@ HISTORY_CANDIDATES = (
     FORECAST_INPUT_ROOT / "小订及首销期数据整理_测试数据.xlsx",
 )
 MODEL_MAPPING_CANDIDATES = (
+    RAW_FORECAST_DATA,
     MODEL_MASTER_PATH,
     FORECAST_INPUT_ROOT / "传播代际名映射.xlsx",
     FORECAST_INPUT_ROOT / "车型代际映射.xlsx",
@@ -300,7 +301,7 @@ def _canonical_model(value: Any, mapping: dict[str, str] | None = None) -> str:
     if not name:
         return ""
     resolved = (mapping if mapping is not None else _read_model_mapping()).get(_model_key(name))
-    return str(resolved or name).strip()
+    return str(resolved or (resolve_stage_identity(name, generation_records()) if not ACTIVE_SUMMARY.get() else None) or name).strip()
 
 
 def _same_model(left: Any, right: Any) -> bool:
@@ -309,8 +310,34 @@ def _same_model(left: Any, right: Any) -> bool:
     return bool(left_key and right_key and left_key == right_key)
 
 
+def _primary_attributes(master):
+    """Derive parent attributes without borrowing an edition\'s quantities/dates."""
+    grouped = {}
+    for record in master.values():
+        secondary = record.get("secondary_generation") or record.get("二级代际名")
+        parent = record.get("primary_generation") or record.get("代际名")
+        if secondary and parent:
+            grouped.setdefault(parent, {})[secondary] = record
+    for parent, editions in grouped.items():
+        merged = {"代际名": parent, "历史传播名": parent, "订单分析代际名": parent,
+                  "primary_generation": parent, "secondary_generation": "", "二级代际名": ""}
+        for field in ("品牌", "产品档位", "发布类型", "发布时段"):
+            values = list(dict.fromkeys(str(r.get(field) or "").strip() for r in editions.values()))
+            merged[field] = values[0] if len(values) == 1 else "未维护"
+        energies = list(dict.fromkeys(token for r in editions.values()
+                    for token in str(r.get("能源类型") or "").split("/") if token and token != "未维护"))
+        merged["能源类型"] = "/".join(energies) or "未维护"
+        master[_model_key(parent)] = merged
+    return master
+
+
 def _read_model_master(path: Path | None = None) -> dict[str, dict[str, Any]]:
-    source = path or input_path(MODEL_MASTER_PATH)
+    active = ACTIVE_SUMMARY.get()
+    source = path or (active["path"] if active else RAW_FORECAST_DATA if stage_records(RAW_FORECAST_DATA) else MODEL_MASTER_PATH)
+    modern = [] if active and Path(source) == active["path"] else stage_records(source)
+    if modern:
+        result = {model_key(stage_name(r)): r for r in modern}
+        return _primary_attributes(result)
     if not source.exists():
         return {}
     workbook = open_input(source, read_only=True, data_only=True)
@@ -322,6 +349,8 @@ def _read_model_master(path: Path | None = None) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         for values in sheet.iter_rows(min_row=2, values_only=True):
             record = dict(zip(headers, values))
+            if record.get("代际名"):
+                record.update(primary_generation=record["代际名"], secondary_generation=record.get("二级代际名") or "", 历史传播名=stage_name(record), 订单分析代际名=stage_name(record))
             model = str(record.get("历史传播名") or record.get("历史车型名") or "").strip()
             generation = str(record.get("订单分析代际名") or "").strip()
             keys = [model, generation, *str(record.get("原始表简称/别名") or "").split("|")]
@@ -329,7 +358,7 @@ def _read_model_master(path: Path | None = None) -> dict[str, dict[str, Any]]:
                 key = _model_key(value)
                 if key:
                     result.setdefault(key, record)
-        return result
+        return _primary_attributes(result)
     finally:
         workbook.close()
 
@@ -361,6 +390,10 @@ def _read_model_mapping() -> dict[str, str]:
 
 @lru_cache(maxsize=4)
 def _read_model_mapping_file(mapping_path) -> dict[str, str]:
+    active = ACTIVE_SUMMARY.get()
+    modern = [] if active and Path(mapping_path) == active["path"] else stage_records(mapping_path)
+    if modern:
+        return {model_key(stage_name(r)): stage_name(r) for r in modern}
     workbook = open_input(mapping_path, read_only=True, data_only=True)
     try:
         mapping_sheet = next((name for name in ("车型基本信息", "传播名代际映射", "车型代际映射") if name in workbook.sheetnames), "")
@@ -385,6 +418,8 @@ def _read_model_mapping_file(mapping_path) -> dict[str, str]:
             record = dict(zip(headers, values))
             model = str(record.get("历史传播名") or record.get("历史车型名") or "").strip()
             generation = str(record.get("订单分析代际名") or "").strip()
+            if record.get("代际名"):
+                generation = model = stage_name(record)
             if model and generation:
                 register(model, generation)
                 register(generation, generation)
@@ -403,6 +438,12 @@ def _read_model_mapping_file(mapping_path) -> dict[str, str]:
         workbook.close()
 
 
+def _integrated_master_sheet(workbook):
+    return next((s for s in workbook.worksheets
+                 if {"代际名", "二级代际名"}.issubset({str(c.value or "").strip() for c in s[1]})
+                 and {"开始大定日期", "首销开始"} & {str(c.value or "").strip() for c in s[1]}), None)
+
+
 def _read_stage_windows() -> tuple[Path | None, dict[str, dict[str, Any]]]:
     """Read absolute small-order and launch windows, normalized to order-analysis generation names."""
     source = input_path(RAW_FORECAST_DATA)
@@ -410,15 +451,15 @@ def _read_stage_windows() -> tuple[Path | None, dict[str, dict[str, Any]]]:
         return None, {}
     workbook = open_input(source, read_only=True, data_only=True)
     try:
-        if "车型汇总" not in workbook.sheetnames:
+        sheet = _integrated_master_sheet(workbook) or (workbook["车型汇总"] if "车型汇总" in workbook.sheetnames else None)
+        if sheet is None:
             return source, {}
-        sheet = workbook["车型汇总"]
         headers = [str(cell.value or "").strip() for cell in sheet[1]]
         model_mapping = _read_model_mapping()
         result: dict[str, dict[str, Any]] = {}
         for values in sheet.iter_rows(min_row=2, values_only=True):
             record = dict(zip(headers, values))
-            model = str(record.get("车型") or record.get("传播名") or "").strip()
+            model = str(record.get("二级代际名") or record.get("代际名") or record.get("车型") or record.get("传播名") or "").strip()
             if not model:
                 continue
             generation = model_mapping.get(_model_key(model), model)
@@ -427,8 +468,10 @@ def _read_stage_windows() -> tuple[Path | None, dict[str, dict[str, Any]]]:
             days = max(int(_number(record.get("首销期天数"), 0)), 0)
             item = {
                 "generation": generation,
+                "primary_generation": str(record.get("代际名") or generation),
+                "secondary_generation": str(record.get("二级代际名") or ""),
                 "history_model": model,
-                "has_small": True,  # Membership in the maintained reservation workbook.
+                "has_small": has_reservation(record, modern="代际名" in headers),
                 "small_start_date": _iso(record.get("小订开始日期")),
                 "small_end_date": _iso(record.get("小订结束日期")),
                 "launch_date": launch_date,
@@ -448,7 +491,18 @@ def _read_stage_windows() -> tuple[Path | None, dict[str, dict[str, Any]]]:
 
 def _stage_window(windows: dict[str, dict[str, Any]], model: str) -> dict[str, Any] | None:
     exact = windows.get(_model_key(model))
-    return exact or next((item for item in windows.values() if _same_model(item.get("generation"), model)), None)
+    found = exact or next((item for item in windows.values() if _same_model(item.get("generation"), model)), None)
+    if found:
+        return found
+    children = [r for r in windows.values() if _model_key(r.get("primary_generation")) == _model_key(model)]
+    if not children:
+        return None
+    starts = [r["launch_date"] for r in children if r.get("launch_date")]
+    ends = [r["end_date"] for r in children if r.get("end_date")]
+    if len(starts) != len(children) or len(ends) != len(children):
+        return None
+    return {"generation": model, "primary_generation": model, "launch_date": min(starts),
+            "end_date": max(ends), "aggregate": True}
 
 
 def _first_record_value(record: dict[str, Any], *names: str) -> Any:
@@ -485,13 +539,15 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
             key: next(iter(names.values()))
             for key, names in event_aliases.items() if len(names) == 1
         }
+        integrated_master = _integrated_master_sheet(workbook)
+        modern_names = integrated_master is not None
         summaries: list[dict[str, Any]] = []
-        if "车型汇总" in workbook.sheetnames:
-            sheet = workbook["车型汇总"]
+        if modern_names or "车型汇总" in workbook.sheetnames:
+            sheet = integrated_master if modern_names else workbook["车型汇总"]
             headers = [str(cell.value or "").strip() for cell in sheet[1]]
             for values in sheet.iter_rows(min_row=2, values_only=True):
                 record = dict(zip(headers, values))
-                model = str(record.get("车型") or record.get("传播名") or "").strip()
+                model = str(record.get("二级代际名") or record.get("代际名") or record.get("车型") or record.get("传播名") or "").strip()
                 if model:
                     record["_model"] = model
                     record["_generation"] = _canonical_model(model, model_mapping)
@@ -504,9 +560,12 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
         skip_labels = {"", "合计", "预测", "```", "小订"}
         for row_number, values in enumerate(sheet.iter_rows(values_only=True), start=1):
             label = str(values[0] or "").strip() if values else ""
-            if label == "小订":
+            if label in ("小订", "代际名"):
                 current_header = list(values)
                 continue
+            if "二级代际名" in current_header:
+                secondary_index = current_header.index("二级代际名")
+                label = str(values[secondary_index] or label).strip() if secondary_index < len(values) else label
             if label in skip_labels or not current_header:
                 continue
             date_columns = [
@@ -649,7 +708,8 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                     running += value
                 cumulative.append(min(running / max(final_total, 1), 1) if prefix_complete and total_complete else None)
             item = {
-                "model": label,
+                "model": generation if modern_names else label,
+                "source_model": label,
                 "generation": generation,
                 "mapped": _model_key(label) in model_mapping,
                 "brand": str(master_record.get("品牌") or _brand(label)),
@@ -684,7 +744,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
             summary_start_key = _iso(summary.get("小订开始日期"))
             if (generation_key, summary_start_key) in parsed_windows:
                 continue
-            model = str(summary.get("车型") or summary.get("传播名") or "").strip()
+            model = str(summary.get("_model") or summary.get("二级代际名") or summary.get("代际名") or summary.get("车型") or summary.get("传播名") or "").strip()
             generation = _canonical_model(model, model_mapping)
             total = int(round(_number(summary.get("总小订"))))
             fallback_curve = next(
@@ -1273,7 +1333,9 @@ def _progress_rows(workbook, sheet_name: str) -> dict[str, list[float | None]]:
     for values in sheet.iter_rows(min_row=2, values_only=True):
         if not values or not values[0]:
             continue
-        result[str(values[0])] = [_optional_number(values[index]) for index, _ in day_columns]
+        record = dict(zip(headers, values))
+        name = stage_name(record) if "二级代际名" in headers else str(values[0])
+        result[name] = [_optional_number(values[index]) for index, _ in day_columns]
     return result
 
 
@@ -1285,7 +1347,7 @@ def _sheet_records(workbook, sheet_name: str) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     for values in sheet.iter_rows(min_row=2, values_only=True):
         record = dict(zip(headers, values))
-        model = str(record.get("传播名") or record.get("车型") or "").strip()
+        model = stage_name(record) if "二级代际名" in headers else str(record.get("传播名") or record.get("车型") or "").strip()
         if model:
             records[_model_key(model)] = record
     return records
@@ -1324,6 +1386,8 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
     cancel_key = "小订后退订"
     item = {
         "model": model,
+        "primary_generation": record.get("primary_generation") or record.get("代际名") or model,
+        "secondary_generation": record.get("secondary_generation") or record.get("二级代际名") or "",
         "has_small": record.get("有小订") not in (False, 0, "否"),
         "generation": str(record.get("代际名") or ""),
         "mapping_status": str(record.get("映射状态") or ("已映射" if record.get("代际名") else "未映射·暂按传播名")),
@@ -1437,6 +1501,8 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
         model_master = _read_model_master()
         for row in sheet.iter_rows(min_row=2, values_only=True):
             record = dict(zip(headers, row))
+            if "二级代际名" in headers:
+                record.update(primary_generation=record.get("代际名"), secondary_generation=record.get("二级代际名") or "", 历史传播名=stage_name(record), 订单分析代际名=stage_name(record), 传播名=stage_name(record))
             if visible:
                 if _model_key(record.get("历史传播名")) not in d12_records:
                     continue
@@ -1502,6 +1568,23 @@ def _sheet_rows(sheet) -> dict[str, list[Any]]:
         for row in range(1, sheet.max_row + 1)
         if sheet.cell(row=row, column=1).value
     }
+
+
+def _small_campaign_rows(model, rows, windows):
+    """Assign primary small-order totals only to a uniquely active campaign."""
+    children = [w for w in windows.values() if w.get("secondary_generation")
+                and _model_key(w.get("primary_generation")) == _model_key(model)]
+    if not children:
+        return {model: rows}, []
+    owned, overlap = {}, []
+    for row in rows:
+        matches = [w for w in children if w.get("small_start_date") and w.get("small_end_date")
+                   and w["small_start_date"] <= row["date"] <= w["small_end_date"]]
+        if len(matches) == 1:
+            owned.setdefault(matches[0]["generation"], []).append(row)
+        elif len(matches) > 1:
+            overlap.append(row["date"])
+    return owned, overlap
 
 
 def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[dict[str, Any]], list[SourceRef]]:
@@ -1694,13 +1777,16 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             daily_rows = _fill_sparse_dates(daily_rows, ("orders",), small_coverage, start, end) if start else daily_rows
             if not daily_rows:
                 continue
-            profile_name = next((name for name in profiles if _same_model(name, model)), model)
-            profile = profiles.setdefault(profile_name, {"model": profile_name, "days": [], "hourly_days": [], "small_hourly_days": []})
             source = SourceRef(small_mix_item.path.name, sheet.title, "小订选配比例by天真实小订")
-            by_date = {row["date"]: row for row in profile.get("small_daily_days", [])}
-            by_date.update({row["date"]: row for row in daily_rows})
-            profile["small_daily_days"] = [by_date[key] for key in sorted(by_date)]
-            profile.setdefault("small_daily_sources", {}).update({row["date"]: source.to_dict() for row in daily_rows})
+            campaigns, overlap = _small_campaign_rows(model, daily_rows, stage_windows or {})
+            if overlap:
+                LOGGER.warning("[二级代际归属] 代际=%s | 小订窗口重叠日期%d个，示例=%s | 一级小订无法拆分，不复制给多个版本；按各版本退订分时／历史整理表补缺", model, len(overlap), "、".join(overlap[:3]))
+            for profile_name, owned_rows in campaigns.items():
+                profile = profiles.setdefault(profile_name, {"model": profile_name, "days": [], "hourly_days": [], "small_hourly_days": []})
+                by_date = {row["date"]: row for row in profile.get("small_daily_days", [])}
+                by_date.update({row["date"]: row for row in owned_rows})
+                profile["small_daily_days"] = [by_date[key] for key in sorted(by_date)]
+                profile.setdefault("small_daily_sources", {}).update({row["date"]: source.to_dict() for row in owned_rows})
             sources.append(source)
 
     cancel_item = store.find("小订退订分析")
@@ -1814,6 +1900,9 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 continue
             profiles[profile_name] = {"model": profile_name, "days": [], "hourly_days": []}
             sources.append(SourceRef(lock_item.path.name, sheet.title, "预测候选代际"))
+    for window in (stage_windows or {}).values():
+        model = window["generation"]
+        profiles.setdefault(model, {"model": model, "days": [], "hourly_days": []})
     return list(profiles.values()), sources
 
 
@@ -2414,6 +2503,8 @@ def _target_options(
 ) -> list[dict[str, Any]]:
     options = []
     for profile in profiles:
+        if any(w.get("secondary_generation") and _model_key(w.get("primary_generation")) == _model_key(profile["model"]) for w in stage_windows.values()):
+            continue  # Parent actuals are for flat sales, not another launch campaign.
         reference = _history_record(history, profile["model"])
         window = _stage_window(stage_windows, profile["model"])
         master_record = _master_record(
@@ -2458,6 +2549,8 @@ def _target_options(
         steady_start = (_as_date(stage.get("end_date")) + timedelta(days=1)).isoformat() if _as_date(stage.get("end_date")) else ""
         options.append({
             "name": profile["model"],
+            "primary_generation": (window or {}).get("primary_generation") or (master_record or {}).get("primary_generation") or profile["model"],
+            "secondary_generation": (window or {}).get("secondary_generation") or (master_record or {}).get("secondary_generation") or "",
             "has_small": (window or {}).get("has_small", reference.get("has_small", True) if reference else bool(window)),
             "history_model": reference["model"] if reference else "",
             "tier": usable_attribute(master_record.get("产品档位")) if master_record else usable_attribute(reference["tier"] if reference else None),
@@ -2633,6 +2726,65 @@ def _profile_hard_errors(
         suffix = f"；另有{len(invalid_days) - 8}天" if len(invalid_days) > 8 else ""
         errors.append(f"已结束日期字段缺失或校验失败：{labels}{suffix}")
     return list(dict.fromkeys(errors))
+
+
+
+def _combined_steady_inputs(targets, profiles, history):
+    """One parent flat-sales baseline; campaign observations are never duplicated."""
+    grouped = {}
+    for target in targets:
+        if target.get("secondary_generation"):
+            grouped.setdefault(target["primary_generation"], []).append(target)
+    merged_targets, merged_profiles, merged_history = [], [], []
+    for parent, children in grouped.items():
+        starts = [_as_date(t.get("launch_date")) for t in children]
+        ends = [_as_date(t.get("end_date")) for t in children]
+        if not all(starts) or not all(ends):
+            missing = [t["name"] for t, a, b in zip(children, starts, ends) if not a or not b]
+            reason = "二级首销窗口缺失：" + "、".join(missing)
+            merged_targets.append({**children[-1], "name": parent, "history_model": parent,
+                "primary_generation": parent, "secondary_generation": "", "aggregate": True,
+                "launch_date": "", "end_date": "", "steady_start_date": "", "days": 0,
+                "stage": "unknown", "stage_label": "时间缺失", "calendar_day": 0,
+                "date_source_label": reason, "hard_errors": [reason], "data_error": True})
+            continue
+        start, finish = min(starts), max(ends)
+        target = dict(max(children, key=lambda t: t.get("end_date") or ""))
+        energy = "/".join(dict.fromkeys(token for t in children for token in str(t.get("energy") or "").split("/") if token and token != "未维护")) or "未维护"
+        target.update(name=parent, history_model=parent, secondary_generation="", primary_generation=parent, energy=energy,
+                      launch_date=start.isoformat(), end_date=finish.isoformat(),
+                      days=(finish-start).days+1, steady_start_date=(finish+timedelta(days=1)).isoformat(),
+                      hard_errors=[], data_error=False, aggregate=True)
+        buckets = {t["name"]: {r.get("date"): r for r in next((p for p in profiles if p["model"] == t["name"]), {}).get("days", [])}
+                   for t in children}
+        rows = []
+        for index in range(target["days"]):
+            day = (start+timedelta(days=index)).isoformat()
+            active = [t for t in children if t["launch_date"] <= day <= t["end_date"]]
+            if not active:
+                continue  # Gaps between launch campaigns are not zero-sales launch days.
+            values = [buckets[t["name"]].get(day, {}) for t in active]
+            row = {"date": day, "day": f"D{len(rows)+1}"}
+            for field in ("gross", "small_to_big", "direct", "net", "lock"):
+                quantities = [r.get(field) for r in values]
+                row[field] = sum(quantities) if all(isinstance(v, (int, float)) for v in quantities) else None
+            rows.append(row)
+        target["days"] = len(rows)
+        profile = {"model": parent, "launch_date": start.isoformat(), "days": rows, "hourly_days": [], "aggregate": True}
+        refs = [_history_record(history, t["name"]) for t in children]
+        template = dict(next((r for r in refs if r), {}))
+        template.update(model=parent, generation=parent, primary_generation=parent, secondary_generation="",
+                        launch_date=start.isoformat(), end_date=finish.isoformat(), days=target["days"],
+                        energy=energy, daily_orders=[r["gross"] for r in rows], daily_direct=[r["direct"] for r in rows], aggregate=True)
+        gross = sum(r["gross"] for r in rows) if all(r["gross"] is not None for r in rows) else None
+        locks = sum(r["lock"] for r in rows) if all(r["lock"] is not None for r in rows) else None
+        for field in ("gross", "direct", "net", "lock", "small_to_big"):
+            quantities = [r[field] for r in rows]
+            template[field] = sum(quantities) if all(v is not None for v in quantities) else None
+        template["daily_small"] = [r["small_to_big"] for r in rows]
+        template["lock_rate"] = locks/gross if gross and locks is not None else None
+        merged_targets.append(target); merged_profiles.append(profile); merged_history.append(template)
+    return merged_targets, merged_profiles, merged_history
 
 
 def _default_target_option(targets: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -2830,7 +2982,9 @@ class SalesForecastModule:
         workspace_source = SourceRef(
             default_profile["day_source"]["file"], default_profile["day_source"]["sheet"], default_profile.get("selected_source_label", "当前阶段优先数据源")
         ) if default_profile and default_profile.get("day_source") else history_source
+        steady_targets, steady_actuals, steady_launch_history = _combined_steady_inputs(targets, profiles, history)
         data = {
+            "steady_targets": steady_targets, "steady_actuals": steady_actuals, "steady_launch_history": steady_launch_history,
             "target": target,
             "targets": targets,
             "history": history,

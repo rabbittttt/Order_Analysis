@@ -6,6 +6,7 @@ from typing import Iterable
 
 from core.excel import WorkbookStore, clean_text, compact_text, sheet_subject, subject_parent, subject_type
 from core.models import Subject
+from core.model_identity import generation_records, parent_generation
 
 
 DEFAULT_MODULE_ORDER = [
@@ -39,8 +40,9 @@ def is_valid_subject_name(name: str) -> bool:
 
 def discover_subjects(store: WorkbookStore, forecast_targets: Iterable[str] = ()) -> list[Subject]:
     names: dict[str, str] = {"鸿蒙智行": "鸿蒙智行"}
+    records = generation_records()
     for _, sheet_name in store.all_sheet_names():
-        subject = sheet_subject(sheet_name)
+        subject = parent_generation(sheet_subject(sheet_name), records)
         if subject and "图表" not in subject and subject not in {"Sheet1", "汇总"} and is_valid_subject_name(subject):
             clean = clean_text(subject)
             key = compact_text(clean)
@@ -51,7 +53,7 @@ def discover_subjects(store: WorkbookStore, forecast_targets: Iterable[str] = ()
             if "图表" not in sheet.title:
                 continue
             for row in range(1, sheet.max_row + 1):
-                value = clean_text(sheet.cell(row, 1).value)
+                value = clean_text(parent_generation(sheet.cell(row, 1).value, records))
                 if value and is_valid_subject_name(value):
                     key = compact_text(value)
                     if key not in names or (" " in value and " " not in names[key]):
@@ -60,7 +62,7 @@ def discover_subjects(store: WorkbookStore, forecast_targets: Iterable[str] = ()
     # Forecast targets can exist before a raw by-day Sheet is available.
     target_keys = set()
     for value in forecast_targets:
-        name = clean_text(value)
+        name = clean_text(parent_generation(value, records))
         if not re.match(r"^[\u4e00-\u9fff]{1,3}界.+", compact_text(name)):
             continue
         key = compact_text(name)

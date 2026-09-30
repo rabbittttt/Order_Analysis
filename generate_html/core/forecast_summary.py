@@ -64,12 +64,18 @@ def table_records(workbook, name):
         return []
     rows = workbook[name].iter_rows(values_only=True)
     headers = [str(value or "").strip() for value in next(rows, ())]
-    return [dict(zip(headers, values)) for values in rows if any(value is not None for value in values)]
+    result = [dict(zip(headers, values)) for values in rows if any(value is not None for value in values)]
+    for row in result:
+        if "二级代际名" in headers and row.get("代际名"):
+            event = str(row.get("二级代际名") or row["代际名"])
+            row.update({"primary_generation": row["代际名"], "secondary_generation": row.get("二级代际名") or "",
+                        "订单分析代际名": event, "历史传播名": event, "传播名": event})
+    return result
 
 
 def visible_target_names(workbook):
     return list(dict.fromkeys(
-        str(row["订单分析代际名"]) for row in table_records(workbook, MASTER_SHEET)
+        str(row.get("primary_generation") or row["订单分析代际名"]) for row in table_records(workbook, MASTER_SHEET)
         if row.get("订单来源文件") and row.get("订单分析代际名")
     ))
 
@@ -312,7 +318,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
 
 def resolved_daily_rows(candidates, data, masters, history_file, today):
     """One model/date row, field-wise precedence, never sum overlapping sources."""
-    targets = {r["name"]: r for r in data.get("targets", [])}
+    targets = {r["name"]: r for r in [*data.get("targets", []), *data.get("steady_targets", [])]}
     references = data.get("reference_daily", {})
     cancel_cumulative = data.setdefault("resolved_cancel_cumulative", {})
     for profile in data.get("actuals", []):
@@ -614,6 +620,8 @@ def read_public_forecast(book, history, today=None):
         if model in by_model:
             continue
         windows[model_key(model)] = {"generation": model, "history_model": row.get("历史传播名"),
+            "primary_generation": row.get("primary_generation") or model,
+            "secondary_generation": row.get("secondary_generation") or "",
             "has_small": row.get("有小订") not in (False, 0, "否"),
             "launch_date": iso_day(row.get("首销开始")), "end_date": iso_day(row.get("首销结束")),
             "small_start_date": iso_day(row.get("小订开始")), "small_end_date": iso_day(row.get("小订结束")),
@@ -741,6 +749,24 @@ def read_public_forecast(book, history, today=None):
             item.pop("total_complete", None)
             item["d1_share"] = min(curve[0] / curve[-1], 1) if curve and curve[-1] > 0 else 0
         small.append(item)
+    # Flat sales belongs to the primary generation, even when launch inputs
+    # are split into independent editions. Derive its window without duplicating
+    # master rows or assigning primary-only quantities to each edition.
+    parents = {}
+    for window in list(windows.values()):
+        if window.get("secondary_generation"):
+            parents.setdefault(window["primary_generation"], []).append(window)
+    for parent, children in parents.items():
+        if not all(w.get("launch_date") and w.get("end_date") for w in children):
+            continue
+        windows[model_key(parent)] = {**children[-1], "generation": parent, "history_model": parent,
+            "primary_generation": parent, "secondary_generation": "",
+            "launch_date": min(w["launch_date"] for w in children),
+            "end_date": max(w["end_date"] for w in children)}
+        if parent not in by_model:
+            by_model[parent] = {"model": parent, "days": [], "hourly_days": [], "small_hourly_days": [],
+                               "small_daily_days": [], "small_daily_sources": {}, "_summary_resolved": canonical}
+            profiles.append(by_model[parent])
     steady = []
     week_records = table_records(book, WEEKLY_SHEET)
     for model, profile in by_model.items():

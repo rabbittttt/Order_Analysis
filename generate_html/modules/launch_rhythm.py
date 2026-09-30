@@ -8,6 +8,8 @@ from openpyxl.utils.datetime import from_excel
 from core.components import kpi, section, table
 from core.excel import WorkbookStore, cell_number, clean_text, display_period, safe_number, safe_rate
 from core.models import Dashboard, SourceRef, Subject
+from core.excel import sheet_subject
+from core.model_identity import stage_label
 
 
 def _phase_number(sheet_name: str) -> int | None:
@@ -85,16 +87,18 @@ class LaunchRhythmModule:
             phases = []
             for index, (item, sheet) in enumerate(matches, start=1):
                 phase_number = _phase_number(sheet.title)
-                hourly = self._matching_hourly(hourly_matches, phase_number, len(matches))
-                phase = self._build_phase(item, sheet, phase_number or index, hourly, len(matches) > 1 or phase_number is not None)
+                campaign_label = stage_label(sheet_subject(sheet.title), subject.name)
+                hourly = next((found for found in hourly_matches if sheet_subject(found[1].title) == sheet_subject(sheet.title)), None) if campaign_label else self._matching_hourly(hourly_matches, phase_number, len(matches))
+                phase = self._build_phase(item, sheet, phase_number or index, hourly, len(matches) > 1 or phase_number is not None, campaign_label)
                 if phase:
                     phases.append(phase)
                     sources.extend(phase["sources"])
             if not phases:
                 continue
+            phases.sort(key=lambda phase: phase.get("start_date") or "")
             if len(phases) == 1:
                 phase = phases[0]
-                views[grain] = {"periods": [phase["period_label"]], "default_period": phase["period_label"], "pages": {phase["period_label"]: phase["page"]}}
+                views[grain] = {"periods": [phase["selector_label"] if phase.get("campaign_label") else phase["period_label"]], "default_period": phase["selector_label"] if phase.get("campaign_label") else phase["period_label"], "pages": {(phase["selector_label"] if phase.get("campaign_label") else phase["period_label"]): phase["page"]}}
                 continue
             pages = {"全部阶段": self._combined_page(phases)}
             pages.update({phase["selector_label"]: phase["page"] for phase in phases})
@@ -116,7 +120,7 @@ class LaunchRhythmModule:
             return next((found for found in hourly_matches if _phase_number(found[1].title) == phase_number), None)
         return hourly_matches[0] if phase_count == 1 and hourly_matches else None
 
-    def _build_phase(self, item, sheet, phase_number: int, hourly, show_phase: bool) -> dict | None:
+    def _build_phase(self, item, sheet, phase_number: int, hourly, show_phase: bool, campaign_label: str = "") -> dict | None:
         source = SourceRef(item.path.name, sheet.title, "首销期订单节奏")
         period_columns = [col for col in range(2, sheet.max_column + 1) if clean_text(sheet.cell(1, col).value) and clean_text(sheet.cell(1, col).value) != "总计"]
         periods = [clean_text(sheet.cell(1, col).value) for col in period_columns]
@@ -153,8 +157,8 @@ class LaunchRhythmModule:
                 kpi("累计直接大定占比", safe_rate(cumulative_direct, cumulative_order) * 100, "%", "累计大定来源", "blue"),
             ],
             "sections": [
-                section("launch_composite", f"第{phase_number}期 · 首销订单来源" if show_phase else "首销订单来源", {"periods": periods, "metrics": metrics}, f"{start_date or '日期缺失'} 至 {end_date or '日期缺失'} · 各期独立计算" if show_phase else "累计直接大定 / 累计小订转大 / 来源进度", source=source),
-                section("matrix", f"第{phase_number}期 · 完整指标" if show_phase else "首销期完整指标", table(["首销指标", *periods], matrix_rows), f"全部 {len(metrics)} 项指标 × {len(periods)} 个周期", source=source),
+                section("launch_composite", f"{campaign_label or f'第{phase_number}期'} · 首销订单来源" if show_phase else "首销订单来源", {"periods": periods, "metrics": metrics}, f"{start_date or '日期缺失'} 至 {end_date or '日期缺失'} · 各期独立计算" if show_phase else "累计直接大定 / 累计小订转大 / 来源进度", source=source),
+                section("matrix", f"{campaign_label or f'第{phase_number}期'} · 完整指标" if show_phase else "首销期完整指标", table(["首销指标", *periods], matrix_rows), f"全部 {len(metrics)} 项指标 × {len(periods)} 个周期", source=source),
             ],
         }
         phase_sources = [source]
@@ -163,14 +167,14 @@ class LaunchRhythmModule:
             hourly_rows, hourly_start = _read_hourly(hourly_sheet)
             if hourly_rows:
                 hourly_source = SourceRef(hourly_item.path.name, hourly_sheet.title, "分时首销节奏")
-                hourly_meta = (f"首销开启 {hourly_start} · 仅对应第{phase_number}期" if hourly_start else f"仅对应第{phase_number}期") if show_phase else (f"首销开启 {hourly_start} · 识别高峰时段与大定波动" if hourly_start else "识别高峰时段与大定波动")
-                page["sections"].insert(1, section("launch_hourly", f"第{phase_number}期 · 分时首销节奏" if show_phase else "分时首销节奏", hourly_rows, hourly_meta, source=hourly_source))
+                hourly_meta = (f"首销开启 {hourly_start} · 仅对应{campaign_label or f'第{phase_number}期'}" if hourly_start else f"仅对应{campaign_label or f'第{phase_number}期'}") if show_phase else (f"首销开启 {hourly_start} · 识别高峰时段与大定波动" if hourly_start else "识别高峰时段与大定波动")
+                page["sections"].insert(1, section("launch_hourly", f"{campaign_label or f'第{phase_number}期'} · 分时首销节奏" if show_phase else "分时首销节奏", hourly_rows, hourly_meta, source=hourly_source))
                 phase_sources.append(hourly_source)
         range_label = f"{start_date}—{end_date}" if start_date and end_date else end_date
         return {
-            "phase": phase_number, "start_date": start_date, "end_date": end_date,
+            "phase": phase_number, "campaign_label": campaign_label, "start_date": start_date, "end_date": end_date,
             "period_label": end_date or periods[-1],
-            "selector_label": f"第{phase_number}期 · {range_label}" if range_label else f"第{phase_number}期",
+            "selector_label": f"{campaign_label or f'第{phase_number}期'} · {range_label}" if range_label else f"{campaign_label or f'第{phase_number}期'}",
             "days": len(periods), "orders": cumulative_order, "net": cumulative_net,
             "small": cumulative_small, "small_rate": cumulative_small_rate,
             "small_base": cumulative_small_base, "direct": cumulative_direct,
@@ -199,7 +203,7 @@ class LaunchRhythmModule:
                     gap = max((current - previous).days - 1, 0)
                 except ValueError:
                     pass
-            summary_rows.append([f"第{phase['phase']}期", phase["start_date"] or "日期缺失", phase["end_date"] or "日期缺失", phase["days"], gap, phase["orders"], phase["net"]])
+            summary_rows.append([phase.get("campaign_label") or f"第{phase['phase']}期", phase["start_date"] or "日期缺失", phase["end_date"] or "日期缺失", phase["days"], gap, phase["orders"], phase["net"]])
         sections = [section(
             "table", "阶段概览",
             table(["阶段", "开始日期", "结束日期", "周期数", "距上期空档(天)", "累计大定", "累计留存大定"], summary_rows,
@@ -208,7 +212,7 @@ class LaunchRhythmModule:
         )]
         for phase in phases:
             sections.append(section(
-                "launch_composite", f"第{phase['phase']}期 · 首销订单来源",
+                "launch_composite", (phase.get("campaign_label") or f"第{phase['phase']}期") + " · 首销订单来源",
                 {"periods": phase["periods"], "metrics": phase["metrics"]},
                 f"{phase['start_date'] or '日期缺失'} 至 {phase['end_date'] or '日期缺失'} · 与其他期次断开显示",
                 source=phase["source"],

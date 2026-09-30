@@ -53,7 +53,7 @@
   const moduleLabels = DATA.config.module_labels;
   const forecastStages=[{id:"small",label:"小订预测"},{id:"launch",label:"首销预测"},{id:"steady",label:"平销预测"}];
   const forecastViews=["result","evidence","score"];
-  const state = {subject:null,module:"overview",forecastStage:null,forecastStageAuto:true,forecastView:"result",grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawFreezeRow:true,rawFreezeColumn:true};
+  const state = {subject:null,module:"overview",forecastStage:null,forecastStageAuto:true,forecastView:"result",forecastCampaign:null,grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawFreezeRow:true,rawFreezeColumn:true};
   const forecastDrafts=new Map();
   const forecastDraftSelector='[data-forecast-target],[data-forecast-input],[data-forecast-allocation],[data-forecast-ref],[data-forecast-ref-weight],[data-forecast-chart-ref],[data-small-ref],[data-small-weight],[data-small-input],[data-steady-ref],[data-steady-weight],[data-bridge-control],[data-lifecycle-ref],[data-lifecycle-weight],[data-lifecycle-chart-ref]';
   const forecastImportScopes=new Map();
@@ -68,7 +68,7 @@
     return persistForecastState();
   }
   function restoreForecastDraft(){
-    const root=document.querySelector('.forecast-workspace.forecast-v2'),draft=forecastDrafts.get(state.subject);
+    const root=document.querySelector('.forecast-workspace.forecast-v2'),draft=forecastDrafts.get(root?._forecastSubjectId||state.subject);
     if(!root||!draft)return;
     const controls=new Map([...root.querySelectorAll(forecastDraftSelector)].map(control=>[forecastDraftControlKey(control),control]));
     root._forecastTouched=new Set();
@@ -247,13 +247,15 @@
   function linkedForecastData(data){
     const selected=subject();
     if(!data||selected?.type!=="generation")return data;
-    const option=(data.targets||[]).find(item=>sameForecastModel(item.name,selected.name));
+    const campaigns=(data.targets||[]).filter(item=>sameForecastModel(item.primary_generation||item.name,selected.name));
+    const steady=(data.steady_targets||[]).find(item=>sameForecastModel(item.name,selected.name));
+    const option=state.forecastStage==='steady'&&steady?steady:campaigns.find(item=>item.name===state.forecastCampaign)||campaigns.find(item=>item.stage==='active')||campaigns.toSorted((a,b)=>String(b.launch_date||'').localeCompare(String(a.launch_date||'')))[0];
     if(!option)return data;
     const original=data.target||{};
-    if(sameForecastModel(option.name,original.name))return {...data,target:{...original,name:option.name}};
+    if(sameForecastModel(option.name,original.name))return {...data,target:{...original,...option,name:option.name,launch_days:option.days??original.launch_days,total_small:Number(option.small??0)}};
     const reference=(data.history||[]).find(item=>sameForecastModel(item.model,option.history_model||option.name));
     return {...data,target:{
-      name:option.name,history_model:option.history_model||reference?.model||"",
+      name:option.name,primary_generation:option.primary_generation||option.name,secondary_generation:option.secondary_generation||"",has_small:option.has_small,history_model:option.history_model||reference?.model||"",
       tier:option.tier||reference?.tier||"未维护",energy:option.energy||reference?.energy||"未维护",
       launch_node:option.node||reference?.node||"未维护",launch_date:option.launch_date??reference?.launch_date??"",
       end_date:option.end_date??reference?.end_date??"",stage:option.stage||"unknown",stage_label:option.stage_label||"时间缺失",calendar_day:Number(option.calendar_day||0),date_source_label:option.date_source_label||"日期数据缺失",
@@ -286,7 +288,7 @@
     try{
       const url=new URL(location.href),params=url.searchParams;
       params.set("subject",state.subject||"");params.set("module",state.module);
-      if(state.module==="sales_forecast"){params.set("forecastStage",state.forecastStage||"launch");params.set("forecastView",state.forecastView||"result")}else{params.delete("forecastStage");params.delete("forecastView")}
+      if(state.module==="sales_forecast"){params.set("forecastStage",state.forecastStage||"launch");params.set("forecastView",state.forecastView||"result");if(state.forecastCampaign)params.set("forecastCampaign",state.forecastCampaign);else params.delete("forecastCampaign")}else{params.delete("forecastStage");params.delete("forecastView");params.delete("forecastCampaign")}
       if(!["sales_forecast","generic","raw"].includes(state.module)){params.set("grain",state.grain);if(state.period)params.set("period",state.period)}else{params.delete("grain");params.delete("period")}
       history[`${mode}State`]({dashboard:true},"",url);
     }catch(error){console.debug("[导航状态] 当前环境不支持写入网址",error)}
@@ -299,6 +301,7 @@
     state.grain=params.get("grain")||state.grain;state.period=params.get("period")||null;
     if(state.module==="launch_rhythm"&&!params.get("grain"))state.grain="day";
     const requestedStage=params.get("forecastStage");state.forecastStageAuto=!forecastStages.some(item=>item.id===requestedStage);if(!state.forecastStageAuto)state.forecastStage=requestedStage;
+    state.forecastCampaign=params.get("forecastCampaign")||null;
     const requestedView=params.get("forecastView");state.forecastView=forecastViews.includes(requestedView)?requestedView:"result";
     await ensureState();await renderAll();
   }
@@ -311,6 +314,7 @@
     state.grain=params.get("grain")||state.grain;state.period=params.get("period")||state.period;
     if(state.module==="launch_rhythm"&&!params.get("grain"))state.grain="day";
     if(forecastStages.some(item=>item.id===params.get("forecastStage"))){state.forecastStage=params.get("forecastStage");state.forecastStageAuto=false}
+    state.forecastCampaign=params.get("forecastCampaign")||null;
     if(forecastViews.includes(params.get("forecastView")))state.forecastView=params.get("forecastView");
     $("#updatedAt").textContent=`生成时间 ${DATA.meta.generated_at.replace("T"," ")}`;
     bindStatic();renderSubjectSelect();await ensureState();await renderAll();syncUrl("replace");
@@ -319,7 +323,7 @@
     $("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")};
     $("#quickGenerationList").onclick=async event=>{const button=event.target.closest('[data-quick-generation]');if(!button)return;captureForecastDraft();state.subject=button.dataset.quickGeneration;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")};
     $("#grainSelect").onclick=async event=>{const button=event.target.closest("button");if(!button||button.disabled)return;state.grain=button.dataset.grain;const board=await getDashboard();const view=board?.views?.[state.grain];state.period=view?.default_period||null;await renderAll();syncUrl("push")};
-    $("#periodSelect").onchange=async event=>{state.period=event.target.value;await renderPage();syncUrl("push")};
+    $("#periodSelect").onchange=async event=>{if(state.module==="sales_forecast"){captureForecastDraft();state.forecastCampaign=event.target.value;await renderAll()}else{state.period=event.target.value;await renderPage()}syncUrl("push")};
     window.addEventListener("popstate",()=>restoreLocationState());
     window.addEventListener("resize",syncTopbarQuickLayout,{passive:true});
   }
@@ -338,7 +342,7 @@
     const order=state.module==="sales_forecast"?[["generation","预测代际"]]:[["group","集团"],["brand","品牌"],["generation","代际"]];
     let subjects=DATA.subjects;
     if(state.module==="sales_forecast"){
-      const owner=DATA.subjects.find(item=>item.modules.includes("sales_forecast")),board=owner?boardCache[`${owner.id}|sales_forecast`]:null,targetNames=(forecastDataFromBoard(board)?.targets||[]).map(item=>item.name);
+      const owner=DATA.subjects.find(item=>item.modules.includes("sales_forecast")),board=owner?boardCache[`${owner.id}|sales_forecast`]:null,targetNames=(forecastDataFromBoard(board)?.targets||[]).map(item=>item.primary_generation||item.name);
       const generations=DATA.subjects.filter(item=>item.type==="generation"),seen=new Set();
       subjects=targetNames.map(name=>generations.find(item=>item.name.replace(/\s+/g,'')===String(name).replace(/\s+/g,''))||generations.find(item=>sameForecastModel(item.name,name))).filter(item=>item&&!seen.has(item.id)&&seen.add(item.id));
     }
@@ -401,13 +405,15 @@
     root.querySelectorAll('[data-forecast-pane]').forEach(pane=>pane.classList.toggle('active',pane.dataset.forecastPane===id));
     root.querySelectorAll('[data-lifecycle-subpane]').forEach(pane=>pane.classList.toggle('active',pane.dataset.lifecycleSubpane===`${stage}-${id}`));
   }
-  function activateForecastStage(id,writeHistory=true){
+  async function activateForecastStage(id,writeHistory=true){
     if(!forecastStages.some(item=>item.id===id))return;
     state.module="sales_forecast";state.forecastStage=id;state.forecastStageAuto=false;
     document.querySelectorAll("[data-forecast-stage-pane]").forEach(pane=>pane.classList.toggle("active",pane.dataset.forecastStagePane===id));
     const root=document.querySelector('.forecast-workspace.forecast-v2');showForecastStageSummary(root,id);applyForecastView(root,state.forecastView||"result");
     root?.querySelectorAll("[data-forecast-stage-switch]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.forecastStageSwitch===id)));
     const page=$("#page");if(page)page.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
+    const owner=DATA.subjects.find(item=>item.modules.includes("sales_forecast")),source=forecastDataFromBoard(boardCache[`${owner?.id}|sales_forecast`]);
+    if((source?.targets||[]).some(t=>t.secondary_generation&&sameForecastModel(t.primary_generation,subject()?.name))){captureForecastDraft();await renderFilters();await renderPage();}
     if(writeHistory)syncUrl("push");
   }
   function renderNav(){
@@ -446,7 +452,14 @@
     $("#periodSelect").closest("label").style.display="";
     if(["sales_forecast","generic","raw"].includes(state.module)){
       $("#grainSelect").innerHTML=Object.entries(DATA.config.grain_labels).map(([id,label])=>`<button data-grain="${id}" disabled>${label}</button>`).join("");
-      $("#periodSelect").innerHTML=`<option>${state.module==="sales_forecast"?"按预测阶段窗口":"按所选表格范围"}</option>`;$("#periodSelect").disabled=true;$("#grainSelect").title="此模块不使用日周月筛选";return;
+      const board=state.module==="sales_forecast"?await getDashboard():null,data=forecastDataFromBoard(board),selected=subject(),campaigns=(data?.targets||[]).filter(t=>sameForecastModel(t.primary_generation||t.name,selected?.name));
+      const period=$("#periodSelect");
+      if(state.module==="sales_forecast"&&state.forecastStage!=='steady'&&campaigns.some(t=>t.secondary_generation)){
+        const current=linkedForecastData(data)?.target,small=state.forecastStage==='small';
+        period.innerHTML=campaigns.map(t=>{const label=t.secondary_generation?.startsWith(t.primary_generation)?t.secondary_generation.slice(t.primary_generation.length).trim():t.secondary_generation||t.name;return `<option value="${esc(t.name)}">${esc(label)} · ${esc((small?t.small_start_date:t.launch_date)||'日期未维护')}—${esc((small?t.small_end_date:t.end_date)||'日期未维护')}</option>`}).join('');
+        period.value=current?.name||campaigns[0]?.name;period.disabled=false;
+      }else{period.innerHTML=`<option>${state.module==="sales_forecast"?(state.forecastStage==='steady'?'一级代际合并 · 平销':'按预测阶段窗口'):"按所选表格范围"}</option>`;period.disabled=true;}
+      $("#grainSelect").title="此模块不使用日周月筛选";return;
     }
     $("#periodSelect").disabled=false;$("#grainSelect").title="";
     const board=await getDashboard();
@@ -941,7 +954,7 @@
 
   function bindSteadyForecast(root,data,context){
     const workspace=root.querySelector('[data-steady-workspace]');if(!workspace)return;
-    const history=data.steady_history||[],launchHistory=data.history||[],sameModel=context.sameModel,targetState=context.targetState;
+    const history=data.steady_history||[],launchHistory=[...data.steady_launch_history||[],...data.history||[]],sameModel=context.sameModel,targetState=context.targetState;
     const setEstimate=createForecastEstimateLogger(workspace);
     const targetSteady=target=>history.find(item=>sameModel(item.generation||item.model,target.name)||sameModel(item.model,target.name));
     const targetLaunch=target=>launchHistory.find(item=>sameModel(item.generation||item.model,target.name)||sameModel(item.model,target.name));
@@ -1189,8 +1202,9 @@
 
   function bindForecastWorkspaceV2(){
     const root=document.querySelector('.forecast-workspace.forecast-v2');if(!root)return;
-    root._forecastSubjectId=state.subject;root._forecastTouched=new Set();
-    const data=JSON.parse(root.dataset.forecastConfig||'{}'),historyList=data.history||[],history=new Map(historyList.map(item=>[item.model,item])),targetList=data.targets||[],actualList=data.actuals||[],modelAliases=data.model_aliases||{};
+    const draftTarget=JSON.parse(root.dataset.forecastConfig||'{}').target;
+    root._forecastSubjectId=state.subject+(draftTarget?.secondary_generation?'|'+forecastModelKey(draftTarget.name):'');root._forecastTouched=new Set();
+    const data=JSON.parse(root.dataset.forecastConfig||'{}'),historyList=data.history||[],history=new Map(historyList.map(item=>[item.model,item])),targetList=[...data.targets||[],...data.steady_targets||[]],actualList=[...data.steady_actuals||[],...data.actuals||[]],modelAliases=data.model_aliases||{};
     const modelKey=value=>forecastModelKey(value,modelAliases),sameModel=(a,b)=>sameForecastModel(a,b,modelAliases),findTarget=name=>targetList.find(item=>sameModel(item.name,name)),findActual=name=>actualList.find(item=>sameModel(item.model,name));
     const findStageActual=(name,stage)=>{const base=findActual(name),variant=base?.stage_profiles?.[stage];return variant?{...base,...variant}:base};
     const isoDate=date=>[date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');

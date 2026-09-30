@@ -1149,7 +1149,11 @@ class WorkbookStore:
             for sheet in item.workbook.worksheets:
                 if not include_charts and "图表" in sheet.title:
                     continue
-                if compact_text(sheet_subject(sheet.title)) != compact_text(subject):
+                sheet_name = sheet_subject(sheet.title)
+                if any(marker in keyword for marker in ("首销期订单节奏", "小订退订")):
+                    from core.model_identity import generation_records, parent_generation
+                    sheet_name = parent_generation(sheet_name, generation_records()) if parent_generation(subject, generation_records()) == subject else sheet_name
+                if compact_text(sheet_name) != compact_text(subject):
                     continue
                 if grain and grain_from_sheet(sheet.title) != grain:
                     continue

@@ -185,7 +185,8 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertIn("Object.entries(DATA.config.grain_labels)", script)
         self.assertIn("按预测阶段窗口", script)
         self.assertIn("按所选表格范围", script)
-        self.assertIn('$("#periodSelect").disabled=true', script)
+        self.assertIn('period.disabled=true', script)
+        self.assertIn('period.disabled=false', script)
         self.assertIn(".topbar .filters select:disabled", css)
         self.assertIn("cursor:not-allowed", css)
 

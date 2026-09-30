@@ -17,6 +17,7 @@ from core.excel import (
     safe_rate,
 )
 from core.models import Dashboard, SourceRef, Subject
+from core.model_identity import generation_records, stage_name, stage_label, model_key
 
 
 LOGGER = logging.getLogger(__name__)
@@ -76,9 +77,19 @@ SELECT_HEADERS = {
 }
 
 
+def _campaign_day(value):
+    text = _date_text(value).replace("/", "-").split(" ")[0]
+    for pattern in ("%Y-%m-%d", "%y-%m-%d"):
+        try:
+            return datetime.strptime(text, pattern).date().isoformat()
+        except ValueError:
+            pass
+    return ""
+
+
 def _period_key(value: str) -> str:
     """归一化日期键：2026/04/22 与 2026/4/22 视为同一周期。"""
-    return re.sub(r"(?<=[/\-.])\s*0+(?=\d)", "", compact_text(value))
+    return _campaign_day(value) or re.sub(r"(?<=[/\-.])\s*0+(?=\d)", "", compact_text(value))
 
 
 def _date_text(value, number_format: str = "") -> str:
@@ -193,16 +204,30 @@ class CancellationModule:
     label = "小订节奏"
 
     def build(self, store: WorkbookStore, subject: Subject) -> Dashboard | None:
-        small_mix = store.find_subject_sheet("小订选配比例", subject.name, "day")
+        campaigns = [r for r in generation_records() if model_key(r["代际名"]) == model_key(subject.name) and r.get("二级代际名")]
+        if not campaigns:
+            return self._build_campaign(store, subject)
+        pages, sources = {}, []
+        for record in campaigns:
+            child = Subject(subject.id, stage_name(record), subject.type, subject.parent)
+            board = self._build_campaign(store, child, subject.name, record)
+            if board:
+                label = stage_label(child.name, subject.name) + " · " + str(record.get("小订开始日期") or "").split(" ")[0] + "—" + str(record.get("小订结束日期") or "").split(" ")[0]
+                pages[label] = next(iter(board.views["day"]["pages"].values()))
+                sources.extend(board.sources)
+        return Dashboard(self.id, subject.id, {"day": {"periods": list(pages), "default_period": next(reversed(pages)), "pages": pages}}, sources) if pages else None
+
+    def _build_campaign(self, store, subject, parent=None, window=None):
+        small_mix = store.find_subject_sheet("小订选配比例", parent or subject.name, "day")
         day = store.find_subject_sheet("小订退订", subject.name, suffix="_日度退订")
         hourly = store.find_subject_sheet("小订退订", subject.name, suffix="_小订分时退订")
         select = store.find_subject_sheet("小订退订", subject.name, suffix="_选配退订")
-        if not small_mix or not day:
+        if not day or (not small_mix and not hourly):
             return None
 
-        small_item, small_sheet = small_mix
+        small_item, small_sheet = small_mix if small_mix else (day[0], None)
         cancel_item, day_sheet = day
-        small_source = SourceRef(small_item.path.name, small_sheet.title, "小订期间订单与留存")
+        small_source = SourceRef(small_item.path.name, small_sheet.title if small_sheet else hourly[1].title, "小订期间订单与留存")
         day_source = SourceRef(cancel_item.path.name, day_sheet.title, "小订期间日度退订")
         hourly_source = SourceRef(hourly[0].path.name, hourly[1].title, "小订分时节奏") if hourly else None
         select_source = SourceRef(select[0].path.name, select[1].title, "选配维度退订") if select else None
@@ -218,7 +243,7 @@ class CancellationModule:
                 entry["orders"] += row["count"]
                 entry["cancel"] += row["cancel"]
 
-        parsed = parse_metric_sheet(small_sheet)
+        parsed = parse_metric_sheet(small_sheet) if small_sheet else {}
         # 当分时退订表与小订节奏表的日期范围不重叠时，仍使用同日期的日度小订退订数，
         # 避免“小订期订单节奏”整段退订显示为 0。若分时数据存在，则优先使用分时口径。
         daily_rows = _parse_daily_retreat(day_sheet)
@@ -229,13 +254,20 @@ class CancellationModule:
         periods = [period for period in parsed if not any(marker in period for marker in ("近", "汇总", "累计", "总计"))]
         if not periods:
             periods = list(parsed)
+        if window:
+            start, end = str(window.get("小订开始日期") or "").split(" ")[0], str(window.get("小订结束日期") or "").split(" ")[0]
+            peers = [r for r in generation_records() if model_key(r["代际名"]) == model_key(parent)]
+            periods = [p for p in periods if start <= _campaign_day(p) <= end
+                       and sum(str(r.get("小订开始日期") or "").split(" ")[0] <= _campaign_day(p) <= str(r.get("小订结束日期") or "").split(" ")[0] for r in peers) == 1]
+        if not periods:
+            periods = list(hourly_by_period)
         rhythm_rows = []
         for period in periods:
-            metrics = parsed[period]["metrics"]
+            metrics = parsed.get(period, {}).get("metrics", {})
             period_key = _period_key(period)
             has_hourly = period_key in hourly_by_period
             totals = hourly_by_period.get(period_key, {})
-            orders = totals.get("orders") or metrics.get("小订") or _metric(metrics, "净小订", 0)
+            orders = totals["orders"] if has_hourly else metrics.get("小订", _metric(metrics, "净小订", 0))
             cancel = totals.get("cancel", 0.0) if has_hourly else daily_cancel_by_period.get(period_key, 0.0)
             retained = max(orders - cancel, 0)
             rhythm_rows.append({

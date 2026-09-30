@@ -26,8 +26,8 @@ GENERATE_HTML_ROOT = ROOT.parent
 if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
-from core.model_identity import model_key, usable_attribute
-from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality
+from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records
+from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -36,7 +36,7 @@ FORECAST_INPUT_ROOT = PROJECT_ROOT / "input_file" / "销量预测输入文件"
 DEFAULT_SOURCE = FORECAST_INPUT_ROOT / "小订及首销数据整理.xlsx"
 DEFAULT_OUTPUT = PROJECT_ROOT / "output_file" / SUMMARY_NAME
 DEFAULT_ORDERS = PROJECT_ROOT / "output_file"
-DEFAULT_MAPPING = FORECAST_INPUT_ROOT / "车型基本信息.xlsx"
+DEFAULT_MAPPING = DEFAULT_SOURCE
 LEGACY_MAPPINGS = (
     FORECAST_INPUT_ROOT / "传播代际名映射.xlsx",
     FORECAST_INPUT_ROOT / "车型代际映射.xlsx",
@@ -82,7 +82,7 @@ _BODY_BORDER = Border(bottom=_THIN_SIDE)
 _EVEN_FILL = PatternFill("solid", fgColor="F8FBFF")
 
 SUMMARY_HEADER_ALIASES = {
-    "车型": {"传播名", "历史传播名", "车型", "车型名称", "历史车型", "车系车型"},
+    "车型": {"传播名", "历史传播名", "车型", "车型名称", "历史车型", "车系车型", "代际名"},
     "留资": {"留资", "留资日期"},
     "小订开始日期": {"小订开始日期", "小订开始", "小订开启日期"},
     "小订结束日期": {"小订结束日期", "小订结束", "小订截止日期"},
@@ -426,6 +426,12 @@ def ensure_mapping(path: Path, source: Path) -> None:
 
 
 def load_mapping(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, set[str]]]:
+    modern = stage_records(path)
+    if modern:
+        mapping = {normalize(stage_name(r)): r for r in modern}
+        if len(mapping) != len(modern):
+            raise InputFormatError("代际名＋二级代际名重复，请核对整理表首个Sheet")
+        return mapping, {k: {k} for k in mapping}
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         mapping_sheet = next((name for name in ("车型基本信息", "传播名代际映射", "车型代际映射") if name in workbook.sheetnames), "")
@@ -504,7 +510,9 @@ def read_summary(workbook, header_index: dict[str, HeaderScan]) -> list[dict[str
     seen_models: dict[str, int] = {}
     for row_number, values in enumerate(sheet.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
         record = dict(zip(headers, values))
-        model = str(record.get("车型") or "").strip()
+        primary = str(record.get("车型") or "").strip()
+        model = str(record.get("二级代际名") or primary).strip()
+        record["代际名"] = primary
         if not model:
             blank_rows += 1
             if result and blank_rows >= 5:
@@ -555,7 +563,11 @@ def extract_quantity_table(
     blank_rows = 0
     for row_number, values in enumerate(sheet.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
         model_value = values[model_column] if model_column < len(values) else None
-        model = str(model_value or "").strip()
+        if canonical_header(model_value) == "车型":
+            break  # A repeated quantity/ratio header is not a campaign row.
+        record = dict(zip(headers, values))
+        model = str(record.get("二级代际名") or model_value or "").strip()
+        model = resolve_stage_identity(model, generation_records(), record.get("开始大定日期")) or model
         has_day_value = any(index < len(values) and values[index] not in (None, "") for index in day_columns.values())
         if not model and not has_day_value:
             blank_rows += 1
@@ -1066,7 +1078,8 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         target.freeze_panes = sheet.freeze_panes
         target.auto_filter = copy(sheet.auto_filter)
         target.sheet_view.showGridLines = False
-        directory.append([kind, filename, sheet.title, name, sheet.max_row, sheet.max_column])
+        if not any(row[1] == filename and row[2] == sheet.title for row in directory):
+            directory.append([kind, filename, sheet.title, name, sheet.max_row, sheet.max_column])
 
     for path, kind in [(source, "历史"), (mapping_path, "映射"), *[(path, "订单") for path in forecast_order_files(orders_dir)]]:
         book = (load_workbook(path, read_only=False, data_only=True) if preserve_layout
@@ -1075,7 +1088,11 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
             if kind == "订单":
                 source_ranges[path.name] = _source_date_range(WorkbookItem(path, book))
             for sheet in book.worksheets:
-                if kind == "历史" and sheet.title not in {"车型汇总", "小订by天", "小订进度"}:
+                if kind == "历史" and sheet.title not in {"车型汇总", "小订by天", "小订进度"} and not (sheet is book.worksheets[0] and stage_records(path)):
+                    continue
+                if kind == "映射" and stage_records(path):
+                    if sheet is book.worksheets[0]:
+                        import_sheet(sheet, kind, path.name, "车型基本信息")
                     continue
                 if kind == "映射" and sheet.title not in {"车型基本信息", "传播名代际映射", "车型代际映射"}:
                     continue
@@ -1125,7 +1142,7 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
         _read_model_mapping, _fill_sparse_dates)
     from core.excel import sheet_subject, display_period, _source_date_ranges
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
-    targets = {r["name"]: r for r in data.get("targets", [])}
+    targets = {r["name"]: r for r in [*data.get("targets", []), *data.get("steady_targets", [])]}
     mapping = _read_model_mapping()
     daily, weekly = {}, {}
     labels = {"大定": "gross", "总大定": "gross", "留存大定": "net", "净大定": "net", "交车锁单": "lock"}
@@ -1271,11 +1288,42 @@ def append_forecast_views(path, as_of_date, workbook=None):
 
     compact_source_sheets(book)
     public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today(), getattr(module, "summary_raw_profiles", None))
+    normalize_public_names(book, data, emit)
     sheet_count = len(book.sheetnames)
     if owns_workbook:
         book.save(path)
         book.close()
     return sheet_count
+
+
+
+def normalize_public_names(book, data, emit):
+    """Persist only generation/campaign identities; old labels are read adapters."""
+    parents = {r["name"]: (r.get("primary_generation") or r["name"], r.get("secondary_generation") or "")
+               for r in data.get("targets", [])}
+    for record in table_records(book, "车型基本信息"):
+        if record.get("primary_generation"):
+            parents[stage_name(record)] = (record["primary_generation"], record.get("secondary_generation") or "")
+    identity_headers = {"传播名", "历史传播名", "订单分析代际名", "代际名", "二级代际名", "映射状态", "原始表简称/别名"}
+    for sheet in list(book.worksheets):
+        values = list(sheet.iter_rows(values_only=True))
+        if not values:
+            continue
+        headers = [str(v or "") for v in values[0]]
+        if not set(headers) & {"传播名", "历史传播名", "订单分析代际名"}:
+            continue
+        remaining = [(i, h) for i, h in enumerate(headers) if h not in identity_headers]
+        output = []
+        for values in values[1:]:
+            row = dict(zip(headers, values))
+            event = str(row.get("历史传播名") or row.get("传播名") or row.get("订单分析代际名") or "")
+            fallback = str(row.get("订单分析代际名") or row.get("代际名") or event)
+            primary, secondary = parents.get(event, parents.get(fallback, (fallback, "")))
+            if not primary:
+                continue  # Formatting-only rows are not forecast identities.
+            output.append([primary, secondary or None, *[values[i] if i < len(values) else None for i, _ in remaining]])
+        emit(sheet.title, ["代际名", "二级代际名", *[h for _, h in remaining]], output,
+             {h for _, h in remaining if h in PERCENT_FIELDS or h.endswith("率") or "占比" in h})
 
 
 def compact_source_sheets(workbook):
@@ -1425,7 +1473,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--as-of-date", default="", help="复盘日期YYYY-MM-DD，默认运行当天")
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE, help="原始历史数据文件")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="二次处理输出文件")
-    parser.add_argument("--mapping", type=Path, default=DEFAULT_MAPPING, help="车型基本信息文件（单表维护映射和车型属性）")
+    parser.add_argument("--mapping", type=Path, default=DEFAULT_MAPPING, help="默认从整理表第一个Sheet读取代际名、二级代际名和属性；显式指定时兼容旧映射文件")
     parser.add_argument("--force", action="store_true", help="忽略文件时间，强制重新生成二次处理文件")
     return parser.parse_args()
 
@@ -1446,6 +1494,8 @@ def main() -> int:
     args = parse_args()
     try:
         args.source = resolve_source_path(args.source)
+        if args.mapping == DEFAULT_MAPPING:
+            args.mapping = args.source  # One integrated source, including custom --source.
         args.mapping = resolve_mapping_path(args.mapping)
         LOGGER.debug("原始历史文件: %s", args.source)
         LOGGER.debug("车型基本信息: %s", args.mapping)
