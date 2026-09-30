@@ -605,6 +605,13 @@ def read_public_forecast(book, history, today=None):
     from core.model_identity import model_key
     from modules.sales_forecast import _read_model_mapping, _read_model_master, _master_record, _brand
     current = today or date.today()
+    def calendar_day(value):
+        """Only valid calendar dates may anchor relative forecast curves."""
+        try:
+            return date.fromisoformat(iso_day(value)).isoformat()
+        except (TypeError, ValueError):
+            return ""
+
     masters = table_records(book, MASTER_SHEET)
     days = table_records(book, DAILY_SHEET)
     canonical = "字段来源" in [c.value for c in book[DAILY_SHEET][1]]
@@ -628,11 +635,11 @@ def read_public_forecast(book, history, today=None):
         if canonical:
             master = next((r for r in masters if r.get("历史传播名") == item["model"]), {})
             model = item.get("generation") or master.get("订单分析代际名")
-            start = item.get("launch_date") or iso_day(master.get("首销开始"))
-            end = item.get("end_date") or iso_day(master.get("首销结束"))
+            start = calendar_day(item.get("launch_date") or master.get("首销开始"))
+            end = calendar_day(item.get("end_date") or master.get("首销结束"))
             selected = sorted([r for r in days if r.get("订单分析代际名") == model and start and
-                start <= iso_day(r.get("日期")) and (not end or iso_day(r.get("日期")) <= end)], key=lambda r: iso_day(r["日期"]))
-            by_date = {iso_day(r["日期"]): r for r in selected}
+                start <= calendar_day(r.get("日期")) and (not end or calendar_day(r.get("日期")) <= end)], key=lambda r: calendar_day(r["日期"]))
+            by_date = {calendar_day(r["日期"]): r for r in selected}
             last = max((d for d, r in by_date.items() if r.get("大定") is not None), default="")
             selected = [by_date.get((date.fromisoformat(start)+timedelta(days=i)).isoformat(), {})
                         for i in range((date.fromisoformat(last)-date.fromisoformat(start)).days+1)] if last else []
@@ -654,8 +661,8 @@ def read_public_forecast(book, history, today=None):
             "primary_generation": row.get("primary_generation") or model,
             "secondary_generation": row.get("secondary_generation") or "",
             "has_small": row.get("有小订") not in (False, 0, "否"),
-            "launch_date": iso_day(row.get("首销开始")), "end_date": iso_day(row.get("首销结束")),
-            "small_start_date": iso_day(row.get("小订开始")), "small_end_date": iso_day(row.get("小订结束")),
+            "launch_date": calendar_day(row.get("首销开始")), "end_date": calendar_day(row.get("首销结束")),
+            "small_start_date": calendar_day(row.get("小订开始")), "small_end_date": calendar_day(row.get("小订结束")),
             "days": row.get("首销天数"), "small": row.get("总小订"), "source_sheet": MASTER_SHEET}
         profile = {"model": model, "launch_date": windows[model_key(model)]["launch_date"],
                    "days": [], "cancel_days": [], "hourly_days": [], "small_hourly_days": [],
@@ -663,13 +670,19 @@ def read_public_forecast(book, history, today=None):
         if canonical:
             profile.update(_summary_resolved=True, total_small=row.get("总小订") or 0,
                 day_source={"file": SUMMARY_NAME, "sheet": DAILY_SHEET})
+        launch_start = profile["launch_date"]
+        launch_end = windows[model_key(model)]["end_date"]
         for r in grouped.get((model, "首销订单"), []):
-            if canonical and not (windows[model_key(model)]["launch_date"] <= iso_day(r.get("日期")) <= (windows[model_key(model)]["end_date"] or "9999")):
+            order_date = calendar_day(r.get("日期"))
+            if canonical and (not order_date or (launch_start and order_date < launch_start) or
+                              (launch_end and order_date > launch_end)):
                 continue
-            profile["days"].append({"date": iso_day(r.get("日期")), "day": r.get("生命周期"),
+            profile["days"].append({"date": order_date, "day": r.get("生命周期"),
                                     **{k: r.get(c) for k, c in ORDER_FIELDS.items()}})
-            if canonical:
-                index = (date.fromisoformat(iso_day(r["日期"]))-date.fromisoformat(profile["launch_date"])).days+1
+            # Keep dated actuals when the launch window is missing, but do not
+            # invent D1 or apply a relative cancellation curve to those rows.
+            if canonical and launch_start:
+                index = (date.fromisoformat(order_date)-date.fromisoformat(launch_start)).days+1
                 rate = cancel_curves.get(row.get("历史传播名"), {}).get(f"D{index}")
                 if isinstance(rate, (int, float)) and profile["total_small"] > 0:
                     profile["days"][-1]["cancel"] = rate * profile["total_small"]
@@ -694,7 +707,7 @@ def read_public_forecast(book, history, today=None):
         profile[prefix + "_total_small_estimated"] = row.get("总量口径") == "首销累计进度反推"
         profile["cancel_source" if prefix == "cancel" else "day_source"] = {"file": row.get("来源文件"), "sheet": row.get("来源Sheet")}
         if prefix == "cancel":
-            start, end = iso_day(row.get("数据开始")), iso_day(row.get("数据结束"))
+            start, end = calendar_day(row.get("数据开始")), calendar_day(row.get("数据结束"))
             profile["cancel_latest_date"] = end
             if start and end:
                 span = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
@@ -738,8 +751,8 @@ def read_public_forecast(book, history, today=None):
             row = {**metadata, **row, "总小订": metadata.get("总小订") if metadata.get("小订参考总量有效", True) else None,
                    "总量来源": metadata.get("小订总量来源"), "来源文件": filename, "来源Sheet": source_sheet}
         name, generation = row.get("历史传播名"), row.get("订单分析代际名") or ""
-        start, end = iso_day(row.get("小订开始")), iso_day(row.get("小订结束"))
-        first_date = iso_day(row.get("首条数据日期"))
+        start, end = calendar_day(row.get("小订开始")), calendar_day(row.get("小订结束"))
+        first_date = calendar_day(row.get("首条数据日期"))
         selected = [r for r in grouped.get((generation or name, "历史小订"), [])
                     if (canonical and start and start <= iso_day(r.get("日期")) <= (end or "9999")) or (not canonical and r.get("历史传播名") == name and
                     (not first_date or iso_day(r.get("日期")) ==
@@ -819,7 +832,7 @@ def read_public_forecast(book, history, today=None):
             # Order-mix lock totals remain visible, but are not lock-mix references.
             if "锁单选配比例" not in _source_parts(row.get("锁单来源"))[0]:
                 continue
-            a, b = iso_day(row.get("统计开始")), iso_day(row.get("统计结束"))
+            a, b = calendar_day(row.get("统计开始")), calendar_day(row.get("统计结束"))
             if not a or not b or not start:
                 continue
             first, last = date.fromisoformat(a), date.fromisoformat(b)

@@ -127,6 +127,75 @@ class PublicForecastTablesTests(TestCase):
             self.assertEqual(data['small_order_history'][0]['daily_orders'], [0, 10])
         book.close()
 
+    def test_missing_launch_date_keeps_actuals_without_relative_cancel_curve(self):
+        from core.model_identity import model_key
+        for invalid in (None, '', 'not-a-date'):
+            with self.subTest(start=invalid):
+                book = self.make_public()
+                sheet = book[MASTER_SHEET]
+                headers = [c.value for c in sheet[1]]
+                sheet.cell(2, headers.index('首销开始') + 1).value = invalid
+                book['累计退订率'].cell(2, 2).value = .1
+                history = [{'model': '历史车', 'generation': '测试车'}]
+                profiles, windows, _, _ = read_public_forecast(book, history)
+                self.assertEqual(windows[model_key('测试车')]['launch_date'], '')
+                self.assertEqual(profiles[0]['days'][0]['date'], '2026-01-03')
+                self.assertEqual(profiles[0]['days'][0]['gross'], 30)
+                self.assertIsNone(profiles[0]['days'][0].get('cancel'))
+                self.assertEqual(history[0]['daily_orders'], [])
+                book.close()
+
+    def test_missing_launch_date_does_not_disable_shared_forecast_dashboard(self):
+        from modules.sales_forecast import SalesForecastModule
+        from core.models import Subject
+        book = self.make_public()
+        for name in (MASTER_SHEET, DAILY_SHEET):
+            sheet = book[name]
+            headers = [c.value for c in sheet[1]]
+            for values in list(sheet.values)[1:]:
+                clone = list(values)
+                clone[headers.index('订单分析代际名')] = '缺少日期车'
+                clone[headers.index('历史传播名')] = '缺少日期车'
+                if name == MASTER_SHEET:
+                    clone[headers.index('首销开始')] = None
+                sheet.append(clone)
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / 'summary.xlsx'
+            book.save(path)
+            module = SalesForecastModule()
+            module.summary_path = path
+            module.as_of_date = date(2026, 1, 4)
+            dashboard = module.build(None, Subject('summary', '鸿蒙智行', 'group'))
+            data = dashboard.views['week']['pages']['预测方案']['workspace']['data']
+            targets = {t['name']: t for t in data['targets']}
+            self.assertFalse(targets['测试车']['data_error'])
+            self.assertIn('首销开始日期缺失或无法解析', targets['缺少日期车']['hard_errors'])
+            actuals = {p['model']: p for p in data['actuals']}
+            self.assertEqual(actuals['缺少日期车']['days'][0]['gross'], 30)
+        book.close()
+
+    def test_valid_launch_date_still_applies_relative_cancel_curve(self):
+        book = self.make_public()
+        book['累计退订率'].cell(2, 2).value = .1
+        history = [{'model': '历史车', 'generation': '测试车'}]
+        profiles, _, _, _ = read_public_forecast(book, history)
+        self.assertEqual(profiles[0]['days'][0]['cancel'], 10)
+        self.assertEqual(history[0]['daily_orders'], [30])
+        book.close()
+
+    def test_invalid_window_dates_are_not_calendar_anchors(self):
+        from core.model_identity import model_key
+        for column, field in (('首销结束', 'end_date'), ('小订开始', 'small_start_date'),
+                              ('小订结束', 'small_end_date')):
+            with self.subTest(column=column):
+                book = self.make_public()
+                sheet = book[MASTER_SHEET]
+                headers = [c.value for c in sheet[1]]
+                sheet.cell(2, headers.index(column) + 1).value = 'not-a-date'
+                _, windows, _, _ = read_public_forecast(book, [])
+                self.assertEqual(windows[model_key('测试车')][field], '')
+                book.close()
+
     def test_small_tables_match_launch_curve_format_and_order(self):
         book = self.make_public()
         self.assertEqual(book.sheetnames[5:9], [WEEKLY_SHEET, SMALL_DAILY_SHEET, SMALL_CURVE_SHEET, D12_SHEET])
