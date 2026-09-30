@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any
 
 
+FORECAST_SOURCE_PATH = Path(__file__).resolve().parents[2] / "config" / "小订及首销数据整理.xlsx"
+
+
 _REMOVABLE_WORDS = re.compile(r"鸿蒙智行|车型|款|总计|汇总|合计", re.I)
 _SEPARATORS = re.compile(r"[\s()（）/\\_\-&]+")
 
@@ -97,9 +100,7 @@ def stage_label(name, parent) -> str:
 
 
 def generation_records() -> list[dict]:
-    code_root = Path(__file__).resolve().parents[2]
-    project = code_root.parent if code_root.name.lower() == "scripts" else code_root
-    return stage_records(project / "input_file" / "销量预测输入文件" / "小订及首销数据整理.xlsx")
+    return stage_records(FORECAST_SOURCE_PATH)
 
 
 def resolve_stage_identity(name, records, launch=None):

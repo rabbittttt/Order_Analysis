@@ -26,14 +26,14 @@ GENERATE_HTML_ROOT = ROOT.parent
 if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
-from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records
+from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
 FORECAST_INPUT_ROOT = PROJECT_ROOT / "input_file" / "销量预测输入文件"
-DEFAULT_SOURCE = FORECAST_INPUT_ROOT / "小订及首销数据整理.xlsx"
+DEFAULT_SOURCE = FORECAST_SOURCE_PATH
 DEFAULT_OUTPUT = PROJECT_ROOT / "output_file" / SUMMARY_NAME
 DEFAULT_ORDERS = PROJECT_ROOT / "output_file"
 DEFAULT_MAPPING = DEFAULT_SOURCE

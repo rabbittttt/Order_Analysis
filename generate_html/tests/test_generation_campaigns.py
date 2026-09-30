@@ -9,11 +9,11 @@ from openpyxl import Workbook
 from core.discovery import discover_subjects
 from core.excel import WorkbookItem, WorkbookStore
 from core.forecast_summary import table_records, visible_target_names, MASTER_SHEET, summary_scope
-from core.model_identity import stage_records, stage_name, parent_generation, resolve_stage_identity, has_reservation
+from core.model_identity import stage_records, stage_name, parent_generation, resolve_stage_identity, has_reservation, FORECAST_SOURCE_PATH, generation_records
 from core.models import Subject
 from modules.launch_rhythm import LaunchRhythmModule
 from modules.sales_forecast import _combined_steady_inputs, _read_stage_windows, _read_model_mapping_file, _progress_rows, _small_campaign_rows, _read_model_master, _read_model_mapping, _primary_attributes
-from tools.refresh_sales_forecast_data import load_mapping, normalize_public_names, write_rows, append_forecast_inputs
+from tools.refresh_sales_forecast_data import load_mapping, normalize_public_names, write_rows, append_forecast_inputs, DEFAULT_SOURCE, DEFAULT_MAPPING
 
 
 PARENT = '问界 M7 2024款'
@@ -28,6 +28,18 @@ def records():
 
 
 class GenerationCampaignTests(TestCase):
+    def test_default_source_paths_share_scripts_config(self):
+        from modules.sales_forecast import RAW_FORECAST_DATA, HISTORY_CANDIDATES
+        expected = Path(__file__).resolve().parents[2] / 'config' / '小订及首销数据整理.xlsx'
+        self.assertEqual(FORECAST_SOURCE_PATH, expected)
+        self.assertEqual(DEFAULT_SOURCE, expected)
+        self.assertEqual(DEFAULT_MAPPING, expected)
+        self.assertEqual(RAW_FORECAST_DATA, expected)
+        self.assertIn(expected, HISTORY_CANDIDATES)
+        with patch('core.model_identity.stage_records', return_value=[]) as reader:
+            generation_records()
+        reader.assert_called_once_with(expected)
+
     def make_source(self, root):
         source = root / '小订及首销数据整理.xlsx'
         book = Workbook(); book.active.title = '任意首Sheet名称'

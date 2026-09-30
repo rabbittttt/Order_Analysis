@@ -5,7 +5,7 @@
   //   generated = 用内置 SVG 根据图表数据重绘（推荐，支持周期切换与数据标签）
   //   original  = 嵌入 Excel 中的原始图表图片
   "chart_render_mode": "generated",
-  // 运行 main.py 时，是否先根据 input_file/销量预测输入文件/小订及首销数据整理.xlsx
+  // 运行 main.py 时，是否先根据 scripts/config/小订及首销数据整理.xlsx
   // 自动刷新鸿蒙智行销量数据汇总.xlsx，包含历史参考和当前订单；false 时可单独运行刷新脚本。
   "refresh_sales_forecast_data_before_build": true,
   // 销量预测阶段判定日期：留空使用运行当天；填写 YYYY-MM-DD 可复盘指定日期的阶段状态。

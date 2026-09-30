@@ -12,7 +12,7 @@ from openpyxl import load_workbook
 from openpyxl.utils.datetime import from_excel
 
 from core.china_calendar import calendar_payload
-from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation
+from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation, FORECAST_SOURCE_PATH
 from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type
 from core.models import Dashboard, SourceRef, Subject
 from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, input_path, open_input, summary_scope, table_records
@@ -24,14 +24,14 @@ LOGGER = logging.getLogger(__name__)
 CODE_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
 FORECAST_INPUT_ROOT = PROJECT_ROOT / "input_file" / "销量预测输入文件"
-RAW_FORECAST_DATA = FORECAST_INPUT_ROOT / "小订及首销数据整理.xlsx"
+RAW_FORECAST_DATA = FORECAST_SOURCE_PATH
 MODEL_MASTER_PATH = FORECAST_INPUT_ROOT / "车型基本信息.xlsx"
 HISTORY_CANDIDATES = (
     PROJECT_ROOT / "output_file" / SUMMARY_NAME,
     FORECAST_INPUT_ROOT / SUMMARY_NAME,
     FORECAST_INPUT_ROOT / "销量预测数据汇总.xlsx",
     FORECAST_INPUT_ROOT / "小订及首销预测二次处理.xlsx",
-    FORECAST_INPUT_ROOT / "小订及首销数据整理.xlsx",
+    RAW_FORECAST_DATA,
     FORECAST_INPUT_ROOT / "小订及首销期数据整理.xlsx",
     FORECAST_INPUT_ROOT / "小订及首销期历史基准.xlsx",
     FORECAST_INPUT_ROOT / "小订及首销期数据整理_测试数据.xlsx",
