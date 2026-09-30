@@ -1862,6 +1862,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             cancel_by_date: dict[str, int] = {}
             cancel_rows = []
             cumulative_column = next((header_index[name] for name in ("累计小订退", "累计退订数", "累计总退订") if name in header_index), 2)
+            daily_column = next((header_index[name] for name in ("当日小订退", "当日退订数", "当日总退订") if name in header_index), None)
             rate_column = next((header_index[name] for name in ("整体 - 小订退 %", "小订后退订比例", "小订退订率") if name in header_index), None)
             for values in sheet.iter_rows(min_row=3, values_only=True):
                 if not values or not values[0]:
@@ -1872,12 +1873,11 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 cumulative = _optional_count(values, cumulative_column)
                 rate = _optional_number(values[rate_column]) if rate_column is not None and rate_column < len(values) else None
                 cancel_by_date[date_key] = cumulative
-                cancel_rows.append({"date": date_key, "cancel": cumulative, "cancel_rate": rate})
-            latest_cancel = None
+                daily_cancel = _optional_count(values, daily_column) if daily_column is not None else None
+                cancel_rows.append({"date": date_key, "cancel": cumulative, "cancel_rate": rate,
+                                    "daily_cancel": daily_cancel})
             for row in profile.get("days", []):
-                if row["date"] in cancel_by_date:
-                    latest_cancel = cancel_by_date[row["date"]]
-                row["cancel"] = latest_cancel
+                row["cancel"] = cancel_by_date.get(row["date"])
             if cancel_rows:
                 latest = cancel_rows[-1]
                 # Rates are not raw quantities: never reconstruct a missing total.
@@ -2036,7 +2036,8 @@ def _merge_day_fields(
                     union.setdefault(day, row)
         base_rows = [union[day] for day in sorted(union)]
     lookups: dict[str, tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]] = {}
-    for source in priority:
+    lookup_sources = dict.fromkeys([*priority, *[source for sources in (field_priorities or {}).values() for source in sources]])
+    for source in lookup_sources:
         rows = list(candidates.get(source, {}).get("days") or [])
         by_date = {_iso(row.get("date")): row for row in rows if _iso(row.get("date"))}
         by_day = {str(row.get("day") or f"D{index + 1}").upper(): row for index, row in enumerate(rows)}
@@ -2146,7 +2147,7 @@ def _resolve_stage_candidate(
         priority,
         log_issues=log_issues,
         diagnostic_context=diagnostic_context,
-        field_priorities={"cancel": ("cancel", "launch", "history")} if stage == "ended" else None,
+        field_priorities={"cancel": ("cancel", "history")},
     )
     hourly_days, hourly_source = _field_value(candidates, priority, "hourly_days", lambda value: bool(value))
     total_priority = ("cancel", "launch", "history") if stage == "ended" else priority

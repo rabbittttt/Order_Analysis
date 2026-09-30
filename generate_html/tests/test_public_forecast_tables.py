@@ -10,13 +10,14 @@ from openpyxl import Workbook
 from core.excel import WorkbookItem
 from core.forecast_summary import (
     GUIDE_SHEET, MASTER_SHEET, DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET,
-    WEEKLY_SHEET, public_forecast_tables, read_public_forecast, visible_target_names,
+    WEEKLY_SHEET, SMALL_CURVE_SHEET, SMALL_DAILY_SHEET, SMALL_REFERENCE_FIELDS,
+    public_forecast_tables, read_public_forecast, visible_target_names, table_records,
 )
 from tools.refresh_sales_forecast_data import forecast_weekly_orders, write_rows
 
 
 class PublicForecastTablesTests(TestCase):
-    def make_public(self, target_start='2026-01-03', customize=None):
+    def make_public(self, target_start='2026-01-03', customize=None, as_of=date(2026, 1, 4)):
         book = Workbook()
         book.active.title = MASTER_SHEET
         book.active.append(['历史传播名', '订单分析代际名', '产品档位'])
@@ -51,7 +52,7 @@ class PublicForecastTablesTests(TestCase):
             if name in book.sheetnames:
                 del book[name]
             write_rows(book, name, headers, rows, 'PublicTest', percent_headers)
-        public_forecast_tables(book, data, emit, as_of_date=date(2026, 1, 4))
+        public_forecast_tables(book, data, emit, as_of_date=as_of)
         return book
 
     def test_no_cache_merged_tables_and_typed_values(self):
@@ -70,7 +71,7 @@ class PublicForecastTablesTests(TestCase):
         book = self.make_public()
         profiles, windows, small, _ = read_public_forecast(book, [])
         self.assertEqual(small[0]['daily_orders'], [0, 10])
-        self.assertEqual(small[0]['standard_progress'], [0, 1])
+        self.assertEqual(small[0]['standard_progress'], [0, .1])
         self.assertEqual(small[0]['small_hourly_curve'], [])
         self.assertEqual(profiles[0]['days'][0]['gross'], 30)
         self.assertEqual(profiles[0]['small_hourly_days'][0]['hours'][0]['hour'], 15)
@@ -116,6 +117,36 @@ class PublicForecastTablesTests(TestCase):
             self.assertEqual(data['small_order_history'][0]['daily_orders'], [0, 10])
         book.close()
 
+    def test_small_tables_match_launch_curve_format_and_order(self):
+        book = self.make_public()
+        self.assertEqual(book.sheetnames[5:8], [WEEKLY_SHEET, SMALL_CURVE_SHEET, SMALL_DAILY_SHEET])
+        self.assertNotIn('小订参考曲线', book.sheetnames)
+        self.assertNotIn('小订来源总量', book.sheetnames)
+        for name in (SMALL_CURVE_SHEET, SMALL_DAILY_SHEET):
+            headers = [c.value for c in book[name][1]]
+            self.assertEqual(headers[0], '传播名')
+            self.assertTrue(all(h.startswith('D') and h[1:].isdigit() for h in headers[1:]))
+        counts = table_records(book, SMALL_DAILY_SHEET)[0]
+        curve = table_records(book, SMALL_CURVE_SHEET)[0]
+        self.assertEqual((counts['D1'], counts['D2']), (0, 10))
+        self.assertEqual((curve['D1'], curve['D2']), (0, .1))
+        self.assertEqual(book[SMALL_CURVE_SHEET].cell(2, 2).number_format,
+                         book['直接大定累计完成度'].cell(2, 2).number_format)
+        self.assertEqual(book[SMALL_DAILY_SHEET].cell(2, 2).number_format,
+                         book['直接大定当日数量'].cell(2, 2).number_format)
+        book.close()
+
+    def test_small_reference_metadata_survives_narrow_curve_table(self):
+        def customize(data):
+            data['small_order_history'][0].update(leads=500, heat=25)
+        book = self.make_public(customize=customize)
+        master = table_records(book, MASTER_SHEET)[0]
+        self.assertEqual((master['线索数'], master['热度']), (500, 25))
+        item = read_public_forecast(book, [])[2][0]
+        self.assertEqual((item['leads'], item['heat'], item['total']), (500, 25, 100))
+        self.assertEqual(item['daily_orders'], [0, 10])
+        book.close()
+
     def test_removed_columns_are_not_exported(self):
         book = self.make_public()
         prohibited = {'适用取数阶段', '小订参考累计完成度', '小订标准进度', '真实逐日',
@@ -123,7 +154,7 @@ class PublicForecastTablesTests(TestCase):
                       '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考'}
         for sheet in book:
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
-        self.assertEqual(book[MASTER_SHEET].max_column, 28)
+        self.assertEqual(book[MASTER_SHEET].max_column, 28 + len(SMALL_REFERENCE_FIELDS))
         self.assertIn("有小订", [c.value for c in book[MASTER_SHEET][1]])
         for name in (SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET):
             self.assertEqual(book[name].max_column, 5 if name == SMALL_HOURLY_SHEET else 8)

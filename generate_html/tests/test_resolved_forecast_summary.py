@@ -99,6 +99,69 @@ class ResolvedSummaryTests(TestCase):
         self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .2)
         book.close()
 
+    def test_explicit_cancel_daily_wins_first_day_and_zero_falls_back_per_field(self):
+        def customize(data):
+            raw = data['actuals'][0]
+            raw['cancel_days'] = [
+                {'date': '2026-01-03', 'cancel': 38, 'daily_cancel': 38},
+                {'date': '2026-01-04', 'cancel': 38, 'daily_cancel': 0},
+                {'date': '2026-01-05', 'cancel': None, 'daily_cancel': None},
+            ]
+            raw['cancel_source'] = {'file': '小订退订分析.xlsx', 'sheet': '测试车日度退订'}
+            data['reference_daily'] = {'退订当日数量': {'历史车': [32, 5, 7]}}
+        book = test_public_forecast_tables.PublicForecastTablesTests().make_public(customize=customize, as_of=date(2026, 1, 6))
+        days = {r['日期']: r for r in table_records(book, DAILY_SHEET)}
+        self.assertEqual(days[datetime(2026, 1, 3)]['退订数量'], 38)
+        self.assertEqual(days[datetime(2026, 1, 4)]['退订数量'], 0)
+        self.assertEqual(days[datetime(2026, 1, 5)]['退订数量'], 7)
+        self.assertIn('小订退订分析.xlsx', days[datetime(2026, 1, 3)]['字段来源'])
+        self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)
+        self.assertEqual(table_records(book, 'D1_D2预测指标')[0]['D1退订'], 38)
+        book.close()
+
+    def test_cancel_missing_prior_day_does_not_invent_daily_quantity(self):
+        def customize(data):
+            raw = data['actuals'][0]
+            raw['cancel_days'] = [{'date': '2026-01-03', 'cancel': 38}]
+            raw['cancel_source'] = {'file': '小订退订分析.xlsx', 'sheet': '测试车日度退订'}
+            data['reference_daily'] = {'退订当日数量': {'历史车': [32]}}
+        book = self.make(customize)
+        self.assertEqual(table_records(book, 'D1_D2预测指标')[0]['D1退订'], 32)
+        self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)
+        book.close()
+
+    def test_cancel_cumulative_priority_is_independent_of_launch_stage(self):
+        from modules.sales_forecast import _resolve_stage_candidate
+        candidates = {
+            'launch': {'days': [{'date': '2026-01-03', 'gross': 30, 'cancel': 99}]},
+            'history': {'days': [{'date': '2026-01-03', 'gross': 20, 'cancel': 32}]},
+            'cancel': {'days': [{'date': '2026-01-03', 'cancel': 38}]},
+        }
+        for stage in ('before', 'active', 'ended', 'unknown'):
+            with self.subTest(stage=stage):
+                self.assertEqual(_resolve_stage_candidate(candidates, stage)['days'][0]['cancel'], 38)
+                candidates['cancel']['days'][0]['cancel'] = 0
+                self.assertEqual(_resolve_stage_candidate(candidates, stage)['days'][0]['cancel'], 0)
+                candidates['cancel']['days'][0]['cancel'] = None
+                self.assertEqual(_resolve_stage_candidate(candidates, stage)['days'][0]['cancel'], 32)
+                candidates['cancel']['days'][0]['cancel'] = 38
+
+    def test_raw_cancel_parser_keeps_explicit_daily_quantity(self):
+        from modules.sales_forecast import _read_actual_profiles
+        book = Workbook()
+        sheet = book.active
+        sheet.title = '测试车2026款_日度退订'
+        sheet.append(['日度退订'])
+        sheet.append(['取消日期', '当日小订退', '累计小订退', '整体 - 小订退 %'])
+        sheet.append([datetime(2026, 1, 3), 38, 38, .38])
+        sheet.append([datetime(2026, 1, 4), 0, 38, .38])
+        item = WorkbookItem(Path('小订退订分析.xlsx'), book)
+        store = SimpleNamespace(find=lambda keyword: item if keyword == '小订退订分析' else None)
+        with patch('modules.sales_forecast._read_model_mapping', return_value={}):
+            profiles, _ = _read_actual_profiles(store)
+        self.assertEqual([r['daily_cancel'] for r in profiles[0]['cancel_days']], [38, 0])
+        book.close()
+
     def test_omitted_day_in_physical_file_is_zero_before_merge(self):
         def part(name, dates, values):
             book = Workbook()
