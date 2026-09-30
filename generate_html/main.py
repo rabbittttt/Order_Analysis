@@ -221,12 +221,17 @@ def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, st
     return files, blocks
 
 
-def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]]:
+def build(
+    input_dir: Path, output_file: Path, *, disable_sales_forecast: bool = False
+) -> tuple[dict[str, Any], list[str]]:
     build_started = perf_counter()
     LOGGER.info("开始生成订单分析看板")
     LOGGER.info("输入目录: %s", input_dir)
     LOGGER.info("输出文件: %s", output_file)
     config = load_config(ROOT / "config.json")
+    if disable_sales_forecast:
+        config["refresh_sales_forecast_data_before_build"] = False
+        LOGGER.info("销量预测：已按本次运行参数禁用，导航保留置灰，跳过预测刷新及计算")
     if config.get("chart_render_mode") not in {"original", "generated"}:
         raise ValueError("config.json 的 chart_render_mode 必须是 original 或 generated")
     if date.today().year not in PUBLISHED_YEARS:
@@ -267,6 +272,8 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
         for subject in subjects:
             matched_modules = []
             for module in MODULES:
+                if disable_sales_forecast and module.id == "sales_forecast":
+                    continue
                 if hasattr(module, "set_dashboards"):
                     module.set_dashboards(dashboards)
                 module_started = perf_counter()
@@ -397,6 +404,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")
     parser.add_argument("--debug", action="store_true", help="输出调试日志，用于排查数据解析问题。")
+    parser.add_argument(
+        "--disable-sales-forecast",
+        action="store_true",
+        help="仅本次生成禁用销量预测，保留置灰导航，并跳过预测汇总刷新及预测计算。",
+    )
     return parser.parse_args()
 
 
@@ -422,7 +434,9 @@ def main() -> int:
     args = parse_args()
     log_file = configure_runtime(args.output.parent, args.debug)
     try:
-        manifest, warnings = build(args.input, args.output)
+        manifest, warnings = build(
+            args.input, args.output, disable_sales_forecast=args.disable_sales_forecast
+        )
     except Exception:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)
