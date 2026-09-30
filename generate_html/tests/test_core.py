@@ -208,6 +208,30 @@ class SubjectParsingTests(unittest.TestCase):
         self.assertTrue(any(row[0] == "当日留存大定数量" for row in matrix["data"]["rows"]))
         self.assertEqual(rate_row[-1], "20.0%")
 
+    def test_launch_blank_future_columns_do_not_reset_cumulative_kpis(self):
+        for tail, rate, direct in ((None, 20, 160), (0, 0, 0)):
+            with self.subTest(tail=tail):
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = '问界 F2N 2026款by天'
+                sheet.append(['指标', 'D1', 'D2', 'D3'])
+                sheet.append(['日期', datetime(2026, 8, 1), datetime(2026, 8, 2), datetime(2026, 8, 3)])
+                sheet.append(['当日大定数量', 80, 120, None])
+                sheet.append(['当日净大定数量', 70, 100, None])
+                sheet.append(['累计小订转大定数量', 20, 40, tail])
+                sheet.append(['累计小订转化率', .1, .2, tail])
+                sheet.append(['累计直接大定数量', 60, 160, tail])
+                phase = LaunchRhythmModule()._build_phase(
+                    SimpleNamespace(path=Path('首销期订单节奏.xlsx')), sheet, 1, None, False)
+                kpis = {k['label']: k['value'] for k in phase['page']['kpis']}
+                self.assertEqual(kpis['累计大定'], 200)
+                self.assertEqual(kpis['累计小转大率'], rate)
+                self.assertEqual(phase['direct'], direct)
+                self.assertEqual(kpis['累计直接大定占比'], direct / 2)
+                self.assertIsNone(phase['metrics']['当日大定数量'][-1])
+                self.assertEqual(phase['metrics']['累计直接大定数量'][-1], tail)
+                workbook.close()
+
     def test_generated_forecast_range_uses_worksheet_filter_without_table(self):
         workbook = Workbook()
         workbook.remove(workbook.active)

@@ -136,6 +136,21 @@ class ForecastMathTests(unittest.TestCase):
         future = self.run_node("m.hourlyComparison({date:'2026-09-03',hours:[{hour:8,gross:100}]},{today:'2026-09-02'})")
         self.assertTrue(all(value is None for value in future['actual']))
 
+    def test_intraday_estimates_never_replace_observed_components(self):
+        for snapshot, known_small, known_direct, observed in (
+            ('{gross:100,small_to_big:70,direct:20}', 70, 20, 100),
+            ('{gross:100,small_to_big:70,direct:40}', 70, 40, 110),
+            ('{small_to_big:70,direct:20}', 70, 20, 90),
+        ):
+            with self.subTest(snapshot=snapshot):
+                result = self.run_node(f'm.intradayComponents({snapshot},.9,.1)')
+                self.assertGreaterEqual(result['observedSmall'], known_small)
+                self.assertGreaterEqual(result['observedDirect'], known_direct)
+                self.assertGreaterEqual(result['small'], known_small)
+                self.assertGreaterEqual(result['direct'], known_direct)
+                self.assertEqual(result['observedSmall'] + result['observedDirect'], observed)
+                self.assertEqual(result['small'] + result['direct'], result['gross'])
+
     def test_intraday_floor_conserves_remaining_or_raises_to_actual(self):
         result = self.run_node("m.applyObservedFloor([10,20,30],40)")
         self.assertEqual(result['values'][0], 40)

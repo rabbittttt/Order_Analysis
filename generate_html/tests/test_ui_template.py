@@ -13,6 +13,25 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DashboardTemplateTests(unittest.TestCase):
+    def test_launch_chart_keeps_blank_gaps_and_real_zero(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
+        renderer = script[script.index('  function renderLaunch(data){'):script.index('  function renderSmallOrderRhythm(rows){')]
+        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;"
+        data = "{periods:['D1','D2','D3','D4'],metrics:{'累计小订转大定数量':[20,null,40,0],'累计直接大定数量':[60,null,160,0],'累计小订转化率':[.1,null,.2,0]}}"
+        result = subprocess.run([node, '-e', dependencies + renderer + 'process.stdout.write(renderLaunch(' + data + '));'],
+                                text=True, encoding='utf-8', capture_output=True, check=True)
+        self.assertEqual(result.stdout.count('<circle'), 3)
+        self.assertEqual(result.stdout.count('<rect'), 6)
+        self.assertIn('>0.0%</text>', result.stdout)
+        self.assertIn('尚未更新或不完整', result.stdout)
+        path = re.search(r'<path d="([^"]*)"', result.stdout)[1]
+        self.assertEqual(path.count('M'), 2)
+        self.assertEqual(path.count('L'), 1)
+        self.assertNotIn('NaN', result.stdout)
+
     def test_day_period_selector_uses_chronological_order(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         sorter = script[script.index("function sortPeriods"):script.index("async function renderFilters")]

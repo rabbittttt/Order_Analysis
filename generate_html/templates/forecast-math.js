@@ -402,7 +402,11 @@
     const gross=count(snapshot?.gross),small=count(snapshot?.small_to_big),direct=count(snapshot?.direct);
     const observed=Math.max(gross??0,(small??0)+(direct??0)),share=Math.max(0,Math.min(Number(smallShare)||0,1));
     const estimated=gross===null||small===null||direct===null||Math.abs(small+direct-observed)>.5;
-    const observedSmall=!estimated?small:small!==null&&direct===null?Math.min(small,observed):small===null&&direct!==null?Math.max(observed-direct,0):observed*share;
+    // Known components are lower bounds, not proportions to overwrite. Only
+    // the unclassified part of a gross snapshot may use the reference share.
+    const unclassified=Math.max(observed-(small??0)-(direct??0),0);
+    const observedSmall=small!==null&&direct!==null?small+unclassified*share:
+      small!==null?small:direct!==null?observed-direct:observed*share;
     const observedDirect=observed-observedSmall,rate=Number(completion);
     const total=observed/(Number.isFinite(rate)&&rate>0?Math.min(rate,1):1),remaining=Math.max(total-observed,0);
     const projectedSmall=Math.max(Math.round(observedSmall+remaining*share),Math.ceil(observedSmall));

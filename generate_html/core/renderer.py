@@ -4,6 +4,7 @@ import base64
 import gzip
 import json
 import logging
+import math
 from time import perf_counter
 from pathlib import Path
 from typing import Any
@@ -41,7 +42,9 @@ def pack_dashboard(board: dict[str, Any]) -> dict[str, Any]:
         return {key: encode(child) for key, child in value.items()}
     def encode(value):
         if not isinstance(value, (dict, list)):
-            return value
+            # Keep diagnostics on the original board, but never send Python's
+            # nonstandard NaN/Infinity tokens to the browser's JSON.parse.
+            return None if isinstance(value, float) and not math.isfinite(value) else value
         identity = id(value)
         if counts[identity] > 1:
             if identity not in indexes:
@@ -72,7 +75,7 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
         packed = pack_dashboard(board)
         pack_seconds += perf_counter() - tick
         tick = perf_counter()
-        payload = json.dumps(packed, ensure_ascii=False, separators=(",", ":"))
+        payload = json.dumps(packed, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         sizes[key] = len(payload.encode("utf-8"))
         serialize_seconds += perf_counter() - tick
         tick = perf_counter()

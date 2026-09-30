@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import math
 from datetime import date, datetime
 
 from openpyxl.utils.datetime import from_excel
@@ -132,7 +133,9 @@ class LaunchRhythmModule:
             if label:
                 is_rate = "率" in label or "进度" in label
                 display_label = label.replace("净大定", "留存大定")
-                metrics[display_label] = [cell_number(sheet.cell(row, col), rate=is_rate) for col in period_columns]
+                values = [cell_number(sheet.cell(row, col), rate=is_rate, default=None) for col in period_columns]
+                metrics[display_label] = [value if isinstance(value, (int, float)) and math.isfinite(value) else None
+                                          for value in values]
         date_labels = [_date_label(sheet.cell(2, col)) for col in period_columns]
         date_labels = [label for label in date_labels if label]
         start_date = date_labels[0] if date_labels else ""
@@ -140,15 +143,15 @@ class LaunchRhythmModule:
 
         def latest(name: str) -> float:
             values = metrics.get(name, [0])
-            return values[-1] if values else 0
+            return next((value for value in reversed(values) if value is not None), 0)
 
-        cumulative_order = sum(metrics.get("当日大定数量", []))
-        cumulative_net = sum(metrics.get("当日留存大定数量", []))
+        cumulative_order = sum(value for value in metrics.get("当日大定数量", []) if value is not None)
+        cumulative_net = sum(value for value in metrics.get("当日留存大定数量", []) if value is not None)
         cumulative_small = latest("累计小订转大定数量") or latest("累计小订转大数量")
         cumulative_small_rate = latest("累计小订转化率") or latest("累计小转大率")
         cumulative_small_base = safe_rate(cumulative_small, cumulative_small_rate) if cumulative_small_rate > 0 else 0
         cumulative_direct = latest("累计直接大定数量")
-        matrix_rows = [[name, *[f"{value * 100:.1f}%" if ("率" in name or "进度" in name) else value for value in values]] for name, values in metrics.items()]
+        matrix_rows = [[name, *[f"{value * 100:.1f}%" if value is not None and ("率" in name or "进度" in name) else value for value in values]] for name, values in metrics.items()]
         page = {
             "kpis": [
                 kpi("累计大定", cumulative_order, "单", periods[-1], "blue"),

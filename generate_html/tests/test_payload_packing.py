@@ -64,6 +64,16 @@ class PayloadPackingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             pack_dashboard(value)
 
+    def test_nonfinite_business_values_are_null_in_strict_browser_json(self):
+        shared = {'values': [0, 12.5, float('nan'), float('inf'), -float('inf'), None]}
+        board = {'a': shared, 'b': shared, 'text': 'NaN is a diagnostic, not a number'}
+        payload = json.dumps(pack_dashboard(board), allow_nan=False)
+        decoded = unpack(json.loads(payload))
+        self.assertEqual(decoded['a']['values'], [0, 12.5, None, None, None, None])
+        self.assertEqual(decoded['a'], decoded['b'])
+        self.assertEqual(decoded['text'], board['text'])
+        self.assertNotEqual(shared['values'][2], shared['values'][2])
+
     def test_validation_visits_shared_values_and_reports_invalid_numbers(self):
         shared = {"value": float("nan")}
         board = {"subject_id": "a", "views": {}, "x": shared, "y": shared}
@@ -95,6 +105,25 @@ class PayloadPackingTests(unittest.TestCase):
         self.assertNotIn("dashboard_blocks", main)
         blocks = json.loads(re.search(r'window.DASHBOARD_BLOCKS_B64=(.*?);</script>', html)[1])
         self.assertEqual(unpack(json.loads(gzip.decompress(base64.b64decode(blocks["a"])))), board)
+
+    def test_rendered_nonfinite_board_keeps_other_boards_and_original_diagnostics(self):
+        import re
+        bad = {'subject_id': 'a', 'views': {}, 'value': float('nan')}
+        good = {'subject_id': 'b', 'views': {}, 'value': 0}
+        manifest = {'subjects': [{'id': 'a'}, {'id': 'b'}],
+                    'dashboards': {'a': bad, 'b': good}, 'raw_blocks': {}}
+        with TemporaryDirectory() as folder:
+            output = Path(folder) / 'output.html'
+            render_dashboard(manifest, ROOT / 'templates', output)
+            blocks = json.loads(re.search(r'window.DASHBOARD_BLOCKS_B64=(.*?);</script>',
+                output.read_text(encoding='utf-8'))[1])
+        def reject_constant(value):
+            raise AssertionError('Nonstandard JSON token: ' + value)
+        decoded = {key: unpack(json.loads(gzip.decompress(base64.b64decode(value)),
+                    parse_constant=reject_constant)) for key, value in blocks.items()}
+        self.assertIsNone(decoded['a']['value'])
+        self.assertEqual(decoded['b'], good)
+        self.assertTrue(any('无效值' in text for text in validate_manifest(manifest)))
 
 
     def test_sparse_raw_table_keeps_formats_zero_and_order(self):
