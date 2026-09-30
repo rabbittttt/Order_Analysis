@@ -20,24 +20,24 @@ const fs=require('fs'),assert=require('assert');
 const source=fs.readFileSync(DASHBOARD,'utf8');
 const linkStart=source.indexOf('      const smallInput=root.querySelector');
 const linkEnd=source.indexOf('      const linkedSignature=',linkStart);
-const blockStart=source.indexOf('      const blockingErrors=');
-const blockEnd=source.indexOf('      const endedComplete=',blockStart);
+const blockStart=source.indexOf('      const validQuantity=');
+const blockEnd=source.indexOf('      const hasSmall=',blockStart);
 const methodStart=source.indexOf('      const parameterAvailable=');
 const methodEnd=source.indexOf('      const referenceSmallEstimate=',methodStart);
 assert(linkStart>=0&&linkEnd>linkStart&&blockStart>=0&&blockEnd>blockStart);
 const link=new Function('root','targetState','absoluteStage','todayIso','sameModel','actualForTarget','findTarget',
  source.slice(linkStart,linkEnd)+'return {linkSmall,smallOngoing};');
-const check=new Function('root','actual','target','stageInfo','small','resolvedFixed','pastMissingIndexes','smallOngoing','esc',
- source.slice(blockStart,blockEnd)+'return rawDataError;');
-const method=new Function('rawDataError','small','baseConversion',
- 'const endedComplete=false,baseShare=.2,actualSmall=0,actualDirect=0,actualGross=0,anchorSmall=0,anchorDirect=0;'+
+const check=new Function('root','actual','target','stageInfo','small','resolvedFixed','pastMissingIndexes','smallOngoing','esc','forecastDateRanges',
+ source.slice(blockStart,blockEnd)+'return {rawDataError,componentsReady:componentIssues.length===0};');
+const method=new Function('rawDataError','small','baseConversion','componentsReady',
+ 'const endedComplete=false,hasSmall=true,baseShare=.2,actualSmall=0,actualDirect=0,actualGross=0,anchorSmall=0,anchorDirect=0;'+
  source.slice(methodStart,methodEnd)+'return {available:parameterAvailable,gross:parameterGross};');
 const probe=(end,total,error='',invalidDay=false,stage='active')=>{
  const input={value:0},root={_smallForecastResult:{name:'RX',date:'2026-09-28',stage:'active',total,error},querySelector:key=>key==='[data-forecast-input="small"]'?input:null};
  const target={name:'RX',smallEndDate:end,hardErrors:['总小订缺失或不大于0']};
  const linked=link(root,()=>target,()=>({key:'active'}),()=> '2026-09-28',(a,b)=>a===b,()=>null,()=>({small:0}));
- const rawError=check(root,null,target,{key:stage},Number(input.value),invalidDay?[{gross:1,small_to_big:null,direct:1}]:[],[],linked.smallOngoing,String);
- return {linked:!!linked.linkSmall,value:Number(input.value),rawError,...method(rawError,Number(input.value),.5)};
+ const checked=check(root,null,target,{key:stage},Number(input.value),invalidDay?[{date:'2026-09-27',gross:1,small_to_big:null,direct:1}]:[],[],linked.smallOngoing,String,dates=>dates.join('、'));
+ return {linked:!!linked.linkSmall,value:Number(input.value),rawError:checked.rawDataError,...method(checked.rawDataError,Number(input.value),.5,checked.componentsReady)};
 };
 console.log(JSON.stringify({ongoing:probe('2026-09-28',1000),pending:probe('2026-09-28',null,'等待参考'),
  ended:probe('2026-09-27',null),invalid:probe('2026-09-28',1000,'',true),before:probe('2026-09-30',1000,'',false,'before')}));
@@ -56,8 +56,10 @@ console.log(JSON.stringify({ongoing:probe('2026-09-28',1000),pending:probe('2026
         self.assertEqual(data['before']['gross'], 625)
         self.assertFalse(data['pending']['rawError'])
         self.assertFalse(data['pending']['available'])
-        self.assertTrue(data['ended']['rawError'])
-        self.assertTrue(data['invalid']['rawError'])
+        self.assertFalse(data['ended']['rawError'])
+        self.assertFalse(data['ended']['available'])
+        self.assertFalse(data['invalid']['rawError'])
+        self.assertFalse(data['invalid']['available'])
 
     def test_active_small_initializes_and_predicts_without_current_final_total(self):
         script = r'''
@@ -77,6 +79,7 @@ const esc=String,fmt=String,renderLifecycleBars=()=>'',renderLifecycleLineChart=
 const rebasedForecastCompletion=()=>({value:.5}),rebasedForecastCompletionCurve=()=>[.25,.5,.75,1];
 const observedDailyPrefix=values=>values,extendForecastCurve=values=>values;
 const window={ForecastMath:require(MATH)};console.warn=()=>{};
+const forecastDateRanges=dates=>dates.join('、'),showForecastCondition=(node,{reasons})=>{node.hidden=!reasons.filter(Boolean).length;node.textContent=reasons.filter(Boolean).join('；');};
 eval(source.slice(source.indexOf('  function createForecastEstimateLogger('),source.lastIndexOf('  init();')));
 eval(source.slice(source.indexOf('  function lifecycleReferenceOptions('),source.indexOf('  function renderSmallOrderWorkspace(')));
 eval(source.slice(start,end));

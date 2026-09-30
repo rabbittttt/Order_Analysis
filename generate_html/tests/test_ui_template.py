@@ -553,7 +553,9 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("expectedSteadyDates=steadyElapsedDays?Array.from", script)
         self.assertIn("const compactMissingRanges=dates=>", script)
-        self.assertIn("平销开始以来已结束日锁单缺失或异常（共${missing.length}天）：${compactMissingRanges(missing)}", script)
+        self.assertIn("已结束日交车锁单缺失或无效", script)
+        self.assertIn("交车锁单尚未更新", script)
+        self.assertIn("!daily.has(day)", script)
         self.assertIn("steadyNotStarted=!!target.steadyStartDate&&target.steadyStartDate>today", script)
         self.assertIn("if(!message){", script)
         self.assertIn("const blocked=!!message", script)
@@ -673,8 +675,10 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn('data-forecast-data-error role="alert" aria-live="assertive"', script)
         self.assertIn("rawDataError", script)
         self.assertIn("parameterAvailable=!rawDataError", script)
-        self.assertIn("progressAvailable=!d1Unavailable&&!rawDataError", script)
-        self.assertIn("原始数据错误，当前对象已停止预测", script)
+        self.assertIn("progressAvailable=!rawDataError&&historyComplete", script)
+        self.assertIn("showForecastCondition", script)
+        self.assertIn("其他可用方法及已知实际数据保留", script)
+        self.assertIn("hasSmall?(small>0&&baseConversion>0)", script)
         self.assertIn(".forecast-data-error", css)
 
 

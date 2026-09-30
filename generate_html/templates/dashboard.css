@@ -3050,6 +3050,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .forecast-score-status,.forecast-score-part b,.forecast-score-part small,.forecast-score-part em{font-size:9px}
 .forecast-v2 input:focus-visible,.forecast-v2 select:focus-visible,.forecast-v2 button:focus-visible,.forecast-v2 summary:focus-visible{outline:3px solid rgba(22,119,255,.24);outline-offset:2px}
 .forecast-data-error{grid-column:1/-1;display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:12px 14px;border:1px solid #ef9a9a;border-left:5px solid #d92d20;border-radius:10px;background:#fff4f2;color:#7a271a;box-shadow:0 5px 16px rgba(180,35,24,.08)}
+.forecast-workspace.forecast-v2 [hidden]{display:none!important}
 .forecast-data-error[hidden]{display:none}
 .forecast-data-error strong{font-size:13px;line-height:1.45}
 .forecast-data-error span{font-size:12px;line-height:1.55}

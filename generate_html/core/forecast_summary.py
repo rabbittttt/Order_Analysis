@@ -184,14 +184,17 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
             row = {k: row.get(k) for k in ("订单分析代际名", "品牌", "产品档位", "能源类型", "发布类型", "发布时段")}
             master.append(row)
         row.update({k: date_cell(v) for k, v in dates.items()})
+        if not row.get("历史传播名"):
+            row["历史传播名"] = target.get("history_model") or target["name"]
         row["首销天数"] = target.get("days")
+        row["有小订"] = target.get("has_small", True)
         raw = next((r for r in raw_profiles if r["model"] == target["name"]), {})
         files = [_source_parts(raw.get(k))[0] for k in ("day_source", "hour_source", "small_hour_source", "cancel_source")]
         files += [_source_parts(v)[0] for v in raw.get("small_daily_sources", {}).values()]
         files += [r.get("source_file") for r in data.get("steady_history", []) if r["model"] == target["name"]]
         row["订单来源文件"] = "、".join(dict.fromkeys(f for f in files if f)) or history_file
     master_headers = ["历史传播名", "订单分析代际名", "原始表简称/别名", "品牌", "产品档位", "能源类型",
-        "发布类型", "发布时段", "小订开始", "小订结束", "首销开始", "首销结束", "首销天数",
+        "发布类型", "发布时段", "有小订", "小订开始", "小订结束", "首销开始", "首销结束", "首销天数",
         "总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比",
         "总退订", "退订率", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率", "字段完整度", "订单来源文件"]
     emit(MASTER_SHEET, master_headers, [[r.get(k) for k in master_headers] for r in master],
@@ -392,6 +395,10 @@ def resolved_daily_rows(candidates, data, masters, history_file, today):
     for key, row in sorted(rows.items()):
         model, day = key
         target = targets.get(model, {})
+        if target.get("has_small") is False and isinstance(row.get("大定"), (int, float)):
+            # Business identity, not a historical reference-ratio estimate.
+            row["小转大"] = 0 if row.get("小转大") is None else row["小转大"]
+            row["直接大定"] = row["大定"] if row.get("直接大定") is None else row["直接大定"]
         stages = []
         if "小订数量" in row:
             stages.append("小订")
@@ -607,6 +614,7 @@ def read_public_forecast(book, history, today=None):
         if model in by_model:
             continue
         windows[model_key(model)] = {"generation": model, "history_model": row.get("历史传播名"),
+            "has_small": row.get("有小订") not in (False, 0, "否"),
             "launch_date": iso_day(row.get("首销开始")), "end_date": iso_day(row.get("首销结束")),
             "small_start_date": iso_day(row.get("小订开始")), "small_end_date": iso_day(row.get("小订结束")),
             "days": row.get("首销天数"), "small": row.get("总小订"), "source_sheet": MASTER_SHEET}

@@ -428,6 +428,7 @@ def _read_stage_windows() -> tuple[Path | None, dict[str, dict[str, Any]]]:
             item = {
                 "generation": generation,
                 "history_model": model,
+                "has_small": True,  # Membership in the maintained reservation workbook.
                 "small_start_date": _iso(record.get("小订开始日期")),
                 "small_end_date": _iso(record.get("小订结束日期")),
                 "launch_date": launch_date,
@@ -1323,6 +1324,7 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
     cancel_key = "小订后退订"
     item = {
         "model": model,
+        "has_small": record.get("有小订") not in (False, 0, "否"),
         "generation": str(record.get("代际名") or ""),
         "mapping_status": str(record.get("映射状态") or ("已映射" if record.get("代际名") else "未映射·暂按传播名")),
         "mapped": not str(record.get("映射状态") or "").startswith("未映射") and bool(str(record.get("代际名") or "").strip()),
@@ -2206,6 +2208,8 @@ def _resolve_actual_profiles(
             if key.startswith("首销日·")
         }
         missing_fields = current_profile["missing_fields"]
+        if target.get("has_small") is False:
+            missing_fields[:] = [f for f in missing_fields if f != "总小订"]
         if missing_fields:
             LOGGER.warning(
                 "[销量预测数据诊断] 预测对象=%s | 阶段=%s | 缺失字段=%s | 来源顺序=%s | 已选来源=%s | 处理=按字段继续回退，仍缺失的字段在网页标记为数据缺失",
@@ -2418,9 +2422,9 @@ def _target_options(
             profile["model"],
             reference.get("generation") if reference else "",
         )
-        launch_date = (window or {}).get("launch_date") or profile.get("launch_date") or (reference["launch_date"] if reference else "")
-        maintained_days = (window or {}).get("days") or (reference["days"] if reference else 0)
-        end_date = (window or {}).get("end_date") or (reference.get("end_date") if reference else None)
+        launch_date = (window or {}).get("launch_date") or _iso(_first_record_value(master_record or {}, "首销开始", "开始大定日期", "发布日")) or profile.get("launch_date") or (reference["launch_date"] if reference else "")
+        maintained_days = (window or {}).get("days") or _first_record_value(master_record or {}, "首销天数", "首销期天数") or (reference["days"] if reference else 0)
+        end_date = (window or {}).get("end_date") or _iso(_first_record_value(master_record or {}, "首销结束", "首销截止", "小转大结束日期")) or (reference.get("end_date") if reference else None)
         _validate_stage_window(profile["model"], start=launch_date, end=end_date, kind="首销窗口")
         _validate_stage_window(profile["model"], start=(window or {}).get("small_start_date"), end=(window or {}).get("small_end_date"), kind="小订窗口")
         parsed_start, parsed_end = _as_date(launch_date), _as_date(end_date)
@@ -2454,6 +2458,7 @@ def _target_options(
         steady_start = (_as_date(stage.get("end_date")) + timedelta(days=1)).isoformat() if _as_date(stage.get("end_date")) else ""
         options.append({
             "name": profile["model"],
+            "has_small": (window or {}).get("has_small", reference.get("has_small", True) if reference else bool(window)),
             "history_model": reference["model"] if reference else "",
             "tier": usable_attribute(master_record.get("产品档位")) if master_record else usable_attribute(reference["tier"] if reference else None),
             "energy": usable_attribute(master_record.get("能源类型")) if master_record else usable_attribute(reference["energy"] if reference else None),
@@ -2463,7 +2468,7 @@ def _target_options(
             "stage": stage["key"],
             "stage_label": stage["label"],
             "calendar_day": stage["day"],
-            "date_source_label": "小订及首销数据整理 · 车型汇总" if window else "首销期订单节奏 · by天第二行" if profile.get("launch_date") else "日期数据缺失",
+            "date_source_label": "小订及首销数据整理 · 车型汇总" if window else "车型基本信息维护" if _first_record_value(master_record or {}, "首销开始", "开始大定日期", "发布日", "首销结束", "首销截止", "首销天数", "首销期天数") else "首销期订单节奏 · by天第二行" if profile.get("launch_date") else "日期数据缺失",
             "small_start_date": (window or {}).get("small_start_date", ""),
             "small_end_date": (window or {}).get("small_end_date", ""),
             "small_stage": small_stage["key"],
@@ -2523,6 +2528,26 @@ def _merge_small_daily_history(
         profile["small_daily_days"] = [by_date[day] for day in sorted(by_date)]
 
 
+def _apply_small_order_applicability(target, profile):
+    """No reservation campaign: direct orders equal gross, not an estimated split."""
+    has_small = target.get("has_small", True)
+    profile["has_small"] = has_small
+    if has_small:
+        return
+    for candidate in [profile, *profile.get("stage_profiles", {}).values()]:
+        candidate["missing_fields"] = [f for f in candidate.get("missing_fields", []) if f != "总小订"]
+        candidate.setdefault("field_sources", {})["总小订"] = "不适用：无小订阶段"
+        for row in [*candidate.get("days", []), *candidate.get("hourly_days", [])]:
+            if _optional_number(row.get("gross")) is not None:
+                if row.get("small_to_big") is None:
+                    row["small_to_big"] = 0
+                if row.get("direct") is None:
+                    row["direct"] = row["gross"]
+    target["missing_fields"] = profile.get("missing_fields", [])
+    target["small_stage"] = "not_applicable"
+    target["small_stage_label"] = "无小订阶段"
+
+
 def _profile_hard_errors(
     target: dict[str, Any],
     profile: dict[str, Any],
@@ -2552,9 +2577,6 @@ def _profile_hard_errors(
         errors.append("首销期天数缺失或不是正整数")
     elif not target.get("launch_days_maintained", True):
         errors.append("首销截止日期和首销期天数均未维护")
-    if _number(profile.get("total_small")) <= 0:
-        errors.append("总小订缺失或不大于0")
-
     profile_dates = [
         parsed for row in profile.get("days", [])
         if (parsed := _as_date(row.get("date"))) is not None
@@ -2587,15 +2609,18 @@ def _profile_hard_errors(
         gross = _optional_number(row.get("gross"))
         small_to_big = _optional_number(row.get("small_to_big"))
         direct = _optional_number(row.get("direct"))
+        # Only missing gross/calendar data blocks the whole launch workspace.
+        # Missing component inputs are checked per method; ended gross stays visible.
         missing_fields = [
-            label
-            for label, value in (("大定", gross), ("小转大", small_to_big), ("直接大定", direct))
+            label for label, value in (("大定", gross),)
             if value is None or not math.isfinite(float(value)) or value < 0
         ]
         if missing_fields:
             invalid_days.append(f"D{index + 1}缺{'+'.join(missing_fields)}")
             continue
-        if abs((small_to_big + direct) - gross) > max(1.0, abs(gross) * .005):
+        if target.get("stage") != "ended" and small_to_big is not None and direct is not None and (
+            small_to_big < 0 or direct < 0 or abs((small_to_big + direct) - gross) > max(1.0, abs(gross) * .005)
+        ):
             invalid_days.append(
                 f"D{index + 1}分项不一致（小转大{small_to_big:g}+直接大定{direct:g}≠大定{gross:g}）"
             )
@@ -2675,6 +2700,7 @@ class SalesForecastModule:
             for key in ("selected_source", "selected_source_label", "field_sources", "missing_fields", "data_missing", "source_latest_date"):
                 target[key] = candidate.get(key)
             target["small"] = candidate.get("total_small", profile.get("total_small"))
+            _apply_small_order_applicability(target, profile)
             errors = _profile_hard_errors(target, profile, today=self.as_of_date)
             target.update(hard_errors=errors, data_error=bool(errors))
             profile.update(hard_errors=errors, data_error=bool(errors))
@@ -2733,6 +2759,7 @@ class SalesForecastModule:
         )
         for option in targets:
             profile = next((item for item in profiles if _same_model(item.get("model"), option["name"])), {})
+            _apply_small_order_applicability(option, profile)
             hard_errors = _profile_hard_errors(option, profile, today=self.as_of_date)
             option["hard_errors"] = hard_errors
             option["data_error"] = bool(hard_errors)
@@ -2740,8 +2767,8 @@ class SalesForecastModule:
                 profile["hard_errors"] = hard_errors
                 profile["data_error"] = bool(hard_errors)
             if hard_errors:
-                LOGGER.error(
-                    "[销量预测原始数据错误] 预测对象=%s | 阶段=%s | %s | 处理=停止该对象两种预测，修正原始数据后重新生成",
+                LOGGER.warning(
+                    "[销量预测条件不足] 预测对象=%s | 阶段=%s | 原因=%s | 影响=首销预测不可用，已知实际数据保留",
                     option["name"],
                     option.get("stage_label", option.get("stage", "未知")),
                     "；".join(hard_errors),
@@ -2773,6 +2800,7 @@ class SalesForecastModule:
             "stage_label": default_option.get("stage_label", "时间缺失"),
             "calendar_day": default_option.get("calendar_day", 0),
             "date_source_label": default_option.get("date_source_label", "日期数据缺失"),
+            "has_small": default_option.get("has_small", True),
             "small_start_date": default_option.get("small_start_date", ""),
             "small_end_date": default_option.get("small_end_date", ""),
             "small_stage": default_option.get("small_stage", "unknown"),
@@ -2837,7 +2865,7 @@ class SalesForecastModule:
                 "当前阶段按绝对日期判断：小订开始/结束、首销开始/结束优先读取《小订及首销数据整理》的“车型汇总”；若该代际没有汇总日期，才用《首销期订单节奏》对应by天 Sheet第二行的首个绝对日期作为首销开始日，并按首销天数计算截止日。",
                 "首销结束且真实数据完整时，两种方法均以真实累计收口，不依赖预测参考或分配参数，也不再分配剩余量；真实日期缺失仍停止预测。今天早于D1为首销期未开始；位于D1至首销截止之间（含首尾日期）为首销期进行中；晚于首销截止为首销期已结束。当前Dn按今天与D1的自然日差计算，不按已读取的数据行数计算。",
                 "小订结束至首销开始前视为同一个阶段：优先使用《小订退订分析》，其次使用《小订及首销数据整理》；两处都没有则标记数据缺失。",
-                "首销期已结束，以及平销期计算中需要引用的首销与小订数据，使用同一来源顺序：优先使用《小订及首销数据整理》，缺失时依次回退《首销期订单节奏》《小订退订分析》；三处都没有则标记数据缺失。平销期已发生周固定读取《锁单选配比例分析》的交车锁单。",
+                "首销期已结束，以及平销期计算中需要引用的首销与小订数据，使用同一来源顺序：《首销期订单节奏》《小订退订分析》按字段优先，缺失时回退《小订及首销数据整理》；三处都没有则标记数据缺失。平销期已发生周固定读取《锁单选配比例分析》的交车锁单。",
                 "首销期进行中：优先使用《首销期订单节奏》，其次使用《小订及首销数据整理》；两处都没有则标记数据缺失。",
                 "by天中早于今天、有日期且大定为数值的行视为已结束真实日期；今天的数据不直接当作完整日冻结。",
                 "今天优先取匹配的by时 Sheet，并按最后一个已采集小时反推当日终值；没有by时时，今天的by天行只作为当日快照。",

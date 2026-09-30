@@ -606,6 +606,13 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 key = (_source_key(value),)
             else:
                 key = tuple(_source_key(value) for value, _ in labels)
+            # Rolling/file aggregates are not a shared calendar period. Do not
+            # merge or diagnose them as duplicate quantities in order mix files.
+            if header_rows == 1 and key_columns == 3 and 1 in forward_rows and any(
+                re.fullmatch(r"(?:总计|合计|汇总|累计|近\d+(?:天|日|周|月))", clean_text(part))
+                for part in key
+            ):
+                continue
             col_keys[col] = key
             columns.setdefault(key, labels)
         span = coverage.get(item.path.name)
@@ -1440,7 +1447,11 @@ def parse_metric_sheet(sheet: Any) -> dict[str, dict[str, Any]]:
     if cached is not None:
         return cached
     headers = [display_period(sheet.cell(1, col).value, sheet.cell(1, col).number_format) for col in range(4, sheet.max_column + 1)]
-    # 原表周期列完整保留，包括“总计/汇总”；KPI Card 直接使用原表对应列的值。
+    # File-level total/rolling aggregates are not shared calendar observations.
+    # Keep originals in the raw-table center, but never use these for forecasts,
+    # dashboard metrics, or multi-file duplicate conflicts.
+    headers = ["" if re.fullmatch(r"(?:总计|合计|汇总|累计|近\d+(?:天|日|周|月))", clean_text(header))
+               else header for header in headers]
     periods = [header for header in headers if header]
     result = {period: {"metrics": {}, "structures": {}} for period in periods}
     current_metric = ""

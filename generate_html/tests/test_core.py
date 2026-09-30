@@ -232,8 +232,9 @@ class SubjectParsingTests(unittest.TestCase):
 
         parsed = parse_metric_sheet(sheet)
 
-        self.assertEqual(list(parsed), ["26WK34", "总计"])
-        self.assertEqual(parsed["总计"]["metrics"]["大定"], 3239)
+        self.assertEqual(list(parsed), ["26WK34"])
+        self.assertEqual(parsed["26WK34"]["metrics"]["大定"], 443)
+        self.assertEqual(sheet.cell(2, 5).value, 3239)  # Original export unchanged.
 
     def test_brand_overview_excludes_total_from_kpis_and_history(self):
         order_book = Workbook()

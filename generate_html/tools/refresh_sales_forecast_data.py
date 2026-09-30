@@ -1181,6 +1181,12 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
         year, week, _ = parsed.isocalendar()
         periods.add((model, f"{year % 100:02d}WK{week:02d}"))
     rows, missing_split = [], []
+    current_week_start = (today - timedelta(days=today.weekday())).isoformat()
+    current_updated = {}
+    for entries in (daily, resolved):
+        for (model, day, _), entry in entries.items():
+            if entry[0] is not None and current_week_start <= day <= today.isoformat():
+                current_updated.setdefault(model, set()).add(day)
     for model, period in sorted(periods):
         target = targets[model]
         launch, finish = _as_date(target.get("launch_date")), _as_date(target.get("end_date"))
@@ -1189,6 +1195,15 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
             continue
         for stage, first, last in (("首销", launch, finish), ("平销", finish + timedelta(days=1), today)):
             start, end = max(bounds[0], first), min(bounds[1], last, today)
+            # A current partial week is not a stage-boundary split. Keep only
+            # the dates actually updated; omitted covered dates were filled at
+            # the physical-file merge, future/unupdated dates remain unknown.
+            stage_split = first > bounds[0] or (stage == "首销" and last < bounds[1])
+            if bounds[0] <= today <= bounds[1]:
+                observed = [date.fromisoformat(day) for day in current_updated.get(model, ())
+                            if start.isoformat() <= day <= end.isoformat()]
+                if observed:
+                    end = min(end, max(observed))
             if start > end:
                 continue
             whole = start == bounds[0] and end == bounds[1]
@@ -1212,7 +1227,7 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
                     value, source = raw_week
                 else:
                     value, source = None, "by天不完整，未补估"
-                    if not whole and (model, period, field) in weekly:
+                    if stage_split and (model, period, field) in weekly:
                         missing_split.append(f"{model}/{period}/{stage}")
                 values.append(value)
                 sources.append(source)

@@ -58,8 +58,8 @@ class MultiSourceTests(unittest.TestCase):
         with self.assertLogs("core.excel", level="WARNING") as logs:
             item, merged = store.find_subject_sheet("大定选配比例", MODEL, "day")
         parsed = parse_metric_sheet(merged)
-        self.assertEqual(list(parsed), ["2021-01-01", "2022-01-01", "2023-01-01", "总计"])
-        self.assertEqual([parsed[day]["metrics"]["大定"] for day in parsed], [0, 20, 30, 15])
+        self.assertEqual(list(parsed), ["2021-01-01", "2022-01-01", "2023-01-01"])
+        self.assertEqual([parsed[day]["metrics"]["大定"] for day in parsed], [0, 20, 30])
         self.assertEqual(parsed["2022-01-01"]["structures"]["动力"][0]["share"], .3)
         self.assertEqual(len(logs.output), 1)
         self.assertIn("多文件数值冲突", logs.output[0])
@@ -104,7 +104,7 @@ class MultiSourceTests(unittest.TestCase):
         original = OrderMixModule().build(self.store([book]), subject)
         duplicate = OrderMixModule().build(self.store([book, book]), subject)
         self.assertEqual(duplicate.views, original.views)
-        self.assertEqual(duplicate.views["day"]["periods"][-2:], ["近28天", "总计"])
+        self.assertEqual(duplicate.views["day"]["periods"], ["2026-01-01", "2026-01-02"])
 
     def test_chart_reads_periods_and_subjects_from_every_matching_file(self):
         books = []

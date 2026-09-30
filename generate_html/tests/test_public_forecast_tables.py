@@ -123,7 +123,8 @@ class PublicForecastTablesTests(TestCase):
                       '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考'}
         for sheet in book:
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
-        self.assertEqual(book[MASTER_SHEET].max_column, 27)
+        self.assertEqual(book[MASTER_SHEET].max_column, 28)
+        self.assertIn("有小订", [c.value for c in book[MASTER_SHEET][1]])
         for name in (SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET):
             self.assertEqual(book[name].max_column, 5 if name == SMALL_HOURLY_SHEET else 8)
             self.assertEqual(book[name].cell(1, 5).value, '来源文件')
