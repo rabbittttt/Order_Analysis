@@ -323,13 +323,14 @@ class DashboardTemplateTests(unittest.TestCase):
     def test_sales_forecast_uses_and_syncs_the_top_subject_selector(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn('moduleId==="sales_forecast"', script)
-        self.assertIn('?item.type==="generation"&&DATA.subjects.some', script)
+        self.assertIn('item.modules.includes(moduleId)||(item.type==="generation"&&DATA.subjects.some', script)
         self.assertNotIn('state.module==="sales_forecast"&&item.type!=="generation"', script)
         self.assertIn('const workspace=state.module==="sales_forecast"?{...page.workspace,data:linkedForecastData(page.workspace.data)}', script)
         self.assertNotIn('data-forecast-target="name"', script)
         self.assertIn("const targetState=()=>{const name=data.target?.name||''", script)
         self.assertIn('$("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")}', script)
-        self.assertIn('[["generation","预测代际"]]', script)
+        self.assertNotIn('[["generation","预测代际"]]', script)
+        self.assertIn('[["group","集团"],["brand","品牌"],["generation","代际"]]', script)
 
     def test_sales_forecast_vehicle_and_launch_settings_are_always_visible(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")

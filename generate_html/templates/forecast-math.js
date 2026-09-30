@@ -7,6 +7,24 @@
 
   const DEFAULT_COMPLETION_FLOOR = 0.005;
 
+  // Editable windows change date alignment, never the dates of actual orders.
+  function forecastWindows(configured = {}, values = {}) {
+    const parse = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? Date.parse(value+'T00:00:00Z') : NaN;
+    const shift = (start, count) => Number.isFinite(parse(start)) && count > 0
+      ? new Date(parse(start)+(count-1)*86400000).toISOString().slice(0,10) : '';
+    const launchDate = values.launchDate ?? configured.launch_date ?? '';
+    const days = Math.max(0, Math.round(Number(values.days ?? configured.days ?? configured.launch_days) || 0));
+    const smallStartDate = values.smallStartDate ?? configured.small_start_date ?? '';
+    const smallDays = Math.max(0, Math.round(Number(values.smallDays ?? configured.small_days) || 0));
+    const launchChanged = launchDate !== (configured.launch_date || '') || days !== Number(configured.days ?? configured.launch_days ?? 0);
+    const smallChanged = smallStartDate !== (configured.small_start_date || '') || smallDays !== Number(configured.small_days || 0);
+    const endDate = launchChanged ? shift(launchDate, days) : configured.end_date || shift(launchDate, days);
+    const smallEndDate = smallChanged ? shift(smallStartDate, smallDays) : configured.small_end_date || '';
+    return {launchDate, days, endDate, smallStartDate, smallDays, smallEndDate,
+      steadyStartDate: launchChanged ? shift(endDate, 2) : configured.steady_start_date || shift(endDate, 2),
+      launchChanged, smallChanged};
+  }
+
   function protectCompletion(rawValue, floor = DEFAULT_COMPLETION_FLOOR) {
     const raw = Number(rawValue);
     const minimum = Number(floor);
@@ -152,7 +170,7 @@
     const invalid=hours.some(row=>!Number.isInteger(row.hour)||row.hour<0||row.hour>23||!Number.isFinite(row.orders)||row.orders<0);
     if(invalid)return {error:'D1分时存在无效小时或数量',total:null};
     const counts=Array(24).fill(0);hours.forEach(row=>counts[row.hour]+=row.orders);
-    const observed=counts.reduce((a,b)=>a+b,0),first=counts.findIndex(value=>value>0),start=Number.isInteger(startHour)&&startHour>=0?startHour:first,last=hours.length?Math.max(...hours.map(row=>row.hour)):-1;
+    const observed=counts.reduce((a,b)=>a+b,0),first=counts.findIndex(value=>value>0),start=Number.isInteger(startHour)&&startHour>=0?Math.min(startHour,first>=0?first:startHour):first,last=hours.length?Math.max(...hours.map(row=>row.hour)):-1;
     if(start<0||last<start||observed<=0)return {error:'等待发布后的有效分时小订',total:null};
     const refs=references.map(row=>({...row,curve:smallHourlyCurve(row.item,start)})).filter(row=>row.weight>0&&row.curve[last]>0&&row.curve.slice(start).every(Number.isFinite));
     if(!refs.length)return {error:'所选参考车型缺少有效D1分时曲线',total:null};
@@ -406,6 +424,7 @@
   }
 
   return {
+    forecastWindows,
     stretchCompletion,
     normalizedShapeSimilarity,
     launchHourlyItem,

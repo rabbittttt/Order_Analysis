@@ -12,6 +12,27 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is required for forecast math numeric tests")
 class ForecastMathTests(unittest.TestCase):
+    def test_editable_windows_derive_ends_and_keep_unmodified_explicit_dates(self):
+        configured = {'launch_date':'2026-09-01', 'days':30, 'end_date':'2026-09-30',
+                      'small_start_date':'2026-08-01', 'small_days':20, 'small_end_date':'2026-08-20'}
+        original = self.run_node(f'm.forecastWindows({json.dumps(configured)})')
+        self.assertEqual(original['endDate'], '2026-09-30')
+        self.assertFalse(original['launchChanged'])
+        edited = self.run_node(f'm.forecastWindows({json.dumps(configured)},{{days:10,smallStartDate:"2026-08-02",smallDays:5}})')
+        self.assertEqual(edited['endDate'], '2026-09-10')
+        self.assertEqual(edited['steadyStartDate'], '2026-09-11')
+        self.assertEqual(edited['smallEndDate'], '2026-08-06')
+        self.assertTrue(edited['launchChanged'])
+        self.assertTrue(edited['smallChanged'])
+        empty = self.run_node(f'm.forecastWindows({json.dumps(configured)},{{days:""}})')
+        self.assertEqual(empty['endDate'], '')
+        self.assertEqual(empty['steadyStartDate'], '')
+
+    def test_later_publication_time_never_discards_real_observations(self):
+        result = self.run_node("m.smallHourlyForecast({hours:[{hour:18,orders:40},{hour:19,orders:40}],startHour:20,references:[{item:{small_start_hour:18,small_hourly_curve:[...Array(18).fill(null),.2,.4,.6,.8,.9,1]},weight:100}]})")
+        self.assertEqual(result['observed'], 80)
+        self.assertEqual(result['total'], 200)
+
     def test_completion_stretch_preserves_four_edge_days_and_middle_mass(self):
         source = [.2, .3, .35, .42, .5, .58, .65, .75, .85, 1]
         for length in (5, 8, 10, 18, 90):

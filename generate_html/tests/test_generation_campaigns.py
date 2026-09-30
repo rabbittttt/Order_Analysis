@@ -11,6 +11,9 @@ from core.excel import WorkbookItem, WorkbookStore
 from core.forecast_summary import table_records, visible_target_names, MASTER_SHEET, summary_scope
 from core.model_identity import stage_records, stage_name, parent_generation, resolve_stage_identity, has_reservation, FORECAST_SOURCE_PATH, generation_records
 from core.models import Subject
+from core.models import Dashboard, SourceRef
+from core.components import kpi
+from modules.cancellation import CancellationModule
 from modules.launch_rhythm import LaunchRhythmModule
 from modules.sales_forecast import _combined_steady_inputs, _read_stage_windows, _read_model_mapping_file, _progress_rows, _small_campaign_rows, _read_model_master, _read_model_mapping, _primary_attributes
 from tools.refresh_sales_forecast_data import load_mapping, normalize_public_names, write_rows, append_forecast_inputs, DEFAULT_SOURCE, DEFAULT_MAPPING
@@ -28,6 +31,68 @@ def records():
 
 
 class GenerationCampaignTests(TestCase):
+    def test_small_all_phases_preserves_individuals_and_weights_retention(self):
+        rs = records()
+        source = SourceRef('原表.xlsx', '小订分时')
+        def board(orders, retained):
+            page = {'kpis': [kpi('小订', orders), kpi('留存', retained),
+                            kpi('退订', orders-retained), kpi('留存率', retained/orders*100)],
+                    'sections': []}
+            return Dashboard('cancellation', 'm7', {'day': {'pages': {'日期':page}}}, [source])
+        with patch('modules.cancellation.generation_records', return_value=rs), \
+             patch.object(CancellationModule, '_build_campaign', side_effect=[board(100,90),board(300,150)]):
+            result = CancellationModule().build(None, Subject('m7', PARENT, 'generation'))
+        view = result.views['day']
+        self.assertEqual(len(view['pages']), 3)
+        self.assertIn('全部阶段', view['periods'])
+        self.assertNotEqual(view['default_period'], '全部阶段')
+        values = [c['value'] for c in view['pages']['全部阶段']['kpis']]
+        self.assertEqual(values, [400,240,160,60])
+        self.assertEqual(len(result.sources), 1)
+        with patch('modules.cancellation.generation_records', return_value=rs[:1]), \
+             patch.object(CancellationModule, '_build_campaign', return_value=board(100,90)):
+            single = CancellationModule().build(None, Subject('m7', PARENT, 'generation'))
+        self.assertNotIn('全部阶段', single.views['day']['periods'])
+
+    def test_no_small_first_sheet_accepts_date_aliases_and_days_only(self):
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / '日期.xlsx'
+            book = Workbook()
+            book.active.append(['代际名','首销开始日期','首销结束日期','首销期天数'])
+            book.active.append(['直大车A', date(2026,9,1), date(2026,9,5), None])
+            book.active.append(['直大车B', date(2026,9,1), None, 5])
+            book.save(source); book.close()
+            with patch('modules.sales_forecast.RAW_FORECAST_DATA', source), \
+                 patch('modules.sales_forecast._read_model_mapping', return_value={}):
+                _, windows = _read_stage_windows()
+            self.assertEqual(len(windows), 2)
+            for window in windows.values():
+                self.assertFalse(window['has_small'])
+                self.assertEqual(window['end_date'], '2026-09-05')
+                self.assertEqual(window['days'], 5)
+
+    def test_small_all_phases_with_real_secondary_sheet_names(self):
+        mix = Workbook(); mix.active.title=PARENT+'by天'
+        mix.active.append(['指标','统计类型','分类',date(2024,5,1),date(2024,8,1)])
+        mix.active.append(['小订','数量','数量',100,300])
+        cancel = Workbook(); cancel.remove(cancel.active)
+        for name,month,quantity in ((ULTRA,5,10),(PRO,8,150)):
+            sheet = cancel.create_sheet(name+'_日度退订')
+            sheet.append(['日期','当日小订退','累计小订退','当日退订数','小转大率','小订退订率','大定退订率'])
+            sheet.append([date(2024,month,1),quantity,quantity,0,0,quantity/1000,0])
+        store = WorkbookStore(Path('.'))
+        store.items = [WorkbookItem(Path('小订选配比例分析.xlsx'),mix),WorkbookItem(Path('小订退订分析.xlsx'),cancel)]
+        with patch('modules.cancellation.generation_records',return_value=records()), \
+             patch('core.model_identity.generation_records',return_value=records()):
+            board = CancellationModule().build(store,Subject('m7',PARENT,'generation'))
+        self.assertIsNotNone(board)
+        view = board.views['day']
+        self.assertEqual(len(view['pages']),3)
+        self.assertEqual([k['value'] for k in view['pages']['全部阶段']['kpis']],[400,240,160,60])
+        self.assertTrue(any(s['title'].startswith('Ultra版 · ') for s in view['pages']['全部阶段']['sections']))
+        self.assertTrue(any(s['title'].startswith('Pro版 · ') for s in view['pages']['全部阶段']['sections']))
+        mix.close();cancel.close()
+
     def test_default_source_paths_share_scripts_config(self):
         from modules.sales_forecast import RAW_FORECAST_DATA, HISTORY_CANDIDATES
         expected = Path(__file__).resolve().parents[2] / 'config' / '小订及首销数据整理.xlsx'

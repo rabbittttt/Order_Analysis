@@ -321,7 +321,7 @@ def _primary_attributes(master):
     for parent, editions in grouped.items():
         merged = {"代际名": parent, "历史传播名": parent, "订单分析代际名": parent,
                   "primary_generation": parent, "secondary_generation": "", "二级代际名": ""}
-        for field in ("品牌", "产品档位", "发布类型", "发布时段"):
+        for field in ("品牌", "产品档位", "发布类型", "发布时段", "小订发布时段", "首销发布时段"):
             values = list(dict.fromkeys(str(r.get(field) or "").strip() for r in editions.values()))
             merged[field] = values[0] if len(values) == 1 else "未维护"
         energies = list(dict.fromkeys(token for r in editions.values()
@@ -440,8 +440,8 @@ def _read_model_mapping_file(mapping_path) -> dict[str, str]:
 
 def _integrated_master_sheet(workbook):
     return next((s for s in workbook.worksheets
-                 if {"代际名", "二级代际名"}.issubset({str(c.value or "").strip() for c in s[1]})
-                 and {"开始大定日期", "首销开始"} & {str(c.value or "").strip() for c in s[1]}), None)
+                 if "代际名" in {str(c.value or "").strip() for c in s[1]}
+                 and {"开始大定日期", "首销开始", "首销开始日期"} & {str(c.value or "").strip() for c in s[1]}), None)
 
 
 def _read_stage_windows() -> tuple[Path | None, dict[str, dict[str, Any]]]:
@@ -463,9 +463,14 @@ def _read_stage_windows() -> tuple[Path | None, dict[str, dict[str, Any]]]:
             if not model:
                 continue
             generation = model_mapping.get(_model_key(model), model)
-            launch_date = _iso(record.get("开始大定日期") or record.get("发布日"))
-            end_date = _iso(record.get("小转大结束日期") or record.get("首销截止"))
-            days = max(int(_number(record.get("首销期天数"), 0)), 0)
+            launch_date = _iso(_first_record_value(record, "开始大定日期", "首销开始日期", "首销开始", "发布日"))
+            end_date = _iso(_first_record_value(record, "小转大结束日期", "首销结束日期", "首销结束", "首销截止"))
+            days = max(int(_number(_first_record_value(record, "首销期天数", "首销天数"), 0)), 0)
+            start, finish = _as_date(launch_date), _as_date(end_date)
+            if start and not finish and days > 0:
+                end_date = (start + timedelta(days=days-1)).isoformat()
+            elif start and finish and finish >= start and not days:
+                days = (finish-start).days + 1
             item = {
                 "generation": generation,
                 "primary_generation": str(record.get("代际名") or generation),
@@ -716,7 +721,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "tier": usable_attribute(master_record.get("产品档位")),
                 "energy": usable_attribute(master_record.get("能源类型")),
                 "node": usable_attribute(master_record.get("发布类型") or master_record.get("发布节点")),
-                "launch_period": usable_attribute(master_record.get("发布时段")),
+                "launch_period": usable_attribute(master_record.get("小订发布时段") or master_record.get("发布时段")),
                 "small_start_date": summary_start or (dates[0] if dates else ""),
                 "small_end_date": summary_end or (dates[-1] if dates else ""),
                 "days": max(int(_number(summary.get("小订天数"), len(daily))), len(daily), 1),
@@ -781,7 +786,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "tier": usable_attribute(master_record.get("产品档位")),
                 "energy": usable_attribute(master_record.get("能源类型")),
                 "node": usable_attribute(master_record.get("发布类型") or master_record.get("发布节点")),
-                "launch_period": usable_attribute(master_record.get("发布时段")),
+                "launch_period": usable_attribute(master_record.get("小订发布时段") or master_record.get("发布时段")),
                 "small_start_date": _iso(summary.get("小订开始日期")),
                 "small_end_date": _iso(summary.get("小订结束日期")),
                 "days": max(int(_number(summary.get("小订天数"), len(daily))), len(daily), 1),
@@ -1398,7 +1403,7 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "launch_date": _iso(record.get("发布日") or record.get("开始大定日期")),
         "node": usable_attribute(record.get("发布类型") or record.get("发布节点")),
         "launch_weekday": str(record.get("发布星期") or _weekday(record.get("发布日") or record.get("开始大定日期"))),
-        "launch_period": usable_attribute(record.get("发布时段")),
+        "launch_period": usable_attribute(record.get("首销发布时段") or record.get("发布时段")),
         "end_date": _iso(record.get("首销截止") or record.get("小转大结束日期")),
         "days": int(_number(record.get("首销期天数") or record.get("首销天数"), 0)),
         "gross": int(_number(record.get(gross_key) or record.get("大定量"))),
@@ -1533,7 +1538,7 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
                 item["tier"] = str(master_record.get("产品档位") or "未维护")
                 item["energy"] = str(master_record.get("能源类型") or "未维护")
                 item["node"] = str(master_record.get("发布类型") or master_record.get("发布节点") or "未维护")
-                item["launch_period"] = str(master_record.get("发布时段") or "未维护")
+                item["launch_period"] = str(master_record.get("首销发布时段") or master_record.get("发布时段") or "未维护")
             for field, mapping in progress_maps.items():
                 # Different historical events/editions may map to one generation.
                 # Preserve their own named curves before considering an alias.
@@ -1903,6 +1908,48 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
     for window in (stage_windows or {}).values():
         model = window["generation"]
         profiles.setdefault(model, {"model": model, "days": [], "hourly_days": []})
+    # Direct-launch vehicles can use observed gross orders when no dedicated
+    # launch rhythm exists. No conversion ratio or small-order terminal is needed.
+    order_item = store.find("大定选配比例")
+    if order_item:
+        for window in (stage_windows or {}).values():
+            model = window["generation"]
+            start, finish = _as_date(window.get("launch_date")), _as_date(window.get("end_date"))
+            profile = profiles[model]
+            if window.get("has_small", True) or profile["days"] or not start or not finish:
+                continue
+            actual_days, matched = [], []
+            for sheet in order_item.workbook.worksheets:
+                if "图表" in sheet.title or grain_from_sheet(sheet.title) != "day" or not _same_model(sheet_subject(sheet.title), model):
+                    continue
+                metric, rows = "", {}
+                for row in range(2, sheet.max_row+1):
+                    metric = str(sheet.cell(row, 1).value or metric).strip()
+                    if sheet.cell(row, 2).value == "数量" and sheet.cell(row, 3).value == "数量":
+                        if metric in ("大定", "留存大定", "净大定"):
+                            rows[metric] = row
+                if "大定" not in rows:
+                    continue
+                matched.append(sheet)
+                for col in range(4, sheet.max_column+1):
+                    day = _as_date(sheet.cell(1, col).value)
+                    if day is None or day < start or day > min(finish, today or date.today()):
+                        continue
+                    values = {}
+                    for field, names in (("gross", ("大定",)), ("net", ("留存大定", "净大定"))):
+                        r = next((rows[n] for n in names if n in rows), None)
+                        number = _optional_number(sheet.cell(r, col).value) if r else None
+                        values[field] = int(round(number)) if number is not None and math.isfinite(number) and number >= 0 else None
+                    actual_days.append({"date": day.isoformat(), **values})
+            if not matched:
+                continue
+            actual_days = _fill_sparse_dates(actual_days, ("gross", "net"), _source_date_ranges(order_item), start, min(finish, today or date.today()))
+            profile["days"] = [{**row, "day": f"D{(_as_date(row['date'])-start).days+1}",
+                                "direct": row.get("gross"), "small_to_big": 0} for row in actual_days]
+            profile["launch_date"] = start.isoformat()
+            source = SourceRef(order_item.path.name, matched[0].title, "无小订车型的真实大定；直接大定等于大定")
+            profile["day_source"] = source.to_dict()
+            sources.append(source)
     return list(profiles.values()), sources
 
 
@@ -2573,7 +2620,8 @@ def _target_options(
             "small_date_source_label": "车型汇总维护" if (window or {}).get("small_start_date") else "车型汇总未维护",
             "steady_date_source_label": "由首销截止次日推导" if (window or {}).get("end_date") else ("由首销开始+天数推算" if _as_date(stage.get("end_date")) else "缺失"),
             "launch_weekday": reference["launch_weekday"] if reference else _weekday(launch_date),
-            "launch_period": usable_attribute(master_record.get("发布时段")) if master_record else usable_attribute(reference["launch_period"] if reference else None),
+            "launch_period": usable_attribute(master_record.get("首销发布时段") or master_record.get("发布时段")) if master_record else usable_attribute(reference["launch_period"] if reference else None),
+            "small_period": usable_attribute(master_record.get("小订发布时段") or master_record.get("发布时段")) if master_record else "未维护",
             "days": stage["days"],
             "launch_days_maintained": bool(parsed_end or _number(maintained_days) > 0),
             "small": profile.get("total_small") or (window or {}).get("small") or (reference["small"] if reference else 0),
@@ -2973,7 +3021,8 @@ class SalesForecastModule:
             "source_latest_date": default_option.get("source_latest_date", ""),
             "launch_weekday": default_option.get("launch_weekday") or _weekday(default_option["launch_date"]),
             "launch_period": default_option.get("launch_period") or "未维护",
-            "launch_days": default_option["days"] or 35,
+            "small_period": default_option.get("small_period") or "未维护",
+            "launch_days": default_option["days"],
             "total_small": default_option["small"],
             "conversion": _number(default_reference and default_reference.get("conversion")),
             "direct_share": _number(default_reference and default_reference.get("direct_share")),

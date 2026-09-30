@@ -777,7 +777,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         tier = usable_attribute(map_record.get("产品档位"))
         energy = usable_attribute(map_record.get("能源类型"))
         release_type = usable_attribute(map_record.get("发布类型"))
-        release_period = usable_attribute(map_record.get("发布时段"))
+        release_period = usable_attribute(map_record.get("首销发布时段") or map_record.get("发布时段"))
         total_small = as_number(record.get("总小订"))
         small_to_big = as_number(record.get("小订转大定量"))
         gross = as_number(record.get("大定量"))

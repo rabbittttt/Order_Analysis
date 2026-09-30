@@ -17,6 +17,16 @@ from tools.refresh_sales_forecast_data import forecast_weekly_orders, write_rows
 
 
 class PublicForecastTablesTests(TestCase):
+    def test_separate_publication_periods_survive_public_workbook(self):
+        book = self.make_public(customize=lambda data:data['targets'][0].update(
+            small_period='下午',launch_period='晚上'))
+        record = table_records(book, MASTER_SHEET)[0]
+        self.assertEqual(record['小订发布时段'], '下午')
+        self.assertEqual(record['首销发布时段'], '晚上')
+        _, _, small, _ = read_public_forecast(book, [])
+        self.assertEqual(small[0]['launch_period'], '下午')
+        book.close()
+
     def make_public(self, target_start='2026-01-03', customize=None, as_of=date(2026, 1, 4)):
         book = Workbook()
         book.active.title = MASTER_SHEET
@@ -154,7 +164,9 @@ class PublicForecastTablesTests(TestCase):
                       '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考'}
         for sheet in book:
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
-        self.assertEqual(book[MASTER_SHEET].max_column, 28 + len(SMALL_REFERENCE_FIELDS))
+        self.assertEqual(book[MASTER_SHEET].max_column, 29 + len(SMALL_REFERENCE_FIELDS))
+        self.assertIn('小订发布时段', [c.value for c in book[MASTER_SHEET][1]])
+        self.assertIn('首销发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn("有小订", [c.value for c in book[MASTER_SHEET][1]])
         for name in (SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET):
             self.assertEqual(book[name].max_column, 5 if name == SMALL_HOURLY_SHEET else 8)

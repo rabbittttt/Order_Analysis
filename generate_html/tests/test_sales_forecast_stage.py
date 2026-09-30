@@ -34,6 +34,28 @@ from modules.sales_forecast import (
 
 
 class SalesForecastStageTests(unittest.TestCase):
+    def test_no_small_launch_reads_gross_mix_without_converting_missing_to_actual(self):
+        book = Workbook(); sheet = book.active
+        model = '问界 M5 2026款'
+        sheet.title = model+'by天'
+        sheet.append(['指标','统计类型','分类',date(2026,9,1),date(2026,9,3),date(2026,9,4)])
+        sheet.append(['大定','数量','数量',100,0,None])
+        sheet.append(['留存大定','数量','数量',90,0,None])
+        item = SimpleNamespace(path=Path('大定选配比例分析.xlsx'), workbook=book)
+        store = SimpleNamespace(find=lambda key:item if key=='大定选配比例' else None)
+        window = dict(generation=model, has_small=False, launch_date='2026-09-01', end_date='2026-09-05')
+        with patch('modules.sales_forecast._read_model_mapping',return_value={}):
+            profiles, sources = _read_actual_profiles(store, {'m5':window}, today=date(2026,9,5))
+            small, _ = _read_actual_profiles(store, {'m5':{**window,'has_small':True}}, today=date(2026,9,5))
+        rows = profiles[0]['days']
+        self.assertEqual([r['gross'] for r in rows], [100,0,0,None])
+        self.assertEqual([r['direct'] for r in rows], [100,0,0,None])
+        self.assertTrue(all(r['small_to_big']==0 for r in rows))
+        self.assertEqual(rows[-1]['date'], '2026-09-04')
+        self.assertEqual(sources[0].file, item.path.name)
+        self.assertEqual(small[0]['days'], [])
+        book.close()
+
     def test_configured_forecast_date_accepts_blank_or_iso_date(self):
         self.assertIsNone(_configured_forecast_date(""))
         self.assertEqual(_configured_forecast_date("2026-09-05"), date(2026, 9, 5))

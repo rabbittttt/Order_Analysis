@@ -4,7 +4,7 @@ import logging
 import re
 from datetime import date, datetime
 
-from core.components import kpi, section
+from core.components import kpi, section, table
 from core.excel import (
     WorkbookStore,
     cell_number,
@@ -215,7 +215,28 @@ class CancellationModule:
                 label = stage_label(child.name, subject.name) + " · " + str(record.get("小订开始日期") or "").split(" ")[0] + "—" + str(record.get("小订结束日期") or "").split(" ")[0]
                 pages[label] = next(iter(board.views["day"]["pages"].values()))
                 sources.extend(board.sources)
-        return Dashboard(self.id, subject.id, {"day": {"periods": list(pages), "default_period": next(reversed(pages)), "pages": pages}}, sources) if pages else None
+        if not pages:
+            return None
+        default_period = next(reversed(pages))
+        if len(pages) > 1:
+            phase_rows, sections = [], []
+            orders = retained = cancelled = 0
+            for label, page in pages.items():
+                values = [card["value"] for card in page["kpis"]]
+                orders += values[0]; retained += values[1]; cancelled += values[2]
+                phase_rows.append([label, *values[:3], f"{values[3]:.1f}%"])
+                sections.extend({**part, "title": f"{label.split(' · ')[0]} · {part['title']}"} for part in page["sections"])
+            combined = {"kpis": [
+                kpi("小订期累计", orders, "单", "各阶段合计", "blue"),
+                kpi("累计留存小订", retained, "单", "各阶段合计", "green"),
+                kpi("累计退订", cancelled, "单", "各阶段合计", "coral"),
+                kpi("阶段留存率", safe_rate(retained, orders) * 100, "%", "合计留存 / 合计小订", "purple")],
+                "sections": [section("matrix", "小订阶段对比",
+                    table(["阶段与时间", "小订", "留存小订", "退订", "留存率"], phase_rows),
+                    "各二级代际独立展示；总体留存率按数量加权"), *sections]}
+            pages = {"全部阶段": combined, **pages}
+        unique_sources = list({(s.file, s.sheet, s.note): s for s in sources}.values())
+        return Dashboard(self.id, subject.id, {"day": {"periods": list(pages), "default_period": default_period, "pages": pages}}, unique_sources)
 
     def _build_campaign(self, store, subject, parent=None, window=None):
         small_mix = store.find_subject_sheet("小订选配比例", parent or subject.name, "day")

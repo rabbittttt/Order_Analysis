@@ -3394,9 +3394,11 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .forecast-workspace.forecast-v2 .forecast-target-heading{flex:0 0 145px;min-width:0}
 .forecast-workspace.forecast-v2 .forecast-target-heading h3{margin:1px 0 0;font-size:16px;line-height:1.25}
 .forecast-workspace.forecast-v2 .forecast-target-heading small{font-size:10px}
-.forecast-target-settings{flex:1 1 620px;min-width:0}
+.forecast-target-settings{flex:1 1 820px;min-width:0}
 .forecast-target-settings .forecast-target-form{
-  display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:5px;
+  display:grid;
+  grid-template-columns:repeat(3,minmax(74px,1fr)) minmax(128px,1.3fr) minmax(82px,1fr) minmax(62px,.7fr) minmax(128px,1.3fr) minmax(82px,1fr) minmax(62px,.7fr);
+  gap:5px;
   min-width:0;margin:0;padding:0;
 }
 .forecast-target-settings .forecast-target-form label{min-width:0;gap:2px;font-size:10px;line-height:1.25}
@@ -3405,6 +3407,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   border-radius:7px;font-size:11px;box-sizing:border-box;
 }
 .forecast-target-settings .forecast-target-form label>small{bottom:10px;font-size:10px}
+.forecast-target-settings .forecast-target-form input[type=date]{padding-inline:5px;font-size:12px}
 .forecast-workspace.forecast-v2 .forecast-status{
   flex:0 0 auto;max-width:100%;margin-left:auto;padding:4px 7px;
   font-size:10px;line-height:1.35;
@@ -3450,7 +3453,11 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 @media(max-width:1000px){
   .forecast-target-settings .forecast-target-form{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:5px 7px}
 }
+@media(min-width:1001px) and (max-width:1180px){
+  .forecast-target-settings .forecast-target-form{grid-template-columns:repeat(5,minmax(0,1fr));gap:5px 7px}
+}
 @media(max-width:780px){
+  .forecast-target-settings .forecast-target-form{grid-template-columns:repeat(3,minmax(0,1fr))!important}
   .topbar{padding-inline:10px}
   .topbar .quick-generation-filter{width:100%;max-width:100%}
   .topbar .quick-generation-list{
@@ -3565,6 +3572,18 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .forecast-workspace.forecast-v2 .forecast-ref-weights>em{grid-column:5;grid-row:1;align-self:end;margin-bottom:7px;padding:3px}
 .module-bar .module-nav{gap:0}
 .module-bar .module-subnav{gap:0;margin-bottom:0}
+@media(min-width:641px){
+  .module-bar .module-nav{gap:2px}
+  .module-bar .module-nav button{
+    box-sizing:border-box;
+    width:calc(100% - 6px);
+    max-width:calc(100% - 6px);
+    min-width:0;
+    margin-inline:3px;
+  }
+  .module-bar .module-nav button:hover{transform:none}
+  .module-bar .module-nav button.active{box-shadow:none}
+}
 @media(max-width:720px){
   .forecast-workspace.forecast-v2 .forecast-ref-card .forecast-ref-selects:has(.forecast-ref-weights){grid-template-columns:minmax(0,1fr) 64px}
   .forecast-workspace.forecast-v2 .forecast-ref-selects:has(.forecast-ref-weights)>label:nth-child(2){grid-column:1;grid-row:2}
