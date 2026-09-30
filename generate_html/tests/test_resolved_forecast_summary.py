@@ -8,7 +8,7 @@ from openpyxl import Workbook
 
 from core.excel import WorkbookItem, _merge_matrix
 from core.forecast_summary import (DAILY_SHEET, MASTER_SHEET, SMALL_HOURLY_SHEET,
-    LAUNCH_HOURLY_SHEET, table_records, resolved_weekly_rows)
+    LAUNCH_HOURLY_SHEET, D12_SHEET, table_records, resolved_weekly_rows)
 from tests import test_public_forecast_tables
 
 
@@ -62,7 +62,7 @@ class ResolvedSummaryTests(TestCase):
                 '退订当日数量': {'历史车': [2, None]},
             }
         book = self.make(customize)
-        metric = table_records(book, 'D1_D2预测指标')[0]
+        metric = table_records(book, D12_SHEET)[0]
         self.assertEqual((metric['D1小转大'], metric['D2小转大'], metric['D1+D2小转大']), (10, 8, 18))
         self.assertEqual((metric['D1大定'], metric['D2大定']), (30, 40))
         self.assertIsNone(metric['D1+D2退订'])
@@ -92,7 +92,7 @@ class ResolvedSummaryTests(TestCase):
             raw['cancel_source'] = {'file': '小订退订分析.xlsx', 'sheet': '测试车日度退订'}
             data['reference_daily'] = {'退订当日数量': {'历史车': [1]}}
         book = self.make(customize)
-        metric = table_records(book, 'D1_D2预测指标')[0]
+        metric = table_records(book, D12_SHEET)[0]
         self.assertEqual(metric['D1退订'], 4)
         self.assertAlmostEqual(metric['D1退订率'], .04)
         # Cumulative includes the 16 cancellations already known before launch.
@@ -116,7 +116,7 @@ class ResolvedSummaryTests(TestCase):
         self.assertEqual(days[datetime(2026, 1, 5)]['退订数量'], 7)
         self.assertIn('小订退订分析.xlsx', days[datetime(2026, 1, 3)]['字段来源'])
         self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)
-        self.assertEqual(table_records(book, 'D1_D2预测指标')[0]['D1退订'], 38)
+        self.assertEqual(table_records(book, D12_SHEET)[0]['D1退订'], 38)
         book.close()
 
     def test_cancel_missing_prior_day_does_not_invent_daily_quantity(self):
@@ -126,7 +126,7 @@ class ResolvedSummaryTests(TestCase):
             raw['cancel_source'] = {'file': '小订退订分析.xlsx', 'sheet': '测试车日度退订'}
             data['reference_daily'] = {'退订当日数量': {'历史车': [32]}}
         book = self.make(customize)
-        self.assertEqual(table_records(book, 'D1_D2预测指标')[0]['D1退订'], 32)
+        self.assertEqual(table_records(book, D12_SHEET)[0]['D1退订'], 32)
         self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)
         book.close()
 

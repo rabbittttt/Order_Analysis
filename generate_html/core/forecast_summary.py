@@ -104,6 +104,8 @@ def source_text(value):
 
 SMALL_CURVE_SHEET = "小订累计完成度"
 SMALL_DAILY_SHEET = "小订当日数量"
+D12_SHEET = "首销D1D2预测指标"
+LEGACY_D12_SHEET = "D1_D2预测指标"
 LEGACY_SMALL_CURVE_SHEET = "小订参考曲线"
 SMALL_TOTAL_SHEET = "小订来源总量"
 SMALL_REFERENCE_FIELDS = ("线索数", "热度", "小订总量来源", "小订参考来源", "小订参考总量有效")
@@ -318,8 +320,10 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
     for name in ("汇总说明", "字段说明", INDEX_SHEET, "预测基准总表", "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时", SNAPSHOT_SHEET, LEGACY_SMALL_CURVE_SHEET, SMALL_TOTAL_SHEET):
         if name in book.sheetnames:
             del book[name]
+    if LEGACY_D12_SHEET in book.sheetnames:
+        del book[LEGACY_D12_SHEET]
     first = [GUIDE_SHEET, MASTER_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, DAILY_SHEET, WEEKLY_SHEET,
-             SMALL_CURVE_SHEET, SMALL_DAILY_SHEET]
+             SMALL_DAILY_SHEET, SMALL_CURVE_SHEET, D12_SHEET]
     book._sheets = [book[name] for name in first] + [s for s in book.worksheets if s.title not in first]
 
 
@@ -540,7 +544,7 @@ def refresh_reference_tables(book, data, emit, daily, today):
             c1, safe_div(c1, r.get("总小订")), c2, safe_div(c2, r.get("总小订")), c12, safe_div(c12, r.get("总小订")), safe_div(c2, c1), safe_div(c1, c12),
             *["通过" if ok else "数据不足或异常" for ok, _ in checks], "；".join(issue for _, issue in checks if issue)])
     emit(MASTER_SHEET, headers, [[r.get(k) for k in headers] for r in masters], {k for k in headers if k.endswith("率") or "占比" in k or k == "字段完整度"})
-    emit("D1_D2预测指标", D12_HEADERS, metric_rows, {k for k in D12_HEADERS if "/" in k or k.endswith("率")})
+    emit(D12_SHEET, D12_HEADERS, metric_rows, {k for k in D12_HEADERS if "/" in k or k.endswith("率")})
     day_headers = [f"D{i+1}" for i in range(max_days)]
     for title, records in derived.items():
         padded = [row+[None]*(max_days+1-len(row)) for row in records]

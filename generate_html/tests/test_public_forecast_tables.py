@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from core.excel import WorkbookItem
 from core.forecast_summary import (
     GUIDE_SHEET, MASTER_SHEET, DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET,
-    WEEKLY_SHEET, SMALL_CURVE_SHEET, SMALL_DAILY_SHEET, SMALL_REFERENCE_FIELDS,
+    WEEKLY_SHEET, SMALL_CURVE_SHEET, SMALL_DAILY_SHEET, SMALL_REFERENCE_FIELDS, D12_SHEET,
     public_forecast_tables, read_public_forecast, visible_target_names, table_records,
 )
 from tools.refresh_sales_forecast_data import forecast_weekly_orders, write_rows
@@ -129,7 +129,8 @@ class PublicForecastTablesTests(TestCase):
 
     def test_small_tables_match_launch_curve_format_and_order(self):
         book = self.make_public()
-        self.assertEqual(book.sheetnames[5:8], [WEEKLY_SHEET, SMALL_CURVE_SHEET, SMALL_DAILY_SHEET])
+        self.assertEqual(book.sheetnames[5:9], [WEEKLY_SHEET, SMALL_DAILY_SHEET, SMALL_CURVE_SHEET, D12_SHEET])
+        self.assertNotIn('D1_D2预测指标', book.sheetnames)
         self.assertNotIn('小订参考曲线', book.sheetnames)
         self.assertNotIn('小订来源总量', book.sheetnames)
         for name in (SMALL_CURVE_SHEET, SMALL_DAILY_SHEET):

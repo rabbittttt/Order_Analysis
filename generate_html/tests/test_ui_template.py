@@ -680,7 +680,7 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn("progressAvailable=!rawDataError&&historyComplete", script)
         self.assertIn("showForecastCondition", script)
         self.assertIn("其他可用方法及已知实际数据保留", script)
-        self.assertIn("hasSmall?(small>0&&baseConversion>0)", script)
+        self.assertIn("hasSmall?(small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1)", script)
         self.assertIn(".forecast-data-error", css)
 
 

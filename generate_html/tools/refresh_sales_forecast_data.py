@@ -27,7 +27,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
-from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
+from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -859,7 +859,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         ["直接大定", "累计直接大定占比", "累计直接大定/累计(小转大+直接大定)", "小转大当日数量+直接大定当日数量"],
         ["直接大定", "每日直接大定占比", "当日直接大定/(当日小转大+当日直接大定)", "小转大当日数量+直接大定当日数量"],
         ["D1/D2", "预测指标", "从历史首销逐日数量提取D1、D2；口径不一致时保留原数量但不生成结构指标", "历史首销参考数量"],
-        ["数据质量", "字段完整度/口径一致性", "字段完整度检查必要字段是否有值；口径一致性校验数量勾稽与比例范围，异常指标不参与网页评分", "预测基准总表+D1_D2预测指标"],
+        ["数据质量", "字段完整度/口径一致性", "字段完整度检查必要字段是否有值；口径一致性校验数量勾稽与比例范围，异常指标不参与网页评分", "车型基本信息+首销D1D2预测指标"],
         ["节假日", "法定节假日", "不写入本文件；网页按中国法定节假日与调休工作日自动判断", "core/china_calendar.py"],
     ]
     write_rows(workbook, "字段说明", ["模块", "内容", "读取/计算规则", "来源"], field_rows, "FieldDefinitions")
@@ -907,7 +907,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
             safe_div(c2, c1), safe_div(c1, as_number(c1)+as_number(c2)),
             "通过" if d1_valid else "异常", "通过" if d2_valid else "异常", "通过" if d12_valid else "异常", "；".join(structure_issues),
         ])
-    write_rows(workbook, "D1_D2预测指标", d12_headers, d12_rows, "D1D2Metrics", PERCENT_FIELDS)
+    write_rows(workbook, D12_SHEET, d12_headers, d12_rows, "D1D2Metrics", PERCENT_FIELDS)
 
     write_rows(workbook, "小转大当日数量", ["传播名", *day_headers], daily_small_rows, "DailySmallToBig")
     write_rows(workbook, "直接大定当日数量", ["传播名", *day_headers], daily_direct_rows, "DailyDirect")
@@ -1124,7 +1124,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         ["退订口径", "累计小订退订统一放在小订及退订逐日，不与当日大定退订混用。当前订单逐日只放大定、留存大定、小转大、直接大定和交车锁单。"],
         ["阅读顺序", "先看字段说明、车型基本信息和数据来源目录；再看小订及退订逐日、当前小订分时、当前订单逐日和当前首销分时；最后核对预测参考。"],
         ["当前结果区", "车型基本信息已合并当前车型阶段；小订及退订逐日合并三类来源，同车型同日期按《小订选配比例分析》代际by天→《小订退订分析》分时汇总→历史小订by天读取可用值。"],
-        ["预测参考区", "预测基准总表、D1_D2预测指标及首销参考曲线：保留首销预测现有参考数据和计算结果，首销预测继续读取这些既有口径。"],
+        ["预测参考区", "车型基本信息、首销D1D2预测指标及首销参考曲线：保留首销预测现有参考数据和计算结果，首销预测继续读取这些既有口径。"],
         ["历史与资料区", "车型基本信息、小订及退订逐日和预测基准总表：用于名称映射、车型属性、当前阶段及历史小订/首销基准核对。"],
         ["来源说明", "本文件只保留预测所需的汇总结果，不复制原始订单Sheet，也不重复展示可由统一逐日表表达的明细；数据来源目录记录对应汇总位置。"],
         ["取数规则", "按原有阶段优先级逐字段回退；同类文件全部纳入，普通重叠保留排序后首个非空值，同值去重。边界周仅在两个原始文件日期范围分别截止6月30日/12月31日、从次日开始且互不重叠时累加不同有效数量；单文件已跨界、范围重叠或无法确认衔接时不累加。日期范围由真实逐日数量或明确导出起止日期确定，来源目录保留该证据；占比重算或加权，不直接相加。"],
@@ -1396,10 +1396,10 @@ def reorder_summary_sheets(workbook):
     """Keep a stable, readable progression without changing any source values."""
     first = [
         GUIDE_SHEET, "车型基本信息", "小订by时", "首销by时", DAILY_SHEET, WEEKLY_SHEET,
-        "小订累计完成度", "小订当日数量",
+        "小订当日数量", "小订累计完成度", D12_SHEET,
         "汇总说明", "字段说明", "车型基本信息", "数据来源目录",
         "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时",
-        "预测基准总表", "D1_D2预测指标",
+        "预测基准总表",
         "小转大当日数量", "直接大定当日数量",
         "小转大累计完成度", "直接大定累计完成度", "累计大定完成度", "累计小订转化率", "累计退订率",
         "累计直接大定占比", "每日直接大定占比",

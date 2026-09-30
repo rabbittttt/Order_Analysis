@@ -7,6 +7,31 @@
 
   const DEFAULT_COMPLETION_FLOOR = 0.005;
 
+  // A missing ratio is not a zero observation. Normalize only usable weights.
+  function weightedObserved(rows, fallback = NaN) {
+    const usable = (rows || []).filter(row => row.value !== null && row.value !== undefined &&
+      !(typeof row.value === 'string' && !row.value.trim()) && typeof row.value !== 'boolean' && Number.isFinite(Number(row.value)) && Number(row.weight) > 0);
+    const weight = usable.reduce((sum, row) => sum + Number(row.weight), 0);
+    if (weight) return usable.reduce((sum, row) => sum + Number(row.value) * Number(row.weight), 0) / weight;
+    return fallback === null || fallback === undefined || fallback === '' ? NaN : Number(fallback);
+  }
+
+  function referenceParameter(rows, field, fallback = NaN) {
+    const labels = {conversion:'小订转化率', direct_share:'直接大定占比', lock_rate:'大定到锁单率', net_rate:'留存大定率', cancel_rate:'退订率'};
+    const used = [], excluded = [];
+    for (const row of rows || []) {
+      if (!row.item || !(Number(row.weight) > 0)) continue;
+      const raw = row.item[field], value = weightedObserved([{value:raw, weight:1}]);
+      const invalid = !Number.isFinite(value) || value < 0 || value > 1 ||
+        (field === 'direct_share' && value === 1) ||
+        String(row.item.quality_issues || '').includes(labels[field] || field);
+      (invalid ? excluded : used).push({...row, value});
+    }
+    const weight = used.reduce((sum, row) => sum + Number(row.weight), 0);
+    return {value:weightedObserved(used, excluded.length ? NaN : fallback),
+      used:used.map(row => ({...row, effectiveWeight:Number(row.weight)/weight})), excluded};
+  }
+
   // Editable windows change date alignment, never the dates of actual orders.
   function forecastWindows(configured = {}, values = {}) {
     const parse = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? Date.parse(value+'T00:00:00Z') : NaN;
@@ -424,6 +449,8 @@
   }
 
   return {
+    weightedObserved,
+    referenceParameter,
     forecastWindows,
     stretchCompletion,
     normalizedShapeSimilarity,

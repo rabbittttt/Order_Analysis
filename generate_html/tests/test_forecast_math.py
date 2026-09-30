@@ -12,6 +12,31 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(shutil.which("node"), "Node.js is required for forecast math numeric tests")
 class ForecastMathTests(unittest.TestCase):
+    def test_missing_primary_conversion_does_not_dilute_valid_auxiliary(self):
+        from modules.sales_forecast import _history_item
+        primary = _history_item({'传播名':'X6M', '小订转化率':None}, True)
+        auxiliary = _history_item({'传播名':'V9', '小订转化率':.413}, True)
+        rows = [{'item':primary, 'weight':70}, {'item':auxiliary, 'weight':30}]
+        result = self.run_node(f"m.referenceParameter({json.dumps(rows)}, 'conversion')")
+        self.assertAlmostEqual(result['value'], .413)
+        self.assertEqual(result['used'][0]['effectiveWeight'], 1)
+        self.assertEqual(result['excluded'][0]['item']['model'], 'X6M')
+
+    def test_reference_rates_skip_missing_and_invalid_without_discarding_zero(self):
+        for field in ('conversion', 'direct_share', 'lock_rate', 'net_rate', 'cancel_rate'):
+            for missing in ('null', 'undefined', "''", 'NaN', '-1', '1.1'):
+                expression = f"m.referenceParameter([{{item:{{{field}:{missing}}},weight:70}},{{item:{{{field}:.6}},weight:30}}],'{field}').value"
+                self.assertAlmostEqual(self.run_node(expression), .6)
+        self.assertAlmostEqual(self.run_node("m.referenceParameter([{item:{conversion:0},weight:70},{item:{conversion:.4},weight:30}],'conversion').value"), .12)
+        self.assertIsNone(self.run_node("m.referenceParameter([{item:{conversion:null},weight:70}],'conversion',.5).value"))
+        self.assertAlmostEqual(self.run_node("m.referenceParameter([{item:{conversion:.4,quality_issues:'小订转化率不一致'},weight:70},{item:{conversion:.6},weight:30}],'conversion').value"), .6)
+        self.assertAlmostEqual(self.run_node("m.referenceParameter([{item:{direct_share:.98},weight:70},{item:{direct_share:.96},weight:30}],'direct_share').value"), .974)
+        self.assertIsNone(self.run_node("m.referenceParameter([{item:{direct_share:1},weight:70}],'direct_share').value"))
+
+    def test_weighted_observations_distinguish_blank_and_zero(self):
+        self.assertEqual(self.run_node("m.weightedObserved([{value:null,weight:70},{value:10,weight:30}])"), 10)
+        self.assertEqual(self.run_node("m.weightedObserved([{value:0,weight:70},{value:10,weight:30}])"), 3)
+
     def test_editable_windows_derive_ends_and_keep_unmodified_explicit_dates(self):
         configured = {'launch_date':'2026-09-01', 'days':30, 'end_date':'2026-09-30',
                       'small_start_date':'2026-08-01', 'small_days':20, 'small_end_date':'2026-08-20'}

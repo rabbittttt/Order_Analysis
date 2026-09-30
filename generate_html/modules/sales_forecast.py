@@ -15,7 +15,7 @@ from core.china_calendar import calendar_payload
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation, FORECAST_SOURCE_PATH
 from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type
 from core.models import Dashboard, SourceRef, Subject
-from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, input_path, open_input, summary_scope, table_records
+from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, input_path, open_input, summary_scope, table_records
 
 
 LOGGER = logging.getLogger(__name__)
@@ -1408,16 +1408,16 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "days": int(_number(record.get("首销期天数") or record.get("首销天数"), 0)),
         "gross": int(_number(record.get(gross_key) or record.get("大定量"))),
         "net": int(_number(record.get("首销期留存大定") or record.get("首销期净大定"))),
-        "net_rate": _number(record.get("留存大定率") or record.get("净大定率")),
+        "net_rate": _optional_number(record.get("留存大定率") if record.get("留存大定率") not in (None, "") else record.get("净大定率")),
         "lock": int(_number(record.get("首销期锁单"))),
-        "lock_rate": _number(record.get("大定到锁单率") or record.get("锁单率")),
+        "lock_rate": _optional_number(record.get("大定到锁单率") if record.get("大定到锁单率") not in (None, "") else record.get("锁单率")),
         "small": int(_number(record.get("总小订"))),
         "small_to_big": int(_number(record.get("小订转大") or record.get("小订转大定量") or record.get("小订转大定"))),
-        "conversion": _number(record.get("小订转化率")),
+        "conversion": _optional_number(record.get("小订转化率")),
         "direct": int(_number(record.get(direct_key) or record.get("直接大定量"))),
-        "direct_share": _number(record.get("直接大定占比")),
+        "direct_share": _optional_number(record.get("直接大定占比")),
         "cancel": int(_number(record.get(cancel_key) or record.get("小订后退定"))),
-        "cancel_rate": _number(record.get("退订率") or record.get("小订后退定占比")),
+        "cancel_rate": _optional_number(record.get("退订率") if record.get("退订率") not in (None, "") else record.get("小订后退定占比")),
         "d1_small": int(_number(record.get("D1小转大") or record.get("首日小转大"))),
         "d1_small_completion": _number(record.get("D1小转大/总小转大")),
         "d2_small": int(_number(record.get("D2小转大"))),
@@ -1498,7 +1498,7 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
             "daily_small": _progress_rows(workbook, "小转大当日数量"),
             "daily_direct": _progress_rows(workbook, "直接大定当日数量"),
         }
-        d12_records = _sheet_records(workbook, "D1_D2预测指标") if processed else {}
+        d12_records = _sheet_records(workbook, D12_SHEET if D12_SHEET in workbook.sheetnames else LEGACY_D12_SHEET) if processed else {}
         sheet = workbook[base_sheet]
         headers = [str(cell.value or "").strip() for cell in sheet[1]]
         result = []
@@ -3024,9 +3024,9 @@ class SalesForecastModule:
             "small_period": default_option.get("small_period") or "未维护",
             "launch_days": default_option["days"],
             "total_small": default_option["small"],
-            "conversion": _number(default_reference and default_reference.get("conversion")),
-            "direct_share": _number(default_reference and default_reference.get("direct_share")),
-            "lock_rate": _number(default_reference and default_reference.get("lock_rate")),
+            "conversion": _optional_number(default_reference and default_reference.get("conversion")),
+            "direct_share": _optional_number(default_reference and default_reference.get("direct_share")),
+            "lock_rate": _optional_number(default_reference and default_reference.get("lock_rate")),
         }
         default_profile = next((item for item in profiles if _same_model(item["model"], target["name"])), None)
         workspace_source = SourceRef(
