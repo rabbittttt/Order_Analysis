@@ -715,6 +715,23 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn('.forecast-common-controls{grid-column:1/-1', css)
         self.assertLess(script.index('forecast-progress-controls'), script.index('forecast-d1-card'))
 
+    def test_forecast_short_panels_keep_natural_height_and_single_refs_use_full_width(self):
+        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
+        self.assertIn(".forecast-lifecycle-grid{display:grid;grid-template-columns:minmax(300px,.72fr) minmax(0,1.55fr);gap:12px;align-items:start}", css)
+        self.assertIn(".forecast-lifecycle-evidence{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.7fr);gap:12px;align-items:start}", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start;min-width:0;min-height:0}", css)
+        self.assertIn(".forecast-result-main{display:grid;grid-template-columns:minmax(0,1fr);", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid .forecast-assumptions{min-width:0;", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-input-grid label{min-width:0;overflow-wrap:anywhere;", css)
+        self.assertIn("@media(min-width:1001px){.forecast-lifecycle-workspace .forecast-lifecycle-grid{grid-template-columns:minmax(0,1fr)}", css)
+        self.assertIn(".forecast-lifecycle-workspace .forecast-lifecycle-controls{display:grid;grid-template-columns:minmax(220px,.55fr) minmax(0,1.45fr);align-items:center", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-progress-controls .forecast-input-grid{grid-template-columns:repeat(2,minmax(0,1fr))}", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-parameter-controls .forecast-input-grid{grid-template-columns:repeat(3,minmax(0,1fr))}", css)
+        self.assertIn('.forecast-v2 .forecast-pane[data-forecast-pane="score"].active{min-width:0;max-width:100%;box-sizing:border-box;overflow-x:hidden;overflow-y:auto}', css)
+        self.assertIn(".forecast-v2 .forecast-score-table{min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden}", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-ref-grid>.forecast-ref-card:only-child{grid-column:1/-1}", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-small-order .forecast-ref-grid>.forecast-ref-card:nth-child(3):last-child{grid-column:1/-1}", css)
+
     def test_history_tables_follow_the_top_grain_without_local_selector(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("const current=options[state.grain]?state.grain", script)
