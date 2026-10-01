@@ -202,6 +202,7 @@
 
   const boardCache={};
   async function getDashboard(subjectId=state.subject,moduleId=state.module){
+    if(moduleId==="sales_forecast"&&!moduleAvailable(DATA.subjects.find(item=>item.id===subjectId),moduleId))return null;
     const ownerId=moduleId==="sales_forecast"?(DATA.subjects.find(item=>item.modules.includes("sales_forecast"))?.id||subjectId):subjectId;
     const key=`${ownerId}|${moduleId}`;
     if(!(key in boardCache)){
@@ -241,7 +242,7 @@
   const forecastModelKey=(value,aliases=forecastModelAliases())=>{const raw=rawForecastModelKey(value);return rawForecastModelKey(aliases[raw]||value)};
   const sameForecastModel=(leftValue,rightValue,aliases=forecastModelAliases())=>{const left=forecastModelKey(leftValue,aliases),right=forecastModelKey(rightValue,aliases);return !!left&&!!right&&left===right};
   const moduleAvailable=(item,moduleId)=>moduleId==="sales_forecast"
-    ?item.modules.includes(moduleId)||(item.type==="generation"&&DATA.subjects.some(candidate=>candidate.modules.includes("sales_forecast")))
+    ?item?.type==="generation"&&(item.modules.includes(moduleId)||DATA.subjects.some(candidate=>candidate.modules.includes("sales_forecast")))
     :item.modules.includes(moduleId);
   function forecastDataFromBoard(board){const view=Object.values(board?.views||{})[0],page=Object.values(view?.pages||{})[0];return page?.workspace?.data}
   function linkedForecastData(data){
@@ -329,7 +330,7 @@
   }
   async function ensureState(){
     let item=subject();
-    if(!moduleAvailable(item,state.module))state.module=item.modules.find(id=>id!=="raw")||"raw";
+    if(!moduleAvailable(item,state.module))state.module=item.modules.find(id=>id!=="raw"&&moduleAvailable(item,id))||"raw";
     if(state.module==="raw")return;
     const board=await getDashboard();
     const grains=Object.keys(board?.views||{});

@@ -342,7 +342,7 @@ class DashboardTemplateTests(unittest.TestCase):
     def test_sales_forecast_uses_and_syncs_the_top_subject_selector(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn('moduleId==="sales_forecast"', script)
-        self.assertIn('item.modules.includes(moduleId)||(item.type==="generation"&&DATA.subjects.some', script)
+        self.assertIn('item?.type==="generation"&&(item.modules.includes(moduleId)||DATA.subjects.some', script)
         self.assertNotIn('state.module==="sales_forecast"&&item.type!=="generation"', script)
         self.assertIn('const workspace=state.module==="sales_forecast"?{...page.workspace,data:linkedForecastData(page.workspace.data)}', script)
         self.assertNotIn('data-forecast-target="name"', script)
@@ -350,6 +350,37 @@ class DashboardTemplateTests(unittest.TestCase):
         self.assertIn('$("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")}', script)
         self.assertNotIn('[["generation","预测代际"]]', script)
         self.assertIn('[["group","集团"],["brand","品牌"],["generation","代际"]]', script)
+
+    def test_forecast_shared_payload_is_not_a_group_or_brand_forecast(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
+        availability = script[script.index('  const moduleAvailable='):script.index('  function forecastDataFromBoard')]
+        loader = script[script.index('  const boardCache={}'):script.index('  function subject()')]
+        navigation = script[script.index('  async function ensureState()'):script.index('  function renderSubjectSelect()')]
+        setup = """
+        const group={id:'group',type:'group',modules:['sales_forecast','overview','raw']},
+            brand={id:'brand',type:'brand',modules:['sales_forecast','raw']},
+            generation={id:'new-car',type:'generation',modules:['raw']};
+        const DATA={subjects:[group,brand,generation],dashboard_blocks:{'group|sales_forecast':'shared'}},
+            state={subject:'group',module:'sales_forecast',grain:'week'};
+        const decompressJson=async value=>({payload:value}),unpackDashboard=value=>value,
+            subject=()=>DATA.subjects.find(item=>item.id===state.subject),syncForecastStageToTarget=async()=>{};
+        """
+        checks = """
+        (async()=>{
+            if(moduleAvailable(group,'sales_forecast')||moduleAvailable(brand,'sales_forecast')||moduleAvailable(undefined,'sales_forecast'))throw Error('invalid forecast owner');
+            if(!moduleAvailable(generation,'sales_forecast'))throw Error('generation lost shared payload');
+            if(await getDashboard('group','sales_forecast')!==null)throw Error('group loaded a vehicle forecast');
+            if((await getDashboard('new-car','sales_forecast')).payload!=='shared')throw Error('shared payload lost');
+            await ensureState();if(state.module!=='overview')throw Error('group fallback invalid');
+            state.subject='brand';state.module='sales_forecast';await ensureState();
+            if(state.module!=='raw')throw Error('unavailable forecast selected as fallback');
+        })().catch(error=>{console.error(error);process.exitCode=1});
+        """
+        subprocess.run([node, '-e', setup + availability + loader + navigation + checks],
+                       text=True, encoding='utf-8', capture_output=True, check=True)
 
     def test_sales_forecast_vehicle_and_launch_settings_are_always_visible(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
