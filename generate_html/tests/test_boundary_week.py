@@ -208,7 +208,7 @@ class BoundaryWeekTests(unittest.TestCase):
             _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
         self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 1853)
         self.assertEqual(sheet._boundary_week_merges, [])
-        info.assert_not_called()
+        self.assertFalse(any("边界周累加" in str(call) for call in info.call_args_list))
 
     def test_unknown_overlapping_gap_and_unrelated_ranges_do_not_add(self):
         cases = [None,
@@ -369,7 +369,7 @@ class BoundaryWeekTests(unittest.TestCase):
         with patch("core.excel.LOGGER.warning"), patch("core.excel.LOGGER.info") as info:
             _, sheet = store.find_subject_sheet("锁单选配比例", MODEL, "week")
         self.assertEqual(parse_metric_sheet(sheet)["26WK27"]["metrics"]["交车锁单"], 1)
-        info.assert_not_called()
+        self.assertFalse(any("边界周累加" in str(call) for call in info.call_args_list))
 
     def test_summary_preserves_original_file_ranges_even_without_importing_daily_sheets(self):
         book = Workbook()

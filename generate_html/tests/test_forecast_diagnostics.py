@@ -9,7 +9,6 @@ from openpyxl import Workbook
 
 from core.excel import WorkbookItem, WorkbookStore, _merge_records
 from core.forecast_summary import MASTER_SHEET, DAILY_SHEET
-from core.validation import forecast_diagnostics, flush_forecast_diagnostics
 from modules.sales_forecast import _complete_steady_weeks, _stage_window, _read_steady_history
 from tools.refresh_sales_forecast_data import audit_final_forecast, curve_for
 
@@ -18,38 +17,35 @@ MODEL = '问界 M9 2026款'
 
 
 class ForecastDiagnosticsTests(TestCase):
-    def test_batch_bounds_examples_deduplicates_and_preserves_errors(self):
-        logger = logging.getLogger('modules.sales_forecast')
-        with self.assertLogs(level='DEBUG') as logs:
-            with forecast_diagnostics():
-                for _ in range(2):
-                    for i in range(9):
-                        logger.warning('[销量预测条件不足] 预测对象=车%s | 原因=首销日期缺失', i)
-                logger.error('读取失败，不允许降级')
-                flush_forecast_diagnostics()
-        warnings = [r for r in logs.records if r.levelno == logging.WARNING]
-        self.assertEqual(len(warnings), 1)
-        self.assertIn('共9项', warnings[0].getMessage())
-        self.assertNotIn('车8', warnings[0].getMessage())
-        self.assertEqual(sum(r.levelno == logging.DEBUG for r in logs.records), 9)
-        self.assertEqual(sum(r.levelno == logging.ERROR for r in logs.records), 1)
-
-    def test_nested_batch_and_failure_restore_filters(self):
-        logger = logging.getLogger('sales_forecast_refresh')
-        filters = list(logger.filters)
-        with self.assertLogs(level='WARNING') as logs:
-            with self.assertRaises(ValueError):
-                with forecast_diagnostics():
-                    with forecast_diagnostics():
-                        logger.warning('必须保留的告警')
-                    raise ValueError('test')
-        self.assertEqual(logger.filters, filters)
-        self.assertEqual(len(logs.records), 1)
+    def test_all_real_problems_and_repeated_occurrences_are_warning(self):
+        book, _ = self.final_book(None, None, None, has_small=False)
+        sheet = book[MASTER_SHEET]
+        values = [cell.value for cell in sheet[2]]
+        sheet.delete_rows(2)
+        for index in range(9):
+            sheet.append([f'测试车{index}', *values[1:]])
+        with self.assertLogs('sales_forecast_refresh', level='WARNING') as logs:
+            first = audit_final_forecast(book, date(2026, 9, 3))
+            second = audit_final_forecast(book, date(2026, 9, 3))
+        self.assertEqual(len(first), 9)
+        self.assertEqual(first, second)
+        self.assertEqual([r.getMessage() for r in logs.records], first + second)
+        self.assertTrue(all(r.levelno == logging.WARNING for r in logs.records))
+        self.assertIn('测试车8', logs.records[8].getMessage())
+        book.close()
 
     def test_unmatched_preliminary_curve_is_debug_not_final_failure(self):
         with self.assertLogs('sales_forecast_refresh', level='DEBUG') as logs:
             self.assertEqual(curve_for('未来车', {}, {}, {}, '退订'), [])
         self.assertEqual([r.levelno for r in logs.records], [logging.DEBUG])
+
+    def test_all_alias_curve_conflicts_print_warning_and_keep_values(self):
+        curves = {'标准车': [35]*9, '别名': [2]*9}
+        with self.assertLogs('sales_forecast_refresh', level='WARNING') as logs:
+            result = curve_for('标准车', curves, {}, {'标准车': {'标准车', '别名'}}, '小转大')
+        self.assertEqual(result, [35]*9)
+        self.assertEqual(len(logs.records), 9)
+        self.assertIn('D9 | 标准车=35；别名=2', logs.output[-1])
 
     def cancellation_sheet(self, book, title, value):
         sheet = book.create_sheet(title)
@@ -93,11 +89,28 @@ class ForecastDiagnosticsTests(TestCase):
             self.cancellation_sheet(book, 'V800_日度退订', count)
         store = WorkbookStore(Path('.'))
         store.items = [WorkbookItem(Path(f'小订退订分析{i}.xlsx'), b) for i, b in enumerate(books)]
-        with self.assertLogs('core.excel', level='WARNING') as logs:
+        with self.assertLogs('core.excel', level='INFO') as logs:
             item = store.find('小订退订分析')
         self.assertEqual(item.workbook.worksheets[0].cell(3, 2).value, 35)
-        self.assertIn('跨文件冲突1项', logs.output[0])
+        self.assertIn('跨文件冲突1项', '\n'.join(logs.output))
         self.assertIn('Sheet=V800_日度退订 / 单元格=B3', logs.output[0])
+        store.close()
+
+    def test_every_conflicting_cell_is_warning_not_three_examples(self):
+        books = [Workbook(), Workbook()]
+        for book in books:
+            book.remove(book.active)
+        sheets = [self.cancellation_sheet(b, 'V800_日度退订', value) for b, value in zip(books, (35, 2))]
+        for index in range(1, 9):
+            for sheet, value in zip(sheets, (35, 2)):
+                sheet.append([datetime(2026, 7, 27)+timedelta(days=index), value])
+        store = WorkbookStore(Path('.'))
+        store.items = [WorkbookItem(Path(f'小订退订分析{i}.xlsx'), b) for i, b in enumerate(books)]
+        with self.assertLogs('core.excel', level='WARNING') as logs:
+            merged = store.find('小订退订分析').workbook.worksheets[0]
+        self.assertEqual(len(logs.records), 9)
+        self.assertIn('单元格=B11', logs.output[-1])
+        self.assertEqual(merged.cell(11, 2).value, 35)
         store.close()
 
     def test_stage_end_is_shared_and_input_record_is_not_modified(self):

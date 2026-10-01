@@ -661,6 +661,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                         else:
                             conflict_count += 1
                             conflict_kinds[kind] += 1
+                            _warn_conflict(example, kind)
                             if len(conflicts) < 3:
                                 conflicts.append(example)
     # Counts are additive; percentages are not. Rebuild dimension shares from
@@ -701,6 +702,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
         if key not in resolved_ratios:
             conflict_count += 1
             conflict_kinds[kind] += 1
+            _warn_conflict(example, kind)
             if len(conflicts) < 3:
                 conflicts.append(example)
     book = Workbook()
@@ -739,6 +741,11 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     target._merge_conflict_kinds = conflict_kinds
     target._boundary_week_merges = list(boundary_reports.values())
     return target
+
+
+def _warn_conflict(example, kind):
+    label = "多文件数值冲突" if kind == "跨文件冲突" else "同文件重复键冲突"
+    LOGGER.warning("[%s] %s | 处理=保留原文件顺序中首个非空值，不累加", label, example)
 
 
 def _conflict_location(previous, current, key):
@@ -825,6 +832,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
                         conflict_count += 1
                         kind, example = _conflict_location(previous, current, f"{'/'.join(row_key)} @ {'/'.join(field)}")
                         conflict_kinds[kind] += 1
+                        _warn_conflict(example, kind)
                         if len(conflicts) < 3:
                             conflicts.append(example)
     target = Workbook().active
@@ -1095,7 +1103,7 @@ class WorkbookStore:
         _log_boundary_weeks(f"类别={keyword}", boundary_reports)
         if conflict_count:
             label = "多文件数值冲突" if conflict_kinds["跨文件冲突"] else "同文件重复键冲突"
-            LOGGER.warning("[%s] 类别=%s | %d个Sheet共%d项（同文件重复键%d项，跨文件冲突%d项） | 保留原文件顺序中首个非空值，不累加；全部定位使用 --debug 查看 | 示例=%s",
+            LOGGER.info("[%s汇总] 类别=%s | %d个Sheet共%d项（同文件重复键%d项，跨文件冲突%d项） | 每项冲突已逐条打印WARNING | 示例=%s",
                            label, keyword, conflict_sheets, conflict_count, conflict_kinds["同文件重复键"],
                            conflict_kinds["跨文件冲突"], "；".join(conflict_examples))
         return result

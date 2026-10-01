@@ -351,7 +351,10 @@ class PublicForecastTablesTests(TestCase):
     def test_cannot_split_whole_week_without_daily_evidence(self):
         with self.assertLogs('sales_forecast_refresh', level='WARNING') as logs:
             rows = self.weekly_fixture(complete_days=False)
-        self.assertEqual(len(logs.output), 1)
+        self.assertEqual(len(logs.output), 6)
+        for stage in ('首销', '平销'):
+            for field in ('大定', '留存大定', '交车锁单'):
+                self.assertTrue(any(f'阶段={stage} | 字段={field} |' in message for message in logs.output))
         self.assertTrue(all(r[5:8] == [None, None, None] for r in rows))
 
     def test_whole_steady_week_prefers_source_week_over_daily_sum(self):

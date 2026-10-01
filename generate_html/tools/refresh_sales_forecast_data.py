@@ -29,7 +29,6 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
-from core.validation import forecast_diagnostics
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
@@ -622,14 +621,15 @@ def curve_for(
     if len(matched) > 1:
         # Only explicitly maintained aliases reach this branch. Preserve each
         # known day, keeping source order for conflicting nonblank values.
-        result, conflicts = [], []
+        result = []
         for index in range(max(len(curve) for _, curve in matched)):
             values = [curve[index] for _, curve in matched if index < len(curve) and curve[index] not in (None, "")]
             result.append(values[0] if values else None)
             if values and any(value != values[0] for value in values[1:]):
-                conflicts.append(f"D{index + 1}")
-        if conflicts:
-            LOGGER.warning("%s别名曲线冲突：%s | 共%d天，示例=%s；逐日保留首个非空值", metric_label, model, len(conflicts), "、".join(conflicts[:3]))
+                detail = "；".join(f"{name}={curve[index]}" for name, curve in matched
+                                  if index < len(curve) and curve[index] not in (None, ""))
+                LOGGER.warning("%s别名曲线冲突：%s | D%d | %s | 处理=逐日保留首个非空值",
+                               metric_label, model, index + 1, detail)
         return result
     else:
         LOGGER.debug("[初读整理表] %s曲线未匹配：%s；最终缺项在多来源汇总完成后校验", metric_label, model)
@@ -1246,14 +1246,16 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
                 else:
                     value, source = None, "by天不完整，未补估"
                     if stage_split and (model, period, field) in weekly:
-                        missing_split.append(f"{model}/{period}/{stage}")
+                        missing_split.append((model, period, stage, field))
                 values.append(value)
                 sources.append(source)
             if any(value is not None for value in values) or any((model, period, field) in weekly for field in ("gross", "net", "lock")):
                 rows.append([model, period, stage, datetime.combine(start, datetime.min.time()), datetime.combine(end, datetime.min.time()), *values, *sources, False])
     if missing_split:
-        examples = list(dict.fromkeys(missing_split))
-        LOGGER.warning("[周阶段切分] %d个阶段周缺少拆分所需完整日数据，相关字段留空；示例=%s", len(examples), "、".join(examples[:5]))
+        for model, period, stage, field in missing_split:
+            label = {"gross": "大定", "net": "留存大定", "lock": "交车锁单"}.get(field, field)
+            LOGGER.warning("[周阶段切分] 代际=%s | 周期=%s | 阶段=%s | 字段=%s | 原因=缺少拆分所需完整日数据 | 处理=相关字段留空，不补估",
+                           model, period, stage, label)
     return rows
 
 
@@ -1301,7 +1303,7 @@ def audit_final_forecast(workbook, today, data=None):
                     if not valid(value):
                         missing.append(index+1)
                 if missing:
-                    labels = '、'.join(f'D{i}' for i in missing[:5])
+                    labels = '、'.join(f'D{i}' for i in missing)
                     messages.append(f"[销量预测条件不足] 预测对象={model} | 阶段=小订 | 原因=已结束日小订数量缺失或无效：{labels}（共{len(missing)}天） | 影响=小订预测条件受限，其他阶段独立检查；请核对原始来源")
                 elif small_end < today and values and valid(master.get("总小订")) and abs(sum(values)-master["总小订"]) > 1:
                     messages.append(f"[销量预测口径差异] 代际={model} | 范围={small_start}~{small_end} | 最终总小订={master['总小订']}，多来源逐日合计={sum(values)} | 处理=保留既有优先级，请核对原始来源的统计口径")
@@ -1309,7 +1311,6 @@ def audit_final_forecast(workbook, today, data=None):
             missing = [field for field in ("首销期留存大定", "首销期锁单") if not valid(master.get(field))]
             if missing:
                 messages.append(f"[预测历史参考缺项] 代际={model} | 阶段=首销已结束 | 缺失字段={'、'.join(missing)} | 影响=对应历史留存或锁单率参考不可用，不停止其他有效预测")
-    messages = list(dict.fromkeys(messages))
     for message in messages:
         LOGGER.warning("%s", message)
     return messages
@@ -1565,15 +1566,13 @@ def main() -> int:
         ensure_mapping(args.mapping, args.source)
         if not args.force and summary_is_current(args.source, args.output, args.mapping, args.orders, args.as_of_date):
             LOGGER.info("销量数据汇总已是最新，跳过刷新：%s", args.output)
-            with forecast_diagnostics():
-                book = load_workbook(args.output, read_only=True, data_only=True)
-                try:
-                    audit_final_forecast(book, date.fromisoformat(args.as_of_date) if args.as_of_date else date.today())
-                finally:
-                    book.close()
+            book = load_workbook(args.output, read_only=True, data_only=True)
+            try:
+                audit_final_forecast(book, date.fromisoformat(args.as_of_date) if args.as_of_date else date.today())
+            finally:
+                book.close()
             return 0
-        with forecast_diagnostics():
-            build_secondary(args.source, args.output, args.mapping, args.orders, args.as_of_date)
+        build_secondary(args.source, args.output, args.mapping, args.orders, args.as_of_date)
         return 0
     except Exception:
         LOGGER.exception("刷新失败")

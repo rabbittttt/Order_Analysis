@@ -72,7 +72,7 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(len(dashboard.sources), 2)
         self.assertEqual(len(dashboard.views["source"]["source_files"]), 2)
 
-    def test_many_conflicting_sheets_have_one_keyword_summary(self):
+    def test_many_conflicting_sheets_each_print_warning(self):
         first = self.metric(["2026-01-01"], [["大定", "数量", "数量", 10]])
         second = self.metric(["2026-01-01"], [["大定", "数量", "数量", 20]])
         first.create_sheet("问界 M6 2026款by天")
@@ -83,8 +83,9 @@ class MultiSourceTests(unittest.TestCase):
         store = self.store([first, second])
         with self.assertLogs("core.excel", level="WARNING") as logs:
             store.find("大定选配比例")
-        self.assertEqual(len(logs.output), 1)
-        self.assertIn("2个Sheet共2项", logs.output[0])
+        self.assertEqual(len(logs.output), 2)
+        self.assertIn(MODEL, logs.output[0])
+        self.assertIn("问界 M6 2026款", logs.output[1])
 
     def test_subject_in_second_file_keeps_real_file_link(self):
         first = self.metric(["2021-01-01"], [["大定", "数量", "数量", 10]], "问界 M5 2025款by天")

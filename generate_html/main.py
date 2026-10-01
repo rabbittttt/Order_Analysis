@@ -22,7 +22,7 @@ from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook
 from core.forecast_summary import SUMMARY_NAME, visible_target_names
 from core.renderer import b64gzip, render_dashboard
-from core.validation import validate_manifest, forecast_diagnostics, flush_forecast_diagnostics
+from core.validation import validate_manifest
 from modules.registry import MODULES
 
 
@@ -344,7 +344,6 @@ def build(
         LOGGER.info("生成HTML体积: %.1fMB", output_size / 1024 / 1024)
         if output_size > 35 * 1024 * 1024:
             LOGGER.warning("[性能校验] 单HTML超过35MB，建议优先拆分大底表或图表资源")
-        flush_forecast_diagnostics()
         warnings = list(dict.fromkeys([
             *BUILD_DIAGNOSTICS,
             *(f"WARNING | {message}" for message in runtime_warnings if message not in "\n".join(BUILD_DIAGNOSTICS)),
@@ -371,7 +370,7 @@ def build(
             legacy_warning_file.unlink()
         manifest_seconds = perf_counter() - stage_started
         if warnings:
-            LOGGER.info("诊断完成：发现 %d 条汇总或独立提示；预测诊断全部明细使用 --debug 查看", len(warnings))
+            LOGGER.info("诊断完成：发现 %d 条不同问题，告警已按实际发生逐条打印到本次运行日志（包含重复告警）", len(warnings))
         else:
             LOGGER.info("校验完成：没有发现警告")
         module_summary = "；".join(
@@ -439,10 +438,9 @@ def main() -> int:
     args = parse_args()
     log_file = configure_runtime(args.output.parent, args.debug)
     try:
-        with forecast_diagnostics():
-            manifest, warnings = build(
-                args.input, args.output, disable_sales_forecast=args.disable_sales_forecast
-            )
+        manifest, warnings = build(
+            args.input, args.output, disable_sales_forecast=args.disable_sales_forecast
+        )
     except Exception:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)
