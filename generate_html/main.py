@@ -22,7 +22,7 @@ from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook
 from core.forecast_summary import SUMMARY_NAME, visible_target_names
 from core.renderer import b64gzip, render_dashboard
-from core.validation import validate_manifest
+from core.validation import validate_manifest, forecast_diagnostics, flush_forecast_diagnostics
 from modules.registry import MODULES
 
 
@@ -55,6 +55,8 @@ def refresh_sales_forecast_data(config: dict[str, Any], input_dir: Path | None =
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONUTF8"] = "1"
     command = [sys.executable, str(script)]
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        command.append("--debug")
     if input_dir is not None:
         command.extend(["--orders", str(input_dir.resolve())])
         command.extend(["--output", str((input_dir / SUMMARY_NAME).resolve())])
@@ -75,6 +77,8 @@ def refresh_sales_forecast_data(config: dict[str, Any], input_dir: Path | None =
             LOGGER.error("[销量预测刷新] %s", line)
         elif line.startswith("[WARNING]"):
             LOGGER.warning("[销量预测刷新] %s", line)
+        elif line.startswith("[DEBUG]"):
+            LOGGER.debug("[销量预测刷新] %s", line)
         else:
             LOGGER.info("[销量预测刷新] %s", line)
     for line in result.stderr.splitlines():
@@ -340,6 +344,7 @@ def build(
         LOGGER.info("生成HTML体积: %.1fMB", output_size / 1024 / 1024)
         if output_size > 35 * 1024 * 1024:
             LOGGER.warning("[性能校验] 单HTML超过35MB，建议优先拆分大底表或图表资源")
+        flush_forecast_diagnostics()
         warnings = list(dict.fromkeys([
             *BUILD_DIAGNOSTICS,
             *(f"WARNING | {message}" for message in runtime_warnings if message not in "\n".join(BUILD_DIAGNOSTICS)),
@@ -366,7 +371,7 @@ def build(
             legacy_warning_file.unlink()
         manifest_seconds = perf_counter() - stage_started
         if warnings:
-            LOGGER.info("诊断完成：发现 %d 条映射、数据或生成异常，已逐条写入本次运行日志", len(warnings))
+            LOGGER.info("诊断完成：发现 %d 条汇总或独立提示；预测诊断全部明细使用 --debug 查看", len(warnings))
         else:
             LOGGER.info("校验完成：没有发现警告")
         module_summary = "；".join(
@@ -434,9 +439,10 @@ def main() -> int:
     args = parse_args()
     log_file = configure_runtime(args.output.parent, args.debug)
     try:
-        manifest, warnings = build(
-            args.input, args.output, disable_sales_forecast=args.disable_sales_forecast
-        )
+        with forecast_diagnostics():
+            manifest, warnings = build(
+                args.input, args.output, disable_sales_forecast=args.disable_sales_forecast
+            )
     except Exception:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)

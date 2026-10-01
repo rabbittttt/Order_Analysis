@@ -29,6 +29,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
+from core.validation import forecast_diagnostics
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
@@ -631,7 +632,7 @@ def curve_for(
             LOGGER.warning("%s别名曲线冲突：%s | 共%d天，示例=%s；逐日保留首个非空值", metric_label, model, len(conflicts), "、".join(conflicts[:3]))
         return result
     else:
-        LOGGER.warning("%s曲线未匹配：%s", metric_label, model)
+        LOGGER.debug("[初读整理表] %s曲线未匹配：%s；最终缺项在多来源汇总完成后校验", metric_label, model)
     return []
 
 
@@ -796,7 +797,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         calculated_lock_rate = safe_div(lock, gross)
         lock_rate = calculated_lock_rate or 0
         if not any((net, lock)):
-            LOGGER.warning("历史经营结果为空：%s；请在车型汇总对应表头下维护留存大定和锁单", model)
+            LOGGER.debug("[初读整理表] 历史经营结果为空：%s；尚未合并其他订单来源，不要求提前填写终局", model)
         field_completeness, consistency, quality_issues = summary_quality(
             total_small, small_to_big, conversion, gross, direct, direct_share, cancel, cancel_rate,
             net, net_rate, lock, lock_rate,
@@ -1256,6 +1257,64 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
     return rows
 
 
+def audit_final_forecast(workbook, today, data=None):
+    """Diagnose the selected visible values, not gaps in one preliminary source."""
+    from core.forecast_summary import MASTER_SHEET, ORDER_FIELDS, iso_day
+    from core.model_identity import has_reservation
+    from modules.sales_forecast import _profile_hard_errors, _forecast_stage, _as_date
+    masters = table_records(workbook, MASTER_SHEET)
+    lookup = {(row.get("订单分析代际名"), iso_day(row.get("日期"))): row
+              for row in table_records(workbook, DAILY_SHEET) if row.get("订单分析代际名") and row.get("日期")}
+    by_model = {}
+    for (name, day), row in lookup.items():
+        by_model.setdefault(name, []).append((day, row))
+    for rows in by_model.values():
+        rows.sort(key=lambda pair: pair[0])
+    maintained = {target["name"]: target for target in (data or {}).get("targets", [])}
+    messages = []
+    valid = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+    for master in masters:
+        model = master.get("订单分析代际名") or master.get("历史传播名")
+        if not model:
+            continue
+        start, end = _as_date(master.get("首销开始")), _as_date(master.get("首销结束"))
+        stage = _forecast_stage(start, end, master.get("首销天数"), today)
+        target = {**maintained.get(model, {}), "name": model, "stage": stage["key"],
+                  "launch_date": stage["launch_date"], "end_date": stage["end_date"], "days": stage["days"],
+                  "has_small": has_reservation(master),
+                  "small_start_date": iso_day(master.get("小订开始")), "small_end_date": iso_day(master.get("小订结束"))}
+        days = [{"date": day, **{field: row.get(column) for field, column in ORDER_FIELDS.items()}}
+                for day, row in by_model.get(model, [])
+                if start and day >= start.isoformat() and (not end or day <= end.isoformat())]
+        errors = _profile_hard_errors(target, {"model": model, "days": days}, today)
+        if errors:
+            messages.append(f"[销量预测条件不足] 预测对象={model} | 阶段={stage['label']} | 原因={'；'.join(errors)} | 影响=首销预测条件受限，保留已知实际；请核对原始来源")
+        if target["has_small"]:
+            small_start, small_end = _as_date(master.get("小订开始")), _as_date(master.get("小订结束"))
+            if small_start and small_end and small_end >= small_start and small_start < today:
+                finish = min(small_end, today-timedelta(days=1))
+                values, missing = [], []
+                for index in range((finish-small_start).days+1):
+                    day = (small_start+timedelta(days=index)).isoformat()
+                    value = lookup.get((model, day), {}).get("小订数量")
+                    values.append(value)
+                    if not valid(value):
+                        missing.append(index+1)
+                if missing:
+                    labels = '、'.join(f'D{i}' for i in missing[:5])
+                    messages.append(f"[销量预测条件不足] 预测对象={model} | 阶段=小订 | 原因=已结束日小订数量缺失或无效：{labels}（共{len(missing)}天） | 影响=小订预测条件受限，其他阶段独立检查；请核对原始来源")
+                elif small_end < today and values and valid(master.get("总小订")) and abs(sum(values)-master["总小订"]) > 1:
+                    messages.append(f"[销量预测口径差异] 代际={model} | 范围={small_start}~{small_end} | 最终总小订={master['总小订']}，多来源逐日合计={sum(values)} | 处理=保留既有优先级，请核对原始来源的统计口径")
+        if end and end < today:
+            missing = [field for field in ("首销期留存大定", "首销期锁单") if not valid(master.get(field))]
+            if missing:
+                messages.append(f"[预测历史参考缺项] 代际={model} | 阶段=首销已结束 | 缺失字段={'、'.join(missing)} | 影响=对应历史留存或锁单率参考不可用，不停止其他有效预测")
+    messages = list(dict.fromkeys(messages))
+    for message in messages:
+        LOGGER.warning("%s", message)
+    return messages
+
+
 def append_forecast_views(path, as_of_date, workbook=None):
     """Resolve sources once, then write only the visible forecast domain tables."""
     from modules.sales_forecast import SalesForecastModule
@@ -1289,6 +1348,7 @@ def append_forecast_views(path, as_of_date, workbook=None):
     compact_source_sheets(book)
     public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today(), getattr(module, "summary_raw_profiles", None))
     normalize_public_names(book, data, emit)
+    audit_final_forecast(book, module.as_of_date or date.today(), data)
     sheet_count = len(book.sheetnames)
     if owns_workbook:
         book.save(path)
@@ -1476,6 +1536,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="二次处理输出文件")
     parser.add_argument("--mapping", type=Path, default=DEFAULT_MAPPING, help="默认从整理表第一个Sheet读取代际名、二级代际名和属性；显式指定时兼容旧映射文件")
     parser.add_argument("--force", action="store_true", help="忽略文件时间，强制重新生成二次处理文件")
+    parser.add_argument("--debug", action="store_true", help="显示全部来源、冲突位置和诊断明细")
     return parser.parse_args()
 
 
@@ -1491,8 +1552,8 @@ def resolve_mapping_path(requested: Path) -> Path:
 
 
 def main() -> int:
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", stream=sys.stdout)
     args = parse_args()
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="[%(levelname)s] %(message)s", stream=sys.stdout)
     try:
         args.source = resolve_source_path(args.source)
         if args.mapping == DEFAULT_MAPPING:
@@ -1504,8 +1565,15 @@ def main() -> int:
         ensure_mapping(args.mapping, args.source)
         if not args.force and summary_is_current(args.source, args.output, args.mapping, args.orders, args.as_of_date):
             LOGGER.info("销量数据汇总已是最新，跳过刷新：%s", args.output)
+            with forecast_diagnostics():
+                book = load_workbook(args.output, read_only=True, data_only=True)
+                try:
+                    audit_final_forecast(book, date.fromisoformat(args.as_of_date) if args.as_of_date else date.today())
+                finally:
+                    book.close()
             return 0
-        build_secondary(args.source, args.output, args.mapping, args.orders, args.as_of_date)
+        with forecast_diagnostics():
+            build_secondary(args.source, args.output, args.mapping, args.orders, args.as_of_date)
         return 0
     except Exception:
         LOGGER.exception("刷新失败")

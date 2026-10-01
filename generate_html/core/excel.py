@@ -515,7 +515,7 @@ def _add_boundary_week(previous, current, key, period, parts, reports, coverage)
         report["examples"].append(f"{'/'.join(map(str, key))}: "
                                   + "+".join(f"{source}={value:g}" for source, value in pieces)
                                   + f" → {total:g}")
-    return total, previous[1], "n", previous[3]
+    return (total, previous[1], "n", previous[3], *previous[4:])
 
 
 def _log_boundary_weeks(label, reports):
@@ -554,6 +554,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     rows, columns, values = {}, {}, {}
     conflicts = []
     conflict_count = 0
+    conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
     mix_days = set()
@@ -632,7 +633,8 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 if col < 0:
                     if not _quantity_field(row_key, "0"):
                         continue
-                    cell = SimpleNamespace(value=0, number_format="0", data_type="n")
+                    cell = SimpleNamespace(value=0, number_format="0", data_type="n",
+                                           sheet_title=sheet.title, coordinate=f"省略日期{'/'.join(col_key)}，行{row}")
                 else:
                     cell = sheet.cell(row, col)
                 if cell.value in (None, ""):
@@ -642,21 +644,23 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 if len(row_key) == 3 and row_key[1] == "占比" and period and _week_period(period)[3]:
                     ratio_sources.setdefault(key, {}).setdefault(item.path.name, cell_number(cell, rate=True, default=float("nan")))
                 previous = values.get(key)
+                current = (cell.value, cell.number_format, cell.data_type, item.path.name, cell)
                 if previous is None:
-                    values[key] = (cell.value, cell.number_format, cell.data_type, item.path.name)
+                    values[key] = current
                 else:
-                    merged = (_add_boundary_week(previous, (cell.value, cell.number_format, cell.data_type, item.path.name),
+                    merged = (_add_boundary_week(previous, current,
                                                  key, period, boundary_parts, boundary_reports, coverage)
                               if _quantity_field(row_key, cell.number_format)
                               or (quantity_columns and _quantity_field(("数量",), cell.number_format)) else None)
                     if merged is not None:
                         values[key] = merged
                     elif previous[0] != cell.value:
-                        example = f"{'/'.join(row_key)} @ {'/'.join(col_key)}: {previous[3]}={previous[0]} / {item.path.name}={cell.value}"
+                        kind, example = _conflict_location(previous, current, f"{'/'.join(row_key)} @ {'/'.join(col_key)}")
                         if key in ratio_sources:
-                            ratio_conflicts.append((key, example))
+                            ratio_conflicts.append((key, example, kind))
                         else:
                             conflict_count += 1
+                            conflict_kinds[kind] += 1
                             if len(conflicts) < 3:
                                 conflicts.append(example)
     # Counts are additive; percentages are not. Rebuild dimension shares from
@@ -691,11 +695,12 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 ratio = sum(source_rates.get(source, 0) * weight for source, weight in weights if weight > 0) / sum(weight for _, weight in weights)
         if ratio is not None:
             old = values[(row_key, col_key)]
-            values[(row_key, col_key)] = ratio, old[1], "n", old[3]
+            values[(row_key, col_key)] = (ratio, old[1], "n", old[3], *old[4:])
             resolved_ratios.add((row_key, col_key))
-    for key, example in ratio_conflicts:
+    for key, example, kind in ratio_conflicts:
         if key not in resolved_ratios:
             conflict_count += 1
+            conflict_kinds[kind] += 1
             if len(conflicts) < 3:
                 conflicts.append(example)
     book = Workbook()
@@ -731,8 +736,22 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflicts
+    target._merge_conflict_kinds = conflict_kinds
     target._boundary_week_merges = list(boundary_reports.values())
     return target
+
+
+def _conflict_location(previous, current, key):
+    """Locate both physical cells without copying source metadata per value."""
+    kind = "同文件重复键" if previous[3] == current[3] else "跨文件冲突"
+    def point(value):
+        cell = value[4] if len(value) > 4 else None
+        title = cell.parent.title if cell is not None and hasattr(cell, "parent") else getattr(cell, "sheet_title", "位置未记录")
+        coordinate = getattr(cell, "coordinate", "")
+        return f"{value[3]} / Sheet={title} / 单元格={coordinate}: {value[0]}"
+    example = f"[{kind}] {key}: {point(previous)} / {point(current)}"
+    LOGGER.debug("[数值重叠定位] %s", example)
+    return kind, example
 
 
 def _merge_records(matches, key_aliases, *, header_depth=1):
@@ -741,6 +760,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
     columns, records = {}, {}
     first_header = None
     conflict_count, conflicts = 0, []
+    conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_parts, boundary_reports = {}, {}
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
     for item, sheet in matches:
@@ -791,20 +811,22 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
                 value = (_source_key(cell.value) if col in key_cols and isinstance(cell.value, str)
                          and _week_period(clean_text(cell.value)) else cell.value)
                 if previous is None:
-                    record[field] = (value, cell.number_format, cell.data_type, item.path.name)
+                    record[field] = (value, cell.number_format, cell.data_type, item.path.name, cell)
                 else:
                     period = next((part for part in row_key if _week_period(part)), "")
                     labels = tuple(_source_key(label) for label, _ in columns[field])
-                    merged = (_add_boundary_week(previous, (value, cell.number_format, cell.data_type, item.path.name),
+                    current = (value, cell.number_format, cell.data_type, item.path.name, cell)
+                    merged = (_add_boundary_week(previous, current,
                                                  (row_key, field), period, boundary_parts, boundary_reports, coverage)
                               if _quantity_field(labels, cell.number_format) else None)
                     if merged is not None:
                         record[field] = merged
                     elif previous[0] != value:
                         conflict_count += 1
+                        kind, example = _conflict_location(previous, current, f"{'/'.join(row_key)} @ {'/'.join(field)}")
+                        conflict_kinds[kind] += 1
                         if len(conflicts) < 3:
-                            conflicts.append(f"{'/'.join(row_key)} @ {'/'.join(field)}: "
-                                             f"{previous[3]}={previous[0]} / {item.path.name}={value}")
+                            conflicts.append(example)
     target = Workbook().active
     target.title = matches[0][1].title
     if first_header > 1:
@@ -822,6 +844,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflicts
+    target._merge_conflict_kinds = conflict_kinds
     target._boundary_week_merges = list(boundary_reports.values())
     return target
 
@@ -861,6 +884,7 @@ def _merge_option_fee(matches):
     target._source_matches = matches
     target._merge_conflict_count = merged._merge_conflict_count
     target._merge_conflict_examples = merged._merge_conflict_examples
+    target._merge_conflict_kinds = getattr(merged, "_merge_conflict_kinds", {})
     target._boundary_week_merges = getattr(merged, "_boundary_week_merges", [])
     return target
 
@@ -903,6 +927,7 @@ def _merge_partitioned(matches, *, horizontal):
     target.title = matches[0][1].title
     offset = 0
     conflict_count, conflict_examples = 0, []
+    conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_reports = []
     for title, parts in groups.items():
         if horizontal:
@@ -924,9 +949,12 @@ def _merge_partitioned(matches, *, horizontal):
             _copy_cells(merged, target, row_offset=offset)
             offset += merged.max_row + 1
         boundary_reports.extend(getattr(merged, "_boundary_week_merges", []))
+        for kind, count in getattr(merged, "_merge_conflict_kinds", {}).items():
+            conflict_kinds[kind] += count
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflict_examples
+    target._merge_conflict_kinds = conflict_kinds
     target._boundary_week_merges = boundary_reports
     return target
 
@@ -1033,6 +1061,7 @@ class WorkbookStore:
                 groups.setdefault(compact_text(sheet.title), []).append((item, sheet))
         sheets = []
         conflict_count, conflict_sheets, conflict_examples = 0, 0, []
+        conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
         boundary_reports = []
         for matches in groups.values():
             title = matches[0][1].title
@@ -1044,6 +1073,8 @@ class WorkbookStore:
                 count = getattr(merged, "_merge_conflict_count", 0)
                 if count:
                     conflict_count += count
+                    for kind, subtotal in getattr(merged, "_merge_conflict_kinds", {}).items():
+                        conflict_kinds[kind] += subtotal
                     conflict_sheets += 1
                     for example in getattr(merged, "_merge_conflict_examples", []):
                         if len(conflict_examples) < 3:
@@ -1063,8 +1094,10 @@ class WorkbookStore:
         LOGGER.debug("多文件来源: %s | 共%d个文件全部纳入: %s", keyword, len(items), "、".join(item.path.name for item in items))
         _log_boundary_weeks(f"类别={keyword}", boundary_reports)
         if conflict_count:
-            LOGGER.warning("[多文件数值冲突] 类别=%s | %d个Sheet共%d项 | 保留原文件顺序中首个非空值，其他文件仍保留为来源 | 示例=%s",
-                           keyword, conflict_sheets, conflict_count, "；".join(conflict_examples))
+            label = "多文件数值冲突" if conflict_kinds["跨文件冲突"] else "同文件重复键冲突"
+            LOGGER.warning("[%s] 类别=%s | %d个Sheet共%d项（同文件重复键%d项，跨文件冲突%d项） | 保留原文件顺序中首个非空值，不累加；全部定位使用 --debug 查看 | 示例=%s",
+                           label, keyword, conflict_sheets, conflict_count, conflict_kinds["同文件重复键"],
+                           conflict_kinds["跨文件冲突"], "；".join(conflict_examples))
         return result
 
     def expand_sources(self, sources):

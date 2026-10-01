@@ -498,8 +498,8 @@ def _stage_window(windows: dict[str, dict[str, Any]], model: str) -> dict[str, A
     exact = windows.get(_model_key(model))
     found = exact or next((item for item in windows.values() if _same_model(item.get("generation"), model)), None)
     if found:
-        return found
-    children = [r for r in windows.values() if _model_key(r.get("primary_generation")) == _model_key(model)]
+        return _confirmed_stage_window(found)
+    children = [_confirmed_stage_window(r) for r in windows.values() if _model_key(r.get("primary_generation")) == _model_key(model)]
     if not children:
         return None
     starts = [r["launch_date"] for r in children if r.get("launch_date")]
@@ -508,6 +508,18 @@ def _stage_window(windows: dict[str, dict[str, Any]], model: str) -> dict[str, A
         return None
     return {"generation": model, "primary_generation": model, "launch_date": min(starts),
             "end_date": max(ends), "aggregate": True}
+
+
+def _confirmed_stage_window(window):
+    """All consumers use maintained dates or an explicitly maintained day count."""
+    result = dict(window)
+    start, finish = _as_date(result.get("launch_date")), _as_date(result.get("end_date"))
+    days = _optional_number(result.get("days"))
+    if start and not result.get("end_date") and days is not None and math.isfinite(days) and days > 0 and days.is_integer():
+        result["end_date"] = (start + timedelta(days=int(days)-1)).isoformat()
+    elif start and finish and finish >= start and not days:
+        result["days"] = (finish-start).days+1
+    return result
 
 
 def _first_record_value(record: dict[str, Any], *names: str) -> Any:
@@ -579,7 +591,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 if index > 0 and (parsed_date := _as_date(value)) is not None
             ]
             if not date_columns:
-                LOGGER.warning(
+                LOGGER.debug(
                     "[销量预测字段校验] 传播名=%s | Sheet=%s | 行=%d | 小订by天表头没有可识别日期列 | "
                     "处理=整条真实逐日记录不参与预测",
                     label, sheet.title, row_number,
@@ -697,9 +709,9 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
             if summary_total is not None and summary_total > 0 and (
                 (not partial_daily and abs(summary_total - total) > 1) or summary_total < daily_sum - 1
             ):
-                LOGGER.warning(
+                LOGGER.debug(
                     "[销量预测字段校验] 代际=%s | 车型汇总总小订%d与by天合计%d不一致 | "
-                    "处理=按规则优先采用车型汇总总小订作为终值，请核对两处口径",
+                    "处理=仅为整理表内部初读差异，最终按多来源优先级取值后再校验",
                     generation, int(round(summary_total)), total,
                 )
             final_total = int(round(summary_total)) if summary_total is not None and summary_total > 0 else total
@@ -773,7 +785,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
             start_date = _as_date(summary.get("小订开始日期"))
             dates = [(start_date + timedelta(days=index)).isoformat() for index in range(len(daily))] if start_date else []
             master_record = _master_record(model_master, model, generation) or {}
-            LOGGER.warning(
+            LOGGER.debug(
                 "[销量预测估算] 代际=%s | 小订by天无真实逐日行 | "
                 "处理=按'小订进度'标准化曲线合成逐日形状（daily_actual=False），仅作历史参考形状",
                 model,
@@ -1189,6 +1201,38 @@ def _read_steady_daily(workbook, generation: str, start: date, today: date, cove
     return result, source_sheets
 
 
+def _complete_steady_weeks(weeks, raw_locks, daily, coverage, steady_start, current):
+    """Fill only omitted export weeks; blank/invalid cells and uncovered days stay unknown."""
+    known = {row["period"] for row in weeks}
+    by_date = {row["date"]: row for row in daily}
+    limits = [_as_date(row["end_date"]) for row in weeks] + [end for _, end in coverage]
+    limits += [_as_date(row.get("date")) for row in daily]
+    limits = [day for day in limits if day is not None]
+    if not limits:
+        return weeks
+    finish = min(max(limits), current-timedelta(days=1))
+    start = steady_start + timedelta(days=(-steady_start.weekday()) % 7)
+    while start + timedelta(days=6) <= finish:
+        end = start + timedelta(days=6)
+        year, week, _ = start.isocalendar()
+        period = f"{year % 100:02d}WK{week:02d}"
+        if period not in known and period not in raw_locks:
+            days = [start+timedelta(days=i) for i in range(7)]
+            rows = [by_date.get(day.isoformat()) for day in days]
+            if all(row is not None and row.get("complete") and row.get("lock") is not None for row in rows):
+                value = sum(row["lock"] for row in rows)
+                zero = all(row.get("absent_as_zero") for row in rows)
+            elif not any(row is not None for row in rows) and all(any(first <= day <= last for first, last in coverage) for day in days):
+                value, zero = 0, True
+            else:
+                start += timedelta(days=7)
+                continue
+            weeks.append({"period": period, "start_date": start.isoformat(), "end_date": end.isoformat(),
+                          "lock": value, "absent_as_zero": zero})
+        start += timedelta(days=7)
+    return weeks
+
+
 def _read_steady_history(
     store,
     stage_windows: dict[str, dict[str, Any]],
@@ -1267,38 +1311,21 @@ def _read_steady_history(
                     "end_date": week_end.isoformat(),
                     "lock": int(round(lock_value)),
                 })
-            # A week omitted from the mix export is zero only when all seven
-            # daily dates are covered. Explicit invalid weekly values stay invalid.
-            daily_weeks = {}
-            for row in daily:
-                day = _as_date(row.get("date"))
-                if day and row.get("complete"):
-                    daily_weeks.setdefault(day.isocalendar()[:2], []).append(row)
-            for (year, week), rows in daily_weeks.items():
-                period = f"{year % 100:02d}WK{week:02d}"
-                week_start, week_end = date.fromisocalendar(year, week, 1), date.fromisocalendar(year, week, 7)
-                if (period in raw_locks or any(row["period"] == period for row in weeks)
-                        or week_start < steady_start or week_end >= current or len({row['date'] for row in rows}) != 7
-                        or any(row.get("lock") is None for row in rows)):
-                    continue
-                weeks.append({"period": period, "start_date": week_start.isoformat(),
-                              "end_date": week_end.isoformat(), "lock": sum(row["lock"] for row in rows),
-                              "absent_as_zero": all(row.get("absent_as_zero") for row in rows)})
+            weeks = _complete_steady_weeks(weeks, raw_locks, daily, _source_date_ranges(lock_item), steady_start, current)
             weeks.sort(key=lambda row: row["start_date"])
-            if any(
-                (_as_date(current_row["start_date"]) - _as_date(previous["start_date"])).days != 7
-                for previous, current_row in zip(weeks, weeks[1:])
-            ):
+            gaps = [f"{previous['period']}→{following['period']}"
+                    for previous, following in zip(weeks, weeks[1:])
+                    if (_as_date(following['start_date'])-_as_date(previous['start_date'])).days != 7]
+            if gaps:
                 LOGGER.warning(
                     "[销量预测字段校验] 代际=%s | 文件=%s | Sheet=%s | 平销锁单周不连续 | "
-                    "处理=周历史不参与环比，保留可用的平销真实日",
-                    generation, lock_item.path.name, sheet.title,
+                    "未知缺口%d处，示例=%s | 处理=保留有效周与真实日，仅跳过跨缺口环比，不把未知周补0",
+                    generation, lock_item.path.name, sheet.title, len(gaps), "、".join(gaps[:3]),
                 )
-                weeks = []
             if not weeks and not daily:
                 continue
             for index, row in enumerate(weeks, start=1):
-                row["week"] = index
+                row["week"] = ((_as_date(row["start_date"])-_as_date(weeks[0]["start_date"])).days // 7)+1
             master_record = _master_record(model_master, generation) or {}
             result.append({
                 "model": generation,
@@ -2348,7 +2375,7 @@ def _resolve_actual_profiles(
         if target.get("has_small") is False:
             missing_fields[:] = [f for f in missing_fields if f != "总小订"]
         if missing_fields:
-            LOGGER.warning(
+            LOGGER.debug(
                 "[销量预测数据诊断] 预测对象=%s | 阶段=%s | 缺失字段=%s | 来源顺序=%s | 已选来源=%s | 处理=按字段继续回退，仍缺失的字段在网页标记为数据缺失",
                 name,
                 stage,
@@ -2357,7 +2384,7 @@ def _resolve_actual_profiles(
                 SOURCE_LABELS[selected],
             )
         elif selected != priority[0]:
-            LOGGER.warning(
+            LOGGER.debug(
                 "[销量预测来源回退] 预测对象=%s | 阶段=%s | 首选来源=%s无可用数据 | 实际来源=%s | 处理=已按阶段优先级回退",
                 name,
                 stage,
@@ -2397,7 +2424,7 @@ def _resolve_actual_profiles(
                     browser_reason = f"合并结果没有日期={target_launch.isoformat()}的D1行"
                 else:
                     browser_reason = f"对齐D1的大定不是数字：{aligned_d1.get('gross')!r}"
-                LOGGER.warning(
+                LOGGER.debug(
                     "[销量预测D1排查] 网页将判定D1缺失：预测对象=%s，阶段=%s，首销日期=%r，"
                     "来源顺序=%s，命中首销对象=%r，命中历史传播名=%r，命中历史代际名=%r，原因=%s",
                     name,
@@ -2409,7 +2436,7 @@ def _resolve_actual_profiles(
                     reference.get("generation") if reference else None,
                     browser_reason,
                 )
-                LOGGER.warning(
+                LOGGER.debug(
                     "[销量预测D1排查] 三来源D1：首销期订单节奏{%s}；小订及首销数据整理{%s}；"
                     "小订退订分析{%s}；合并后{%s}；字段来源=%s",
                     _d1_snapshot(launch_profile),
@@ -2968,7 +2995,7 @@ class SalesForecastModule:
                 profile["hard_errors"] = hard_errors
                 profile["data_error"] = bool(hard_errors)
             if hard_errors:
-                LOGGER.warning(
+                LOGGER.debug(
                     "[销量预测条件不足] 预测对象=%s | 阶段=%s | 原因=%s | 影响=首销预测不可用，已知实际数据保留",
                     option["name"],
                     option.get("stage_label", option.get("stage", "未知")),

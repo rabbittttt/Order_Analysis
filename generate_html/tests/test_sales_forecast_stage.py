@@ -230,7 +230,7 @@ class SalesForecastStageTests(unittest.TestCase):
             workbook.close()
             mapping = {"变体a": "测试车", "变体b": "测试车", "测试车": "测试车"}
             with patch("modules.sales_forecast._read_model_mapping", return_value=mapping), patch("modules.sales_forecast._read_model_master", return_value={}):
-                with self.assertLogs("modules.sales_forecast", level="WARNING") as logs:
+                with self.assertLogs("modules.sales_forecast", level="DEBUG") as logs:
                     _, rows = _read_small_order_history(path)
         self.assertEqual(len(rows), 2)
         self.assertEqual({row["model"] for row in rows}, {"变体A", "变体B"})
@@ -351,7 +351,7 @@ class SalesForecastStageTests(unittest.TestCase):
             workbook.save(path)
             workbook.close()
             with patch("modules.sales_forecast._read_model_mapping", return_value={}), patch("modules.sales_forecast._read_model_master", return_value={}):
-                with self.assertLogs("modules.sales_forecast", level="WARNING") as logs:
+                with self.assertLogs("modules.sales_forecast", level="DEBUG") as logs:
                     _, rows = _read_small_order_history(path)
         self.assertEqual(rows[0]["total"], 100)
         self.assertEqual(rows[0]["total_source"], "车型汇总")
@@ -484,7 +484,9 @@ class SalesForecastStageTests(unittest.TestCase):
         workbook.close()
         message = "\n".join(logs.output)
         self.assertIn("平销锁单周不连续", message)
-        self.assertEqual(rows, [])
+        self.assertEqual([row['lock'] for row in rows[0]['weeks']], [700, 630])
+        self.assertEqual([row['week'] for row in rows[0]['weeks']], [1, 3])
+        self.assertIn("仅跳过跨缺口环比", message)
 
     def test_steady_history_excludes_launch_overlap_and_current_week(self):
         workbook = Workbook()
@@ -912,7 +914,7 @@ class SalesForecastStageTests(unittest.TestCase):
         }
         mapping = {"尊界g9": "尊界 G9 2027款", "尊界g92027": "尊界 G9 2027款"}
         with patch("modules.sales_forecast._read_model_mapping", return_value=mapping):
-            with self.assertLogs("modules.sales_forecast", level="WARNING") as logs:
+            with self.assertLogs("modules.sales_forecast", level="DEBUG") as logs:
                 _resolve_actual_profiles([], [], [target], SourceRef("二次处理.xlsx", "预测基准总表", "历史"))
 
         message = "\n".join(logs.output)
@@ -950,7 +952,7 @@ class SalesForecastStageTests(unittest.TestCase):
         mapping = {"尊界g9": "尊界 G9", "尊界g92027": "尊界 G9"}
         with patch("modules.sales_forecast._read_model_mapping", return_value=mapping):
             profiles, _ = _read_actual_profiles(Store())
-            with self.assertLogs("modules.sales_forecast", level="WARNING") as logs:
+            with self.assertLogs("modules.sales_forecast", level="DEBUG") as logs:
                 _resolve_actual_profiles(
                     [], profiles,
                     [{"name": "尊界 G9", "stage": "active", "launch_date": "2026-08-01", "history_small": 0}],
@@ -981,7 +983,7 @@ class SalesForecastStageTests(unittest.TestCase):
         mapping = {"尊界g9": "尊界 G9", "尊界g92027": "尊界 G9"}
         with patch("modules.sales_forecast._read_model_mapping", return_value=mapping):
             profiles, _ = _read_actual_profiles(Store())
-            with self.assertLogs("modules.sales_forecast", level="WARNING") as logs:
+            with self.assertLogs("modules.sales_forecast", level="DEBUG") as logs:
                 _resolve_actual_profiles(
                     [], profiles,
                     [{"name": "尊界 G9", "stage": "before", "launch_date": "2026-09-01", "history_small": 0}],
