@@ -41,11 +41,13 @@ def add_kpi_comparisons(dashboards: dict[str, dict[str, Any]]) -> None:
         for view in dashboard.get("views", {}).values():
             periods = view.get("periods", [])
             pages = view.get("pages", {})
-            for index, period in enumerate(periods):
+            previous_detail = None
+            for period in periods:
                 page = pages.get(period)
                 if not page:
                     continue
-                previous_page = pages.get(periods[index - 1]) if index and not any(marker in str(period) for marker in aggregate_markers) else None
+                aggregate = any(marker in str(period) for marker in aggregate_markers)
+                previous_page = None if aggregate else previous_detail
                 previous_kpis = {item.get("label"): item for item in (previous_page or {}).get("kpis", [])}
                 for item in page.get("kpis", []):
                     if "comparison" in item:
@@ -65,3 +67,5 @@ def add_kpi_comparisons(dashboards: dict[str, dict[str, Any]]) -> None:
                         "rate": delta / abs(previous_value) if previous_value else None,
                         "direction": direction,
                     }
+                if not aggregate:
+                    previous_detail = page

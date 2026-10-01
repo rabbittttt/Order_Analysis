@@ -1433,19 +1433,19 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "launch_period": usable_attribute(record.get("首销发布时段") or record.get("发布时段")),
         "end_date": _iso(record.get("首销截止") or record.get("小转大结束日期")),
         "days": int(_number(record.get("首销期天数") or record.get("首销天数"), 0)),
-        "gross": int(_number(record.get(gross_key) or record.get("大定量"))),
-        "net": int(_number(record.get("首销期留存大定") or record.get("首销期净大定"))),
+        "gross": int(_number(_first_record_value(record, gross_key, "大定量"))),
+        "net": int(_number(_first_record_value(record, "首销期留存大定", "首销期净大定"))),
         "net_rate": _optional_number(record.get("留存大定率") if record.get("留存大定率") not in (None, "") else record.get("净大定率")),
         "lock": int(_number(record.get("首销期锁单"))),
         "lock_rate": _optional_number(record.get("大定到锁单率") if record.get("大定到锁单率") not in (None, "") else record.get("锁单率")),
         "small": int(_number(record.get("总小订"))),
-        "small_to_big": int(_number(record.get("小订转大") or record.get("小订转大定量") or record.get("小订转大定"))),
+        "small_to_big": int(_number(_first_record_value(record, "总小转大", "小订转大", "小订转大定量", "小订转大定"))),
         "conversion": _optional_number(record.get("小订转化率")),
-        "direct": int(_number(record.get(direct_key) or record.get("直接大定量"))),
+        "direct": int(_number(_first_record_value(record, direct_key, "直接大定量"))),
         "direct_share": _optional_number(record.get("直接大定占比")),
-        "cancel": int(_number(record.get(cancel_key) or record.get("小订后退定"))),
+        "cancel": int(_number(_first_record_value(record, "总退订", cancel_key, "小订后退定"))),
         "cancel_rate": _optional_number(record.get("退订率") if record.get("退订率") not in (None, "") else record.get("小订后退定占比")),
-        "d1_small": int(_number(record.get("D1小转大") or record.get("首日小转大"))),
+        "d1_small": int(_number(_first_record_value(record, "D1小转大", "首日小转大"))),
         "d1_small_completion": _number(record.get("D1小转大/总小转大")),
         "d2_small": int(_number(record.get("D2小转大"))),
         "d2_small_completion": _number(record.get("D2小转大/总小转大")),
@@ -1453,12 +1453,12 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "d12_small_completion": _number(record.get("D1+D2小转大/总小转大")),
         "small_d2_d1": _number(record.get("D2小转大/D1小转大")),
         "small_d1_d12": _number(record.get("D1小转大/D1+D2小转大")),
-        "d1_direct": int(_number(record.get("D1直接大") or record.get("首日直接大定"))),
+        "d1_direct": int(_number(_first_record_value(record, "D1直接大", "首日直接大定"))),
         "d1_direct_completion": _number(record.get("D1直接大/总直接大")),
         "d2_direct_completion": _number(record.get("D2直接大/总直接大")),
         "d1_gross": int(_number(record.get("D1大定"))),
         "d1_small_share": _number(record.get("D1小转大/D1大定")),
-        "d1_direct_share": _number(record.get("D1直接大/D1大定") or record.get("首日直接大定占比")),
+        "d1_direct_share": _number(_first_record_value(record, "D1直接大/D1大定", "首日直接大定占比")),
         "d12_direct": int(_number(record.get("D1+D2直接大"))),
         "d12_direct_completion": _number(record.get("D1+D2直接大/总直接大")),
         "direct_d2_d1": _number(record.get("D2直接大/D1直接大")),
@@ -2485,6 +2485,34 @@ def _resolve_actual_profiles(
     return resolved
 
 
+def _completed_hourly_curve(bucket, field, daily_total=None):
+    """Normalize finished observations only; an explicit blank is not zero."""
+    hours = bucket.get("hours") or []
+    if not hours:
+        return []
+    by_hour = [0.0] * 24
+    for row in hours:
+        hour, raw = row.get("hour"), row.get(field)
+        value = _optional_number(raw)
+        if (isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour < 24
+                or isinstance(raw, bool) or value is None or not math.isfinite(value) or value < 0):
+            return []
+        by_hour[hour] += value
+    total = sum(by_hour)
+    if total <= 0:
+        return []
+    if daily_total is not None:
+        expected = _optional_number(daily_total)
+        if (isinstance(daily_total, bool) or expected is None or not math.isfinite(expected)
+                or expected < 0 or abs(total - expected) > .5):
+            return []
+    running, curve = 0.0, []
+    for value in by_hour:
+        running += value
+        curve.append(running / total)
+    return curve
+
+
 def _attach_actual_shapes(history: list[dict[str, Any]], profiles: list[dict[str, Any]], today: date | None = None) -> None:
     for item in history:
         profile = next((profile for profile in profiles if _same_model(profile["model"], item["model"]) or _same_model(profile["model"], item.get("generation"))), None)
@@ -2497,24 +2525,17 @@ def _attach_actual_shapes(history: list[dict[str, Any]], profiles: list[dict[str
         first_hourly = next((row for row in profile.get("hourly_days", [])
                              if row.get("date") == item.get("launch_date")
                              and row.get("date", "") < (today or date.today()).isoformat()), {})
-        hourly_values = first_hourly.get("hours", [])
-        by_hour = [0.0] * 24
-        for row in hourly_values:
-            hour = row.get("hour")
-            value = _optional_number(row.get("gross"))
-            if isinstance(hour, int) and 0 <= hour <= 23 and value is not None and value >= 0:
-                by_hour[hour] += value
-        total = sum(by_hour)
-        cumulative = 0.0
-        item["hourly_curve"] = []
-        if total > 0:
-            for value in by_hour:
-                cumulative += value
-                item["hourly_curve"].append(cumulative / total)
+        d1_total = next((row.get("gross") for row in profile.get("days", [])
+                         if row.get("date") == item.get("launch_date")), None)
+        if d1_total is None and item.get("daily_orders"):
+            d1_total = item["daily_orders"][0]
+        item["hourly_curve"] = _completed_hourly_curve(first_hourly, "gross", d1_total)
 
 
-def _attach_small_hourly_curves(small_history: list[dict[str, Any]], profiles: list[dict[str, Any]]) -> None:
+def _attach_small_hourly_curves(small_history: list[dict[str, Any]], profiles: list[dict[str, Any]], today: date | None = None) -> None:
     for item in small_history:
+        item["small_hourly_curve"] = []
+        item.pop("small_start_hour", None)
         profile = next(
             (
                 candidate for candidate in profiles
@@ -2529,23 +2550,19 @@ def _attach_small_hourly_curves(small_history: list[dict[str, Any]], profiles: l
         bucket = next((row for row in buckets if row.get("date") == item.get("small_start_date")), None)
         if bucket is None and buckets and not item.get("small_start_date"):
             bucket = min(buckets, key=lambda row: str(row.get("date") or ""))
-        if not bucket:
+        bucket_date = _as_date(bucket.get("date")) if bucket else None
+        if not bucket_date or bucket_date >= (today or date.today()):
             continue
-        by_hour: dict[int, float] = {}
-        for row in bucket.get("hours") or []:
-            hour = int(_number(row.get("hour"), -1))
-            if 0 <= hour <= 23:
-                by_hour[hour] = by_hour.get(hour, 0) + max(_number(row.get("orders")), 0)
-        terminal = sum(by_hour.values())
-        if terminal <= 0:
+        d1_total = next((row.get("orders") for row in profile.get("small_daily_days", [])
+                         if row.get("date") == bucket["date"]), None)
+        if d1_total is None and item.get("daily_actual") is not False and item.get("daily_orders"):
+            if not item.get("dates") or item["dates"][0] == bucket["date"]:
+                d1_total = item["daily_orders"][0]
+        curve = _completed_hourly_curve(bucket, "orders", d1_total)
+        if not curve:
             continue
-        start_hour = min(hour for hour, value in by_hour.items() if value > 0)
-        running = 0.0
-        curve = []
-        for hour in range(24):
-            running += by_hour.get(hour, 0)
-            curve.append(min(running / terminal, 1) if hour >= start_hour else None)
-        item["small_hourly_curve"] = curve
+        start_hour = next(hour for hour, value in enumerate(curve) if value > 0)
+        item["small_hourly_curve"] = [value if hour >= start_hour else None for hour, value in enumerate(curve)]
         item["small_start_hour"] = start_hour
 
 
@@ -2914,7 +2931,7 @@ class SalesForecastModule:
         raw_profiles, windows, small_history, steady_history = read_public_forecast(workbook, history, today=self.as_of_date)
         master, mapping = _read_model_master(), _read_model_mapping()
         _attach_actual_shapes(history, raw_profiles, today=self.as_of_date)
-        _attach_small_hourly_curves(small_history, raw_profiles)
+        _attach_small_hourly_curves(small_history, raw_profiles, today=self.as_of_date)
         _attach_steady_launch_features(steady_history, history)
         targets = _target_options(history, raw_profiles, windows, today=self.as_of_date, model_master=master)
         source = SourceRef(path.name, MASTER_SHEET, "车型基本信息与历史基准")
@@ -2948,7 +2965,7 @@ class SalesForecastModule:
         raw_profiles, actual_sources = _read_actual_profiles(store, stage_windows, today=self.as_of_date)
         _attach_actual_shapes(history, raw_profiles, today=self.as_of_date)
         small_history_path, small_history = _read_small_order_history()
-        _attach_small_hourly_curves(small_history, raw_profiles)
+        _attach_small_hourly_curves(small_history, raw_profiles, today=self.as_of_date)
         steady_history, steady_sources = _read_steady_history(
             store, stage_windows, today=self.as_of_date
         )
