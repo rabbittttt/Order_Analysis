@@ -13,6 +13,7 @@ import math
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Iterable
 
 from openpyxl import Workbook, load_workbook
@@ -343,26 +344,41 @@ def source_models(source: Path) -> list[str]:
 
 def style_sheet(sheet, percent_headers: set[str] | None = None) -> None:
     percent_headers = percent_headers or set()
+    # Register identical style combinations once per sheet, rather than hashing
+    # Font/Border/Alignment objects for every cell. Include the original style so
+    # custom formats/protection/odd-row fills survive; copy arrays on assignment
+    # because later callers may change one cell's format or wrapping independently.
+    styles = {}
+
+    def apply_style(cell, *, header=False, number_format=None):
+        even = not header and cell.row % 2 == 0
+        key = (tuple(cell._style or ()), header, even, number_format)
+        if key in styles:
+            cell._style = copy(styles[key])
+            return
+        cell.font = _HEADER_FONT if header else _BODY_FONT
+        cell.alignment = _HEADER_ALIGNMENT if header else _BODY_ALIGNMENT
+        cell.border = _HEADER_BORDER if header else _BODY_BORDER
+        if header or even:
+            cell.fill = _HEADER_FILL if header else _EVEN_FILL
+        if number_format is not None:
+            cell.number_format = number_format
+        styles[key] = copy(cell._style)
+
     for cell in sheet[1]:
-        cell.fill = _HEADER_FILL
-        cell.font = _HEADER_FONT
-        cell.alignment = _HEADER_ALIGNMENT
-        cell.border = _HEADER_BORDER
+        apply_style(cell, header=True)
     sheet.row_dimensions[1].height = 30
     headers = [str(cell.value or "") for cell in sheet[1]]
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
-            cell.font = _BODY_FONT
-            cell.alignment = _BODY_ALIGNMENT
-            cell.border = _BODY_BORDER
-            if cell.row % 2 == 0:
-                cell.fill = _EVEN_FILL
+            number_format = None
             if headers[cell.column - 1] in percent_headers:
-                cell.number_format = "0.0%"
+                number_format = "0.0%"
             elif isinstance(cell.value, datetime):
-                cell.number_format = "yyyy-mm-dd hh:mm" if isinstance(cell.value, datetime) and any((cell.value.hour, cell.value.minute, cell.value.second)) else "yyyy-mm-dd"
+                number_format = "yyyy-mm-dd hh:mm" if any((cell.value.hour, cell.value.minute, cell.value.second)) else "yyyy-mm-dd"
             elif isinstance(cell.value, (int, float)):
-                cell.number_format = "#,##0.00" if not float(cell.value).is_integer() else "#,##0"
+                number_format = "#,##0.00" if not float(cell.value).is_integer() else "#,##0"
+            apply_style(cell, number_format=number_format)
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
     sheet.sheet_view.showGridLines = False
@@ -697,6 +713,8 @@ def mapping_record_for(
 
 
 def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: Path | None = None, as_of_date: str = "") -> None:
+    started = perf_counter()
+    timings = {}
     mapping, aliases = load_mapping(mapping_path)
     missing_attributes = [
         record["历史传播名"]
@@ -964,9 +982,15 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     if temporary.exists():
         temporary.unlink()
     workbook.save(temporary)
+    timings['历史基准与中间文件'] = perf_counter() - started
     if orders_dir is not None:
+        stage_started = perf_counter()
         append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_date, preserve_layout=False)
+        timings['读取整理订单来源'] = perf_counter() - stage_started
+        stage_started = perf_counter()
         append_forecast_views(temporary, as_of_date, workbook=workbook)
+        timings['合并计算与结果排版'] = perf_counter() - stage_started
+    stage_started = perf_counter()
     reorder_summary_sheets(workbook)
     sheet_count = len(workbook.sheetnames)
     workbook.save(temporary)
@@ -975,6 +999,10 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         os.replace(temporary, output)
     except PermissionError as exc:
         raise PermissionError(f"无法覆盖 {output}，请确认 Excel 中没有打开该文件") from exc
+    timings['最终保存'] = perf_counter() - stage_started
+    LOGGER.info('[销量汇总耗时] %s | 总计 %.2fs',
+                ' | '.join(f'{name} {seconds:.2f}s' for name, seconds in timings.items()),
+                perf_counter() - started)
     LOGGER.info("刷新完成：%s（%d个传播名、%d天、%d个Sheet）", output, len(models), day_count, sheet_count)
 
 
@@ -1083,8 +1111,10 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
             directory.append([kind, filename, sheet.title, name, sheet.max_row, sheet.max_column])
 
     for path, kind in [(source, "历史"), (mapping_path, "映射"), *[(path, "订单") for path in forecast_order_files(orders_dir)]]:
+        file_started = perf_counter()
         book = (load_workbook(path, read_only=False, data_only=True) if preserve_layout
                 else load_data_workbook(path, orders_dir / ".cache" / "excel"))
+        loaded = perf_counter()
         try:
             if kind == "订单":
                 source_ranges[path.name] = _source_date_range(WorkbookItem(path, book))
@@ -1109,6 +1139,8 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
                 import_sheet(sheet, kind, path.name, sheet.title if kind != "订单" else None)
         finally:
             book.close()
+        LOGGER.debug('[销量汇总来源耗时] 文件=%s | 类别=%s | 解析 %.2fs | 来源整理 %.2fs',
+                     path.name, kind, loaded - file_started, perf_counter() - loaded)
     write_rows(workbook, INDEX_SHEET, ["类别", "原始文件", "原始Sheet", "汇总Sheet", "行数", "列数", "阅读用途", "文件数据开始日期", "文件数据结束日期"], [
         [*row, {
             "历史": "历史参考与预测基准",
