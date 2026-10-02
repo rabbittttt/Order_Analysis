@@ -535,6 +535,8 @@ assert(rate.includes('viewBox="0 0 920 245"'));
 assert(rate.includes('current &lt;test> · 最新50%'));
 assert(rate.includes('0时 · 0.0%'));
 assert(rate.includes('tabindex="0" role="img"'));
+assert.equal((rate.match(/tabindex="0" role="img"/g)||[]).length,1,'one tab stop per chart; arrows navigate data points');
+assert(rate.includes('data-chart-readout role="status"'));
 assert(rate.includes('<td>—</td>'));
 assert(rate.includes('stroke-dasharray="7 5"'));
 assert(rate.includes('查看图表数值'));

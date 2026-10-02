@@ -52,11 +52,13 @@ const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析
    check('参数刷新保留人工主参考',await ref.inputValue()===choice);
   }
   const output=path.join(project,'.test_outputs/forecast_header');fs.mkdirSync(output,{recursive:true});
-  for(const width of [1920,1440,1024,768,390]){
+  for(const width of [1920,1440,1280,1180,1024,768,640,390]){
    await page.setViewportSize({width,height:1000});await page.waitForTimeout(100);
    const boxes=await page.evaluate(()=>[...document.querySelectorAll('.module-nav button')].map(n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,w:r.width,h:r.height};}).filter(r=>r.w&&r.h));
    const overlap=boxes.some((a,i)=>boxes.slice(i+1).some(b=>Math.min(a.right,b.right)-Math.max(a.x,b.x)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1));
    check(width+'px 导航框不重叠',!overlap);
+   const header=await page.evaluate(()=>[...document.querySelectorAll('.brand,#updatedAt,#subjectSelect,#grainSelect,#periodSelect,#periodContext')].filter(n=>n.checkVisibility()).map(n=>{const r=n.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom};}));
+   check(width+'px 标题生成时间及筛选不重叠',!header.some((a,i)=>header.slice(i+1).some(b=>Math.min(a.right,b.right)-Math.max(a.x,b.x)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.y,b.y)>1)));
    const controls=await page.locator('.forecast-target-form [data-forecast-target]').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return {x:r.x,right:r.right};}));
    check(width+'px 参数控件不越出窗口',controls.every(r=>r.x>=0&&r.right<=width+1));
    if(width===1440||width===390)await page.screenshot({path:path.join(output,'header-'+width+'.png')});

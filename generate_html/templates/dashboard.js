@@ -78,6 +78,7 @@
   }
 
   const importedForecastRows = new Map();
+  const importedForecastUndo = new Map();
   // Per-page local storage: no uploads, and never store actual-order payloads.
   function persistForecastState(){
     try{
@@ -137,11 +138,14 @@
       const card=document.createElement('section');card.className='forecast-import';card.dataset.forecastImport=stage;
       card.innerHTML='<div class="forecast-import-head"><div><small>预测曲线外部对照</small><h4>外部逐日预测 · '+label+'</h4></div><p>三个阶段共用导入：小订量、总大定分列；平销总大定按大定到锁单率换算。导入值独立展示，不覆盖真实订单或算法结果。</p></div><div class="forecast-import-actions"><label>导入方式<select data-forecast-import-mode aria-label="外部预测导入方式"><option value="merge">合并（同指标同日更新）</option><option value="replace">替换该车型全部外部预测</option></select></label><label>选择Excel/CSV<input type="file" accept=".xlsx,.csv" data-forecast-import-file aria-label="导入'+label+'逐日预测"></label><button type="button" data-forecast-import-template>下载CSV模板</button><button type="button" data-forecast-import-clear>清除该车型全部导入</button></div><p class="forecast-import-help">字段：车型（代际）、日期、预测小订、预测大定（总大定，不是留存大定）；数量为非负整数，可只填其中一列。一次导入供三个阶段使用；按各阶段日期展示，保留已过日期预测。</p><p role="status" aria-live="polite" data-forecast-import-status>尚未导入；成功后自动保存到当前浏览器，不上传。</p><div data-forecast-import-result></div>';
       anchor.append(card);cards.push({stage,unit,card});
+      const undo=document.createElement('button');undo.type='button';undo.dataset.forecastImportUndo='';undo.textContent='撤销清除';undo.hidden=true;
+      card.querySelector('.forecast-import-actions').append(undo);
+      undo.onclick=()=>{const name=context.targetState().name,previous=importedForecastUndo.get(name);if(!previous)return;importedForecastRows.set(name,previous);importedForecastUndo.delete(name);const saved=persistForecastState();for(const {card:other} of cards){const notice=other.querySelector('[data-forecast-import-status]');notice.dataset.state=saved?'success':'loading';notice.textContent='已恢复清除前的全部外部预测。'+(saved?'已保存本机。':forecastStorageWarning);}render();};
       const status=card.querySelector('[data-forecast-import-status]'),input=card.querySelector('[data-forecast-import-file]');
       input.onchange=async()=>{
         const file=input.files?.[0];if(!file)return;
         const mode=card.querySelector('[data-forecast-import-mode]').value;
-        for(const {card:other} of cards)other.querySelectorAll('[data-forecast-import-file],[data-forecast-import-mode],[data-forecast-import-clear]').forEach(control=>control.disabled=true);
+        for(const {card:other} of cards)other.querySelectorAll('[data-forecast-import-file],[data-forecast-import-mode],[data-forecast-import-clear],[data-forecast-import-undo]').forEach(control=>control.disabled=true);
         card.setAttribute('aria-busy','true');status.dataset.state='loading';status.textContent='正在读取并校验…';
         try{
           const target=context.targetState(),all=await window.ForecastImport.read(file),rows=all.filter(row=>context.sameModel(row.model,target.name)).flatMap(row=>{
@@ -158,13 +162,14 @@
           let updated=0;for(const row of rows){const key=metricOf(row)+'|'+row.date;if(merged.has(key))updated++;merged.set(key,row);}
           if(merged.size>20000)throw Error('合并后超过20000条记录，请清理旧外部预测或选择替换');
           importedForecastRows.set(target.name,{filename:file.name,rows:[...merged.values()].sort((a,b)=>a.date.localeCompare(b.date)||a.stage.localeCompare(b.stage))});
+          importedForecastUndo.delete(target.name);
           const saved=persistForecastState();
           status.dataset.state=saved?'success':'loading';status.textContent='导入成功：'+rows.length+'条；'+(mode==='merge'?'合并后共'+merged.size+'条，同指标同日更新'+updated+'条':'已替换当前车型全部外部预测')+(all.some(row=>!context.sameModel(row.model,target.name))?'；其他车型记录未导入':'')+'。'+(saved?'已保存本机，刷新可恢复。':forecastStorageWarning);
           render();
         }catch(error){status.dataset.state='error';status.textContent='导入失败：'+error.message+'；原导入数据保持不变。';}
-        finally{for(const {card:other} of cards)other.querySelectorAll('[data-forecast-import-file],[data-forecast-import-mode],[data-forecast-import-clear]').forEach(control=>control.disabled=false);input.value='';card.setAttribute('aria-busy','false');}
+        finally{for(const {card:other} of cards){other.querySelectorAll('[data-forecast-import-file],[data-forecast-import-mode],[data-forecast-import-clear],[data-forecast-import-undo]').forEach(control=>control.disabled=false);other.querySelector('[data-forecast-import-clear]').disabled=!importedForecastRows.get(context.targetState().name)?.rows.length;}input.value='';card.setAttribute('aria-busy','false');}
       };
-      card.querySelector('[data-forecast-import-clear]').onclick=()=>{importedForecastRows.delete(context.targetState().name);const saved=persistForecastState();for(const {card:other} of cards){const notice=other.querySelector('[data-forecast-import-status]');notice.dataset.state=saved?'success':'loading';notice.textContent='已清除当前车型全部阶段的导入数据。'+(saved?'本机保存已同步。':forecastStorageWarning);}render();};
+      card.querySelector('[data-forecast-import-clear]').onclick=()=>{const name=context.targetState().name,previous=importedForecastRows.get(name);if(!previous?.rows.length)return;importedForecastUndo.set(name,previous);importedForecastRows.delete(name);const saved=persistForecastState();for(const {card:other} of cards){const notice=other.querySelector('[data-forecast-import-status]');notice.dataset.state=saved?'success':'loading';notice.textContent='已清除当前车型全部阶段的导入数据，可撤销此次清除（刷新后失效）。'+(saved?'本机保存已同步。':forecastStorageWarning);}render();};
       card.querySelector('[data-forecast-import-template]').onclick=()=>{
         const target=context.targetState(),date=stage==='small'?target.smallStartDate:stage==='launch'?target.launchDate:target.steadyStartDate;
         const text='\uFEFF车型（代际）,日期,预测小订,预测大定\r\n'+[target.name,date||context.todayIso(),'',0].map(csvCell).join(',')+'\r\n';
@@ -176,6 +181,8 @@
       const rawRate=root.querySelector('[data-forecast-input="lock"]')?.value;
       const lockRate=rawRate!=null&&rawRate.trim()!==''?Number(rawRate)/100:NaN,validRate=Number.isFinite(lockRate)&&lockRate<=1&&(lockRate>0||(lockRate===0&&root._forecastTouched?.has(forecastDraftControlKey(root.querySelector('[data-forecast-input="lock"]')))));
       for(const {stage,unit,card} of cards){
+        card.querySelector('[data-forecast-import-clear]').disabled=!imported?.rows.length;
+        card.querySelector('[data-forecast-import-undo]').hidden=!importedForecastUndo.has(target.name);
         const node=card.querySelector('[data-forecast-import-result]'),notice=card.querySelector('[data-forecast-import-status]');
         const rows=(imported?.rows||[]).filter(row=>(stage==='small'?metricOf(row)==='small':['gross','lock'].includes(metricOf(row)))&&stageFor(row.date,target,stage)===stage&&(metricOf(row)!=='lock'||stage==='steady'));
         const forecasts=new Map();
@@ -291,11 +298,31 @@
       params.set("subject",state.subject||"");params.set("module",state.module);
       if(state.module==="sales_forecast"){params.set("forecastStage",state.forecastStage||"launch");params.set("forecastView",state.forecastView||"result");if(state.forecastCampaign)params.set("forecastCampaign",state.forecastCampaign);else params.delete("forecastCampaign")}else{params.delete("forecastStage");params.delete("forecastView");params.delete("forecastCampaign")}
       if(!["sales_forecast","generic","raw"].includes(state.module)){params.set("grain",state.grain);if(state.period)params.set("period",state.period)}else{params.delete("grain");params.delete("period")}
-      history[`${mode}State`]({dashboard:true},"",url);
+      if(state.module==='raw'){
+        params.set('rawFile',DATA.raw_files[state.rawFile]?.name||'');
+        params.set('rawSheet',DATA.raw_files[state.rawFile]?.sheets[state.rawSheet]?.name||'');
+        if(state.rawQuery)params.set('rawQuery',state.rawQuery);else params.delete('rawQuery');
+      }else for(const key of ['rawFile','rawSheet','rawQuery'])params.delete(key);
+      history[`${mode}State`]({...(mode==='replace'?history.state:{}),dashboard:true},"",url);
+      rememberReadingPosition();
     }catch(error){console.debug("[导航状态] 当前环境不支持写入网址",error)}
+  }
+  let restoringReadingPosition=false;
+  function rememberReadingPosition(){
+    if(restoringReadingPosition||$('#page')?.getAttribute('aria-busy')==='true')return;
+    const page=$('#page'),table=$('#rawTable');
+    try{history.replaceState({...history.state,reading:{page:page?.scrollTop||0,tableTop:table?.scrollTop||0,tableLeft:table?.scrollLeft||0}},'',location.href)}catch{}
+  }
+  function readRawLocation(params){
+    if(!params.has('rawFile'))return;
+    const file=DATA.raw_files.findIndex(item=>item.name===params.get('rawFile'));
+    state.rawFile=Math.max(file,0);
+    state.rawSheet=Math.max(DATA.raw_files[state.rawFile]?.sheets.findIndex(item=>item.name===params.get('rawSheet'))??0,0);
+    state.rawQuery=params.get('rawQuery')||'';
   }
   async function restoreLocationState(){
     captureForecastDraft();
+    const reading=history.state?.reading;restoringReadingPosition=true;
     const params=new URLSearchParams(location.search),requested=params.get("subject"),requestedSubject=DATA.subjects.find(item=>item.id===requested||item.name===requested);
     if(requestedSubject)state.subject=requestedSubject.id;
     state.module=params.get("module")||state.module;
@@ -304,7 +331,9 @@
     const requestedStage=params.get("forecastStage");state.forecastStageAuto=!forecastStages.some(item=>item.id===requestedStage);if(!state.forecastStageAuto)state.forecastStage=requestedStage;
     state.forecastCampaign=params.get("forecastCampaign")||null;
     const requestedView=params.get("forecastView");state.forecastView=forecastViews.includes(requestedView)?requestedView:"result";
-    await ensureState();await renderAll();
+    readRawLocation(params);
+    try{await ensureState();await renderAll();if(reading){$('#page').scrollTop=reading.page||0;const table=$('#rawTable');if(table){table.scrollTop=reading.tableTop||0;table.scrollLeft=reading.tableLeft||0;}}}
+    finally{restoringReadingPosition=false;}
   }
 
   async function init(){
@@ -313,6 +342,7 @@
     state.subject=(requestedSubject||DATA.subjects.find(item=>item.modules.includes("overview"))||DATA.subjects[0]).id;
     state.module=params.get("module")||state.module;
     state.grain=params.get("grain")||state.grain;state.period=params.get("period")||state.period;
+    readRawLocation(params);
     if(state.module==="launch_rhythm"&&!params.get("grain"))state.grain="day";
     if(forecastStages.some(item=>item.id===params.get("forecastStage"))){state.forecastStage=params.get("forecastStage");state.forecastStageAuto=false}
     state.forecastCampaign=params.get("forecastCampaign")||null;
@@ -321,12 +351,42 @@
     bindStatic();renderSubjectSelect();await ensureState();await renderAll();syncUrl("replace");
   }
   function bindStatic(){
+    history.scrollRestoration='manual';
+    let readingTimer;
+    document.addEventListener('scroll',event=>{if(event.target.matches?.('#page,#rawTable')&&!readingTimer)readingTimer=setTimeout(()=>{readingTimer=null;rememberReadingPosition()},500)},true);
+    document.addEventListener('click',event=>{if(event.target.closest('[data-module],[data-panel-source],[data-workspace-source],[data-forecast-stage-switch],[data-forecast-tab],[data-file],[data-grain],[data-quick-generation]'))rememberReadingPosition()},true);
+    document.addEventListener('change',event=>{if(event.target.matches('#subjectSelect,#periodSelect,#rawFile,#rawSheet'))rememberReadingPosition()},true);
     $("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")};
     $("#quickGenerationList").onclick=async event=>{const button=event.target.closest('[data-quick-generation]');if(!button)return;captureForecastDraft();state.subject=button.dataset.quickGeneration;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")};
     $("#grainSelect").onclick=async event=>{const button=event.target.closest("button");if(!button||button.disabled)return;state.grain=button.dataset.grain;const board=await getDashboard();const view=board?.views?.[state.grain];state.period=view?.default_period||null;await renderAll();syncUrl("push")};
     $("#periodSelect").onchange=async event=>{if(state.module==="sales_forecast"){captureForecastDraft();state.forecastCampaign=event.target.value;await renderAll()}else{state.period=event.target.value;await renderPage()}syncUrl("push")};
     window.addEventListener("popstate",()=>restoreLocationState());
     window.addEventListener("resize",syncTopbarQuickLayout,{passive:true});
+    document.addEventListener('click',event=>document.querySelectorAll('.forecast-chart-picker[open]').forEach(picker=>{if(!picker.contains(event.target))picker.open=false}));
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'){const picker=document.querySelector('.forecast-chart-picker[open]');if(picker){event.preventDefault();picker.open=false;picker.querySelector('summary').focus({preventScroll:true});}}});
+    document.addEventListener('focusin',event=>{
+      const point=event.target;if(!point.matches?.('.forecast-evidence-line-scroll circle[aria-label]'))return;
+      const svg=point.closest('svg');svg.querySelectorAll('circle[aria-label]').forEach(node=>node.setAttribute('tabindex',node===point?'0':'-1'));
+      const readout=svg.closest('.forecast-evidence-line-scroll').nextElementSibling;
+      if(readout?.matches('[data-chart-readout]'))readout.textContent='← → 切换 · '+point.getAttribute('aria-label');
+    });
+    document.addEventListener('keydown',event=>{
+      if(!event.target.matches?.('.forecast-evidence-line-scroll circle[aria-label]')||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+      event.preventDefault();const points=[...event.target.closest('svg').querySelectorAll('circle[aria-label]')],index=points.indexOf(event.target);
+      points[event.key==='Home'?0:event.key==='End'?points.length-1:Math.max(0,Math.min(points.length-1,index+(event.key==='ArrowRight'?1:-1)))].focus();
+    });
+  }
+  function bindReferencePickers(root){
+    root.querySelectorAll('.forecast-chart-picker').forEach(picker=>{
+      if(picker.dataset.pickerReady)return;picker.dataset.pickerReady='true';
+      const panel=picker.querySelector('.forecast-chart-picker-panel');
+      panel.insertAdjacentHTML('afterbegin','<div class="reference-picker-tools"><label>搜索对比车型<input type="search" data-reference-search placeholder="输入代际名或年份" autocomplete="off"></label><button type="button" data-reference-done>完成</button></div>');
+      panel.insertAdjacentHTML('beforeend','<p class="reference-search-empty" data-reference-empty hidden role="status">没有匹配车型，请调整关键词。</p>');
+      const input=panel.querySelector('[data-reference-search]');
+      input.oninput=()=>{const key=input.value.trim().toLocaleLowerCase();let count=0;panel.querySelectorAll('fieldset').forEach(group=>{let visible=0;group.querySelectorAll('label').forEach(label=>{label.hidden=!!key&&!label.textContent.toLocaleLowerCase().includes(key);if(!label.hidden)visible++});group.hidden=!visible;count+=visible;});panel.querySelector('[data-reference-empty]').hidden=count>0;};
+      panel.querySelector('[data-reference-done]').onclick=()=>{picker.open=false;picker.querySelector('summary').focus({preventScroll:true});};
+      picker.addEventListener('toggle',()=>{if(picker.open)root.querySelectorAll('.forecast-chart-picker[open]').forEach(other=>{if(other!==picker)other.open=false;});});
+    });
   }
   async function ensureState(){
     let item=subject();
@@ -348,10 +408,11 @@
   let navigationRevision=0,pageRevision=0;
   async function renderAll(){
     const revision=++navigationRevision,status=$("#pageStatus"),page=$("#page");
+    const viewKey=state.subject+'|'+state.module,changed=page.dataset.viewKey!==viewKey;
     page.setAttribute("aria-busy","true");
-    const timer=setTimeout(()=>{if(revision===navigationRevision&&status){status.textContent="正在加载分析…";status.classList.add("show")}},180);
-    try{renderSubjectSelect();renderQuickGenerationLinks();renderNav();await renderFilters();if(revision===navigationRevision)await renderPage()}
-    finally{clearTimeout(timer);if(revision===navigationRevision){page.setAttribute("aria-busy","false");status?.classList.remove("show")}}
+    const timer=setTimeout(()=>{if(revision===navigationRevision&&status){status.textContent=`正在加载${subject()?.name||''} · ${moduleLabels[state.module]||'分析'}…`;status.classList.add("show")}},180);
+    try{renderSubjectSelect();renderQuickGenerationLinks();renderNav();await renderFilters();if(revision===navigationRevision){await renderPage();page.dataset.viewKey=viewKey;if(changed&&!restoringReadingPosition)page.scrollTop=0;}}
+    finally{clearTimeout(timer);if(revision===navigationRevision){page.setAttribute("aria-busy","false");status?.classList.remove("show");page.getAnimations().forEach(animation=>animation.cancel());if(!matchMedia('(prefers-reduced-motion: reduce)').matches)page.animate([{opacity:.78},{opacity:1}],{duration:160,easing:'ease-out'});}}
   }
   // Display-only summary of the existing explanation; never selects or changes data.
   function forecastSourceBrief(text){
@@ -409,11 +470,15 @@
     root?.querySelectorAll("[data-forecast-stage-switch]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.forecastStageSwitch===id)));
     const page=$("#page");if(page)page.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
     const owner=DATA.subjects.find(item=>item.modules.includes("sales_forecast")),source=forecastDataFromBoard(boardCache[`${owner?.id}|sales_forecast`]);
-    if((source?.targets||[]).some(t=>t.secondary_generation&&sameForecastModel(t.primary_generation,subject()?.name))){captureForecastDraft();await renderFilters();await renderPage();}
+    await renderFilters();
+    if((source?.targets||[]).some(t=>t.secondary_generation&&sameForecastModel(t.primary_generation,subject()?.name))){captureForecastDraft();await renderPage();}
     if(writeHistory)syncUrl("push");
   }
   function renderNav(){
     const item=subject();
+    $('#moduleSelect').innerHTML=DATA.config.module_order.map(id=>`<option value="${esc(id)}" ${moduleAvailable(item,id)?'':'disabled'}>${esc(moduleLabels[id])}${moduleAvailable(item,id)?'':'（当前主体不可用）'}</option>`).join('');
+    $('#moduleSelect').value=state.module;
+    $('#moduleSelect').onchange=event=>$('#moduleNav').querySelector(`[data-module="${event.target.value}"]`)?.click();
     $("#moduleNav").innerHTML=DATA.config.module_order.map(id=>{
       const available=moduleAvailable(item,id),active=state.module===id;
       const hint=id==="sales_forecast"?"请选择具体车型（代际）后查看":"当前主体没有对应Sheet";
@@ -442,11 +507,17 @@
     });
   }
   async function renderFilters(){
+    $('#filters').dataset.mode='period';
+    $('#grainSelect').closest('.filter-group').hidden=false;
+    $('#periodSelect').closest('label').hidden=false;
+    $('#periodContext').hidden=true;
     $("#filters").style.display="grid";
     $("#subjectSelect").closest("label").style.display="";
     $("#grainSelect").closest(".filter-group").style.display="";
     $("#periodSelect").closest("label").style.display="";
     if(["sales_forecast","generic","raw"].includes(state.module)){
+      $('#filters').dataset.mode='window';
+      $('#grainSelect').closest('.filter-group').hidden=true;
       $("#grainSelect").innerHTML=Object.entries(DATA.config.grain_labels).map(([id,label])=>`<button data-grain="${id}" disabled>${label}</button>`).join("");
       const board=state.module==="sales_forecast"?await getDashboard():null,data=forecastDataFromBoard(board),selected=subject(),campaigns=(data?.targets||[]).filter(t=>sameForecastModel(t.primary_generation||t.name,selected?.name));
       const period=$("#periodSelect");
@@ -455,6 +526,9 @@
         period.innerHTML=campaigns.map(t=>{const label=t.secondary_generation?.startsWith(t.primary_generation)?t.secondary_generation.slice(t.primary_generation.length).trim():t.secondary_generation||t.name;return `<option value="${esc(t.name)}">${esc(label)} · ${esc((small?t.small_start_date:t.launch_date)||'日期未维护')}—${esc((small?t.small_end_date:t.end_date)||'日期未维护')}</option>`}).join('');
         period.value=current?.name||campaigns[0]?.name;period.disabled=false;
       }else{period.innerHTML=`<option>${state.module==="sales_forecast"?(state.forecastStage==='steady'?'一级代际合并 · 平销':'按预测阶段窗口'):"按所选表格范围"}</option>`;period.disabled=true;}
+      $('#periodSelect').closest('label').hidden=period.disabled;
+      $('#periodContext').hidden=!period.disabled;
+      $('#periodContext').textContent=period.selectedOptions[0]?.textContent||'';
       $("#grainSelect").title="此模块不使用日周月筛选";return;
     }
     $("#periodSelect").disabled=false;$("#grainSelect").title="";
@@ -485,7 +559,7 @@
       if(state.module==="sales_forecast")workspace.source=linkedForecastSource(workspace);
       $("#page").innerHTML=renderWorkspacePage(workspace);
       if(state.module!=="sales_forecast")document.querySelector("[data-workspace-source]")?.addEventListener("click",()=>jumpToSource(workspace.source));
-      bindForecastWorkspaceV2();restoreForecastDraft();
+      bindForecastWorkspaceV2();restoreForecastDraft();bindReferencePickers($('#page'));
       return;
     }
     $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${page.sections.map(renderSection).join("")}</div>`;
@@ -1620,13 +1694,13 @@
     if(revision!==rawRenderRevision||state.module!=="raw"||fileIndex!==state.rawFile||sheetIndex!==state.rawSheet)return;
     const visibleRows=visibleRawRows(rows,state.rawQuery);
     $("#page").innerHTML=`<div class="raw-layout"><label class="raw-file-picker"><span>选择底表文件</span><select id="rawFile" aria-label="选择底表文件">${DATA.raw_files.map((item,index)=>`<option value="${index}"${index===state.rawFile?" selected":""}>${esc(item.name)}</option>`).join("")}</select></label><aside class="file-list">${DATA.raw_files.map((item,index)=>`<button data-file="${index}" class="${index===state.rawFile?"active":""}" title="${esc(item.name)}">${esc(item.name)}</button>`).join("")}</aside><section class="raw-main"><div class="raw-toolbar"><div class="raw-title"><strong>${esc(file?.name||"")}</strong><small>${sheet?.total_rows||0} 行 × ${sheet?.total_cols||0} 列 · <span id="rawMatchCount" role="status" aria-live="polite">${Math.max(visibleRows.length-1,0)} 条数据（不含表头）</span> · 横向滚动查看其余列</small></div><label><span>Sheet</span><select id="rawSheet">${(file?.sheets||[]).map((item,index)=>`<option value="${index}">${esc(item.name)}</option>`).join("")}</select></label><label><span>表内搜索</span><input id="rawSearch" type="search" value="${esc(state.rawQuery)}" placeholder="在当前 Sheet 中搜索" aria-controls="rawTable" aria-describedby="rawMatchCount"></label><button type="button" id="clearRawSearch" ${state.rawQuery?"":"disabled"}>清空搜索</button><div class="raw-freeze-controls" role="group" aria-label="锁窗格"><label class="raw-freeze-toggle"><input id="rawFreezeRow" type="checkbox" ${state.rawFreezeRow?"checked":""}><span>锁定首行</span></label><label class="raw-freeze-toggle" title="自动锁定左侧连续的文字标题列"><input id="rawFreezeColumn" type="checkbox" ${state.rawFreezeColumn?"checked":""}><span>锁定标题列</span></label></div><button class="export-button" id="exportRaw">导出当前数据</button></div><div class="raw-table ${state.rawFreezeRow?"freeze-row":""} ${state.rawFreezeColumn?"freeze-column":""}" id="rawTable">${renderRawTable(visibleRows)}</div><div class="raw-empty" id="rawEmpty" ${visibleRows.length>1?"hidden":""}><strong>没有匹配的数据</strong><p>请尝试其他关键词，或清空搜索查看当前 Sheet。</p></div></section></div>`;
-    document.querySelectorAll("[data-file]").forEach(button=>button.onclick=()=>{state.rawFile=Number(button.dataset.file);state.rawSheet=0;state.rawQuery="";renderRaw()});
-    $("#rawFile").onchange=event=>{state.rawFile=Number(event.target.value);state.rawSheet=0;state.rawQuery="";renderRaw()};
-    $("#rawSheet").value=state.rawSheet;$("#rawSheet").onchange=event=>{state.rawSheet=Number(event.target.value);state.rawQuery="";renderRaw()};
+    document.querySelectorAll("[data-file]").forEach(button=>button.onclick=async()=>{state.rawFile=Number(button.dataset.file);state.rawSheet=0;state.rawQuery="";await renderRaw();syncUrl('push')});
+    $("#rawFile").onchange=async event=>{state.rawFile=Number(event.target.value);state.rawSheet=0;state.rawQuery="";await renderRaw();syncUrl('push')};
+    $("#rawSheet").value=state.rawSheet;$("#rawSheet").onchange=async event=>{state.rawSheet=Number(event.target.value);state.rawQuery="";await renderRaw();syncUrl('push')};
     applyRawFrozenColumns(visibleRows);
     const updateRawSearch=()=>{const filtered=visibleRawRows(rows,state.rawQuery);$("#rawTable").innerHTML=renderRawTable(filtered);$("#rawMatchCount").textContent=`${Math.max(filtered.length-1,0)} 条数据（不含表头）`;$("#rawEmpty").hidden=filtered.length>1;$("#clearRawSearch").disabled=!state.rawQuery;applyRawFrozenColumns(filtered)};
-    $("#rawSearch").oninput=event=>{state.rawQuery=event.target.value;updateRawSearch()};
-    $("#clearRawSearch").onclick=()=>{state.rawQuery="";$("#rawSearch").value="";updateRawSearch();$("#rawSearch").focus()};
+    $("#rawSearch").oninput=event=>{state.rawQuery=event.target.value;updateRawSearch();syncUrl('replace')};
+    $("#clearRawSearch").onclick=()=>{state.rawQuery="";$("#rawSearch").value="";updateRawSearch();syncUrl('replace');$("#rawSearch").focus()};
     $("#rawFreezeRow").onchange=event=>{state.rawFreezeRow=event.target.checked;$("#rawTable").classList.toggle("freeze-row",state.rawFreezeRow)};
     $("#rawFreezeColumn").onchange=event=>{state.rawFreezeColumn=event.target.checked;$("#rawTable").classList.toggle("freeze-column",state.rawFreezeColumn);applyRawFrozenColumns(visibleRawRows(rows,state.rawQuery))};
     $("#exportRaw").onclick=()=>exportRaw(file,sheet);
@@ -1716,13 +1790,13 @@
     const lines=usable.map((curve,seriesIndex)=>{
       const indexes=curve.values.map((value,index)=>Number.isFinite(value)?index:-1).filter(index=>index>=0),segments=[];let segment=[];
       curve.values.forEach((value,index)=>{if(Number.isFinite(value))segment.push(`${x(index)},${y(value)}`);else if(segment.length){segments.push(segment);segment=[];}});if(segment.length)segments.push(segment);
-      const step=curve.role==='reference'?(hourly?8:14):(hourly?4:7),dots=indexes.map((index,position)=>{const value=curve.values[index],show=curve.role!=='reference'||curve.core?position===0||position===indexes.length-1||(index+1)%step===0:false,offset=curve.role==='actual'?-10:curve.role==='forecast'?15:seriesIndex%2?-19:25,labelY=show?placeLabel(index,y(value)+offset):0,tooltip=`${curve.name} · ${labels[index]||''} · ${format(value)}`;return `<circle cx="${x(index)}" cy="${y(value)}" r="${show?(curve.role==='reference'?2.2:3):2}" fill="#fff" stroke="${curve.color}" stroke-width="${curve.role==='reference'?1.5:2}" tabindex="0" role="img" aria-label="${esc(tooltip)}"><title>${esc(tooltip)}</title></circle>${show?`<text x="${x(index)}" y="${labelY}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${curve.color}">${format(value)}</text>`:''}`}).join('');
+      const step=curve.role==='reference'?(hourly?8:14):(hourly?4:7),dots=indexes.map((index,position)=>{const value=curve.values[index],show=curve.role!=='reference'||curve.core?position===0||position===indexes.length-1||(index+1)%step===0:false,offset=curve.role==='actual'?-10:curve.role==='forecast'?15:seriesIndex%2?-19:25,labelY=show?placeLabel(index,y(value)+offset):0,tooltip=`${curve.name} · ${labels[index]||''} · ${format(value)}`;return `<circle cx="${x(index)}" cy="${y(value)}" r="${show?(curve.role==='reference'?2.2:3):2}" fill="#fff" stroke="${curve.color}" stroke-width="${curve.role==='reference'?1.5:2}" tabindex="${seriesIndex===0&&position===0?0:-1}" role="img" aria-label="${esc(tooltip)}"><title>${esc(tooltip)}</title></circle>${show?`<text x="${x(index)}" y="${labelY}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${curve.color}">${format(value)}</text>`:''}`}).join('');
       return segments.map(points=>`<polyline points="${points.join(' ')}" fill="none" stroke="${curve.color}" stroke-width="${curve.role==='reference'?(curve.core?2.2:1.35):3}" opacity="${curve.role==='reference'&&!curve.core?'.62':'1'}" ${curve.dash?`stroke-dasharray="${curve.dash}"`:''}><title>${esc(curve.name)}</title></polyline>`).join('')+dots;
     }).join('');
     const tickCount=Math.min(maxPoints,8),ticks=Array.from({length:tickCount},(_,slot)=>{const index=Math.round(slot*(maxPoints-1)/Math.max(tickCount-1,1));return `<text x="${x(index)}" y="${H-15}" text-anchor="middle" font-size="9" fill="#7890A6">${esc(labels[index]||'')}</text>`}).join('');
     const legend=usable.map(curve=>{const lastIndex=curve.values.reduce((found,value,index)=>Number.isFinite(value)?index:found,-1),latest=lastIndex>=0?format(curve.values[lastIndex]):'—';return `<span><i class="line-key${curve.dash?' dotted':''}" style="border-color:${curve.color}"></i>${esc(curve.name)} · 最新${latest}</span>`}).join('');
     const valuesTable=table?`<details class="forecast-ref-score-details"><summary>查看图表数值</summary><div class="forecast-score-table"><table><thead><tr><th scope="col">车型／曲线</th>${labels.map(label=>`<th scope="col">${esc(label)}</th>`).join('')}</tr></thead><tbody>${usable.map(curve=>`<tr><th scope="row">${esc(curve.name)}</th>${labels.map((_,index)=>`<td>${Number.isFinite(curve.values[index])?format(curve.values[index]):'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`:'';
-    return `${title||note?`<div class="forecast-task-chart-title"><strong>${esc(title)}</strong><span>${esc(note)}</span></div>`:''}<div class="forecast-svg-scroll forecast-evidence-line-scroll${lifecycle?' forecast-lifecycle-line-scroll':''}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(ariaLabel)}">${grid}${lines}${ticks}</svg></div><div class="legend forecast-task-legend${lifecycle?' forecast-lifecycle-line-legend':''}">${legend}</div>${extra}${valuesTable}`;
+    return `${title||note?`<div class="forecast-task-chart-title"><strong>${esc(title)}</strong><span>${esc(note)}</span></div>`:''}<div class="forecast-svg-scroll forecast-evidence-line-scroll${lifecycle?' forecast-lifecycle-line-scroll':''}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(ariaLabel)}">${grid}${lines}${ticks}</svg></div><p class="forecast-chart-readout" data-chart-readout role="status" aria-live="polite">横向滚动查看完整曲线；键盘 Tab 进入，← → 查看数值，Tab 离开。</p><div class="legend forecast-task-legend${lifecycle?' forecast-lifecycle-line-legend':''}">${legend}</div>${extra}${valuesTable}`;
   }
   function renderLifecycleLineChart({series,labels,ariaLabel,unit='percent',hourly=false,title='',note='',empty='暂无可比较曲线'}){
     return renderForecastEvidenceLines({series:series.map(item=>({...item,name:item.label,role:item.role||'reference',core:true,dash:item.dashed?'7 5':''})),labels,ariaLabel,unit:unit==='percent'?'rate':'number',hourly,title,note,lifecycle:true,table:true,empty});

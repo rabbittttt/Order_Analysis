@@ -134,10 +134,11 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
    await page.setViewportSize({width,height:900});
    const layout=await page.evaluate(()=>({width:innerWidth,pageWidth:document.documentElement.scrollWidth,scoreBottom:document.querySelector('[data-forecast-tab="score"]').getBoundingClientRect().bottom,targetHeight:document.querySelector('.forecast-target').getBoundingClientRect().height,
     fields:[...document.querySelectorAll('[data-forecast-target]')].map(n=>({key:n.dataset.forecastTarget,width:n.getBoundingClientRect().width,height:n.getBoundingClientRect().height,left:n.getBoundingClientRect().left,right:n.getBoundingClientRect().right}))}));
-   report.layout.push(layout);check(width+'px全部7项参数直接可见',layout.fields.length===7&&layout.fields.every(f=>f.width>0&&f.height>0&&f.left>=0&&f.right<=width+1));
+   report.layout.push(layout);check(width+'px全部9项参数直接可见',layout.fields.length===9&&layout.fields.every(f=>f.width>0&&f.height>0&&f.left>=0&&f.right<=width+1));
    check(width+'px无整页横向溢出',layout.pageWidth<=width+1);
-   const limits={1440:200,1024:290,768:390,390:600};
-   check(width+'px顶部至预测打分保持紧凑',layout.scoreBottom<=limits[width]);
+   // Nine always-visible fields now include separate launch periods and small-order days.
+   const limits={1440:160,1024:260,768:340,390:490};
+   check(width+'px九项参数区域保持紧凑',layout.targetHeight<=limits[width]+1&&layout.scoreBottom<750);
    await page.screenshot({path:path.join(out,'forecast-'+width+'.png')});
   }
   for(const width of [1280,1180,1100,1030,1001,1000,900,820,640,600,360]){
