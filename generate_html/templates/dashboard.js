@@ -31,7 +31,8 @@
   const $ = selector => document.querySelector(selector);
   const displayText = value => String(value ?? "").replaceAll("净大定", "留存大定");
   const esc = value => displayText(value).replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
-  const fmt = value => typeof value === "number" ? value.toLocaleString("zh-CN", {maximumFractionDigits: 1}) : esc(value);
+  const numberFormatter = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 1});
+  const fmt = value => typeof value === "number" ? numberFormatter.format(value) : esc(value);
   const colors = {blue:"#1677FF",green:"#00B578",orange:"#FF8A00",purple:"#7C3AED",coral:"#FF4D6D"};
   const LABEL_SCALE_HEADROOM=1.18;
   const chartMax=values=>Math.max(...values.map(value=>Number(value||0)),1)*LABEL_SCALE_HEADROOM;
@@ -461,6 +462,7 @@
     root.querySelectorAll('[data-forecast-tab]').forEach(button=>{const active=button.dataset.forecastTab===id;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.setAttribute('aria-controls',`${prefix}-pane-${button.dataset.forecastTab}`);button.tabIndex=active?0:-1});
     root.querySelectorAll('[data-forecast-pane]').forEach(pane=>pane.classList.toggle('active',pane.dataset.forecastPane===id));
     root.querySelectorAll('[data-lifecycle-subpane]').forEach(pane=>pane.classList.toggle('active',pane.dataset.lifecycleSubpane===`${stage}-${id}`));
+    if(stage==='launch'&&id==='score')root._renderLaunchScoreDashboard?.();
   }
   async function activateForecastStage(id,writeHistory=true){
     if(!forecastStages.some(item=>item.id===id))return;
@@ -1405,6 +1407,8 @@
     const rankedForTask=(task,target,limit=historyList.length)=>scoredForTask(task,target).filter(row=>(task!=='daily'||!dailyUnavailable(row.item,target.days))&&row.summary.coverage>=(task==='hourly'?.2:minimumScoreCoverage)&&(!['small_progress','direct_progress'].includes(task)||rebasedForecastCompletionCurve(row.item,task,target.days).some(Number.isFinite))&&(!['conversion','direct_share','lock'].includes(task)||window.ForecastMath.referenceParameter([{item:row.item,weight:1}],task==='lock'?'lock_rate':task).used.length)).slice(0,limit);
     const scoreBar=(score,label='匹配分')=>`<div class="forecast-score-bar" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.max(score,0)*100)}"><i style="width:${Math.max(0,Math.min(score,1))*100}%"></i><b>${score>=0?`${Math.round(score*100)}分`:'—'}</b></div>`;
     const renderScoreDashboard=target=>{
+      // Ranking for recommendations is unchanged; build the large explanation only on demand.
+      if(state.forecastStage!=='launch'||state.forecastView!=='score')return;
       const node=root.querySelector('[data-forecast-score-dashboard]');if(!node)return;
       const taskList=data.tasks||[],previousTask=node.querySelector('[data-forecast-score-task]')?.value,selectedTask=taskList.some(item=>item.key===previousTask)?previousTask:(taskList[0]?.key||'');
       if(!selectedTask){node.innerHTML='<div class="empty-image">暂无预测打分任务</div>';return}
@@ -1413,6 +1417,7 @@
       node.innerHTML=`<div class="forecast-score-page"><section class="forecast-score-hero"><div><small>当前预测对象 · ${esc(target.name)}</small><h4>预测打分说明</h4><p>当前阶段：<b>${esc(stage)}</b>。页面直接调用实际排序函数与同一份权重配置，不另算展示分；一般任务有效指标覆盖低于45%不自动推荐；D1分时已有发布时间20%证据即可初选，小时真实数据形成后再按曲线形状排序。</p></div><div class="forecast-score-formula"><span>单项相似度 <b>0–100%</b></span><i>×</i><span>配置权重</span><i>÷</i><span>有效权重</span><strong>= 有效总分</strong></div></section><div class="forecast-score-rules"><article><b>基础属性怎么打</b><p>档位、能源、发布节点和时间用于先判断“背景是否可比”；未维护字段不计中性分，直接从有效权重中移除。</p></article><article><b>真实进度怎么打</b><p>结构、斜率和累计曲线只比较真实已发生部分；总小订量级可引用上一阶段小订预测，并明确标注。</p></article><article><b>分数如何落到结论</b><p>每个预测环节使用独立指标和权重；一般任务要求45%有效权重；D1分时允许用已知发布时间初选，缺失的小时形状指标不计分。</p></article></div><section class="forecast-score-summary"><div class="forecast-score-section-head"><div><small>所有预测任务</small><h4>推荐排名汇总</h4></div><span>按有效总分降序</span></div><div class="forecast-score-table forecast-score-summary-table"><table><thead><tr><th>预测任务</th><th>第一名</th><th>第一名得分</th><th>第一名主要得分原因</th><th>第二名</th><th>第二名得分</th><th>第一名有效/配置权重</th></tr></thead><tbody>${summaryRows}</tbody></table></div></section><section class="forecast-score-detail"><div class="forecast-score-section-head"><div><small>逐项核对</small><h4>${esc(taskMeta?.label||selectedTask)}</h4></div><label>评分任务<select data-forecast-score-task>${taskList.map(task=>`<option value="${esc(task.key)}"${task.key===selectedTask?' selected':''}>${esc(task.label)}</option>`).join('')}</select></label></div><p class="forecast-score-purpose">${esc(taskMeta?.purpose||'')}</p><div class="forecast-score-rule-box"><div class="forecast-score-rule-head"><div><small>当前任务实际使用</small><b>为什么这样打分</b></div><span>只有本任务列出的指标参与</span></div><p class="forecast-score-similarity-formula">数值型相似度统一为：1 − |当前值 − 历史值| ÷ max（|当前值|，|历史值|，该指标最小阈值），结果限制在0–100%。</p><div class="forecast-score-table forecast-score-rule-table"><table><thead><tr><th>评分指标</th><th>配置权重</th><th>相似度计算规则</th><th>缺失处理</th></tr></thead><tbody>${ruleRows}</tbody></table></div><p>候选车型有效总分 = Σ（单项相似度 × 配置权重）÷ Σ有效指标权重。某项不参与时，其权重从分母移除，不按0分处理；明确规定缺失分的曲线可用性指标除外。</p></div><div class="forecast-score-table forecast-score-detail-table"><table><thead><tr><th>排名</th><th>候选车型</th><th>有效总分</th><th>有效/配置权重</th><th>实际对比、评分规则与贡献</th></tr></thead><tbody>${detailRows}</tbody></table></div></section></div>`;
       node.querySelector('[data-forecast-score-task]').onchange=()=>renderScoreDashboard(target);
     };
+    root._renderLaunchScoreDashboard=()=>renderScoreDashboard(targetState());
     const refreshCardExplanation=(card,target)=>{
       const task=card.dataset.forecastTask,selected=[...card.querySelectorAll('[data-forecast-ref]')].slice(0,2).map(select=>history.get(select.value)||null),reason=card.querySelector('[data-forecast-ref-reason]');
       if(!reason)return;
@@ -1615,7 +1620,7 @@
       if(linkSmall){const node=root.querySelector('[data-forecast-suggestion]');node.textContent=(smallResult.error?`小订预测不可用：${smallResult.error}`:`首销方法二的总小订采用当前小订预测 ${fmt(small)} 单；该值为预测，随小订参数更新。`)+(node.textContent?' '+node.textContent:'');}
       root._steadyForecastUpdate?.();root._renderImportedForecast?.();renderScaleCheck({...target,small},scenarios);renderForecastDecisionChartV2(root,scenarios.progress.rows.length?scenarios.progress.rows:knownActualRows,'progress');renderForecastDecisionChartV2(root,scenarios.parameter.rows.length?scenarios.parameter.rows:knownActualRows,'parameter');renderForecastWeeklyV2(root,scenarios.progress.rows.length?scenarios.progress.rows:knownActualRows,'progress');renderForecastWeeklyV2(root,scenarios.parameter.rows.length?scenarios.parameter.rows:knownActualRows,'parameter');renderForecastReferenceChartV2(root,data,history);if(root.querySelector('[data-forecast-pane="score"].active'))renderScoreDashboard(target);
     };
-    const activateForecastTab=(id,writeHistory=true)=>{if(!forecastViews.includes(id))return;applyForecastView(root,id);if(state.forecastStage==='launch'&&id==='evidence'){const target=targetState();root.querySelectorAll('[data-forecast-task]').forEach(card=>refreshCardExplanation(card,target));renderForecastReferenceChartV2(root,data,history)}if(state.forecastStage==='launch'&&id==='score')renderScoreDashboard(targetState());if(writeHistory)syncUrl('push')};
+    const activateForecastTab=(id,writeHistory=true)=>{if(!forecastViews.includes(id))return;applyForecastView(root,id);if(state.forecastStage==='launch'&&id==='evidence'){const target=targetState();root.querySelectorAll('[data-forecast-task]').forEach(card=>refreshCardExplanation(card,target));renderForecastReferenceChartV2(root,data,history)}if(writeHistory)syncUrl('push')};
     root.querySelectorAll('[data-forecast-stage-switch]').forEach(button=>button.onclick=()=>activateForecastStage(button.dataset.forecastStageSwitch));
     const forecastTabButtons=[...root.querySelectorAll('[data-forecast-tab]')];
     forecastTabButtons.forEach((button,index)=>{button.onclick=()=>activateForecastTab(button.dataset.forecastTab);button.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?forecastTabButtons.length-1:(index+(event.key==='ArrowRight'?1:-1)+forecastTabButtons.length)%forecastTabButtons.length;forecastTabButtons[next].focus();activateForecastTab(forecastTabButtons[next].dataset.forecastTab)}});

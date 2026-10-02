@@ -13,6 +13,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DashboardTemplateTests(unittest.TestCase):
+    def test_reused_number_formatter_preserves_existing_display(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
+        formatter = script[script.index('  const displayText ='):script.index('  const colors =')]
+        checks = r'''
+const assert=require('assert');
+const values=[0,-0,NaN,Infinity,-Infinity,1.05,-1.05,1234567.89,Number.MAX_VALUE,Number.MIN_VALUE];
+for(let i=-1000;i<=1000;i++)values.push(i/13);
+for(const value of values)assert.strictEqual(fmt(value),value.toLocaleString('zh-CN',{maximumFractionDigits:1}));
+assert.strictEqual(fmt('<净大定>'),'&lt;留存大定&gt;');
+assert.strictEqual(fmt(null),'');
+'''
+        subprocess.run([node, '-e', formatter + checks], check=True, capture_output=True)
+
     def test_launch_chart_keeps_blank_gaps_and_real_zero(self):
         node = shutil.which('node')
         if not node:
