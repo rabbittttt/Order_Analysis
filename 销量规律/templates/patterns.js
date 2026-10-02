@@ -77,6 +77,8 @@ const dateRangeDays = (a,b) => {
 };
 function setOptions(select, options, selected) {
   clear(select);
+  select.disabled = !options.length;
+  if (!options.length) { const o = el("option", "", "暂无可选项", select); o.value = ""; }
   for (const item of options) {
     const o = el("option", "", item.label, select);
     o.value = String(item.value);
@@ -88,7 +90,8 @@ function makeTable(container, headers, bodyRows, emptyText) {
   clear(container);
   const wrap = el("table", "data-table", null, container);
   const thead = el("thead", "", null, wrap), trh = el("tr", "", null, thead);
-  headers.forEach(h => el("th", "", h, trh));
+  headers.forEach(h => {const th=el("th", "", h, trh);th.scope="col";});
+  container.tabIndex=0;container.setAttribute("role","region");container.setAttribute("aria-label","数据表，可横向滚动查看所有列");
   const tbody = el("tbody", "", null, wrap);
   if (!bodyRows.length) {
     const tr = el("tr", "", null, tbody), td = el("td", "table-empty", emptyText || "当前筛选没有可展示的合格样本。", tr);
@@ -161,6 +164,7 @@ function setMetricSwitch() {
   $("metricSourceLabel").textContent = metricName(state.metric) + " · 源字段 " + metricSource(state.metric);
 }
 function updateFilters(resetDate) {
+  clearDateError();
   const eligible = scopeEntries(state.metric);
   const categories = unique(eligible.map(x => x.category).filter(Boolean)).sort((a,b)=>a.localeCompare(b,"zh-CN"));
   const categoryOptions = [{value:"__ALL__",label:"全部分类"}].concat(categories.map(x=>({value:x,label:x})));
@@ -327,7 +331,7 @@ function makeTrendPoints(series, grain) {
 function renderLine(container,points,title,color,grain) {
   clear(container);el("div","chart-box-title",title,container);
   if(!points.length){chartEmpty(container,"当前车型、阶段和日期范围内没有观测。");return;}
-  const w=850,h=235,left=58,right=18,top=12,bottom=43,pw=w-left-right,ph=h-top-bottom;
+  const w=Math.max(320,Math.min(850,container.clientWidth||(innerWidth<850?innerWidth-54:innerWidth-300))),h=250,left=60,right=22,top=12,bottom=43,pw=w-left-right,ph=h-top-bottom;
   const svg=sEl("svg",{viewBox:"0 0 "+w+" "+h,class:"chart-svg",role:"img","aria-label":title+"趋势图"});
   const values=points.map(p=>p.value),lo=Math.min(0,...values),hi=Math.max(0,...values);
   const span=(hi-lo)||1,pad=span*.08,min=lo<0?lo-pad:0,max=hi+pad;
@@ -345,7 +349,7 @@ function renderLine(container,points,title,color,grain) {
   const ticks=points.length<=8?points.map((_,i)=>i):[0,Math.round((points.length-1)/3),Math.round((points.length-1)*2/3),points.length-1];
   unique(ticks).forEach(i=>{
     const p=points[i],label=String(p.key).length>7?String(p.key).slice(0,7):String(p.key);
-    svg.appendChild(sEl("text",{x:x(i),y:h-16,"text-anchor":"middle",class:"chart-label"},label));
+    svg.appendChild(sEl("text",{x:x(i),y:h-16,"text-anchor":i===0?"start":i===points.length-1?"end":"middle",class:"chart-label"},label));
   });
   container.appendChild(svg);
   const coverage=points.map(p=>p.observed+"/"+p.expected).filter(x=>x!=="1/1");
@@ -476,7 +480,8 @@ function holidayPhaseRows(metric){
   }));
 }
 function renderPatternTabs(){
-  document.querySelectorAll("[data-pattern]").forEach(b=>{b.classList.toggle("is-active",b.dataset.pattern===state.pattern);b.setAttribute("aria-selected",b.dataset.pattern===state.pattern?"true":"false");});
+  document.querySelectorAll("[data-pattern]").forEach(b=>{b.classList.toggle("is-active",b.dataset.pattern===state.pattern);b.setAttribute("aria-selected",b.dataset.pattern===state.pattern?"true":"false");b.tabIndex=b.dataset.pattern===state.pattern?0:-1;});
+  $("patternPanels").setAttribute("aria-labelledby","pattern-"+state.pattern);
   const container=$("patternPanels");clear(container);
   const metric=state.metric;
   const intro=$("patternIntro");
@@ -567,6 +572,7 @@ function renderSignals(){
   cardEl=el("article","signal-card",null,c);el("div","signal-card-title","周末 / 工作日日均",cardEl);
   el("strong","signal-value",fmtPct(wkSummary.typical),cardEl);
   el("div","signal-detail","来自每个完整周结果中的周末日均/工作日均ratio；"+wkSummary.samples+"条车型周记录、"+wkSummary.periods+"周",cardEl);
+  $("overviewInsight").textContent=wkSummary.typical!==null?metricName(state.metric)+" · "+state.stage+"：周末日均约为工作日的"+fmtPct(wkSummary.typical)+"（"+wkSummary.models+"车型 / "+wkSummary.periods+"个完整周）":"当前范围缺少合格的完整周样本，可调整范围后查看规律。";
   const life=lifecycleRows(state.metric),lifeSummary=summary(life.map(r=>({...r,start:r.cycle})),"first2_share");
   cardEl=el("article","signal-card",null,c);el("div","signal-card-title","首销首2天占比",cardEl);
   el("strong","signal-value",fmtPct(lifeSummary.typical),cardEl);
@@ -627,9 +633,13 @@ function renderOverview(){
 }
 function renderPatterns(){
   renderPatternTabs();
+  document.querySelectorAll(".pattern-chart").forEach(node=>{
+    node.tabIndex=0;node.setAttribute("role","region");node.setAttribute("aria-label","规律图表，可横向滚动查看全部内容");
+    node.classList.toggle("has-wide-chart",Boolean(node.querySelector("svg")));
+  });
 }
 function forecastEligibleModels(){
-  const base=optionRows(state.metric).filter(r=>r.stage===state.stage).map(r=>String(r.model));
+  const base=matchingRows(rows,state.metric,false).map(r=>String(r.model));
   return unique(base).sort((a,b)=>a.localeCompare(b,"zh-CN"));
 }
 function profileId(p){return [p.model,p.metric,p.stage,p.cycle,p.source,p.grain,p.cutoff||p.as_of,p.target_start,p.target_end].join("|");}
@@ -641,6 +651,9 @@ function fillForecastControls(){
   const opts=list.map(p=>({value:profileId(p),label:(p.cycle||"未分批")+" · "+(p.source||"未标来源")+" · "+(dateOnly(p.target_start)||"待定")+"～"+(dateOnly(p.target_end)||"待定")+" · 截止 "+(dateOnly(p.cutoff||p.as_of)||"未知")}));
   state.profileKey=opts.some(x=>x.value===state.profileKey)?state.profileKey:(opts[0]?opts[0].value:"");
   setOptions($("forecastProfile"),opts,state.profileKey);
+  const selected=opts.find(o=>o.value===state.profileKey);
+  $("forecastProfile").title=selected?selected.label:"暂无匹配画像";
+  $("forecastSelection").textContent=selected?state.forecastModel+" · "+metricName(state.metric)+" · "+state.stage+" · "+selected.label:"当前选择没有匹配的预测序列。";
   return list.find(p=>profileId(p)===state.profileKey)||null;
 }
 function profileStatus(status){
@@ -689,6 +702,7 @@ function scoreBacktests(profile) {
 }
 function renderBacktest(profile, evaluation) {
   const chart=$("backtestChart"),table=$("backtestTableWrap");
+  chart.tabIndex=0;chart.setAttribute("role","region");chart.setAttribute("aria-label","历史回测图，可横向滚动查看完整图表");
   if(!profile){
     chartEmpty(chart,"没有与当前选择完全匹配的预测画像。");
     makeTable(table,["目标期","实际","规则预测","基准预测","状态"],[],"当前没有可展示的同口径回测样本。");
@@ -739,7 +753,7 @@ function renderForecast() {
   if(profile){
     const cutoff=dateOnly(profile.cutoff||profile.as_of||profile.last_observation);
     const latestOutside=Boolean(cutoff&&state.end&&cutoff>state.end);
-    const target=latestOutside?"超出当前历史范围":dateOnly(profile.target_start)+"～"+dateOnly(profile.target_end);
+    const target=latestOutside?"超出当前历史范围":profile.target_start&&profile.target_end?dateOnly(profile.target_start)+"～"+dateOnly(profile.target_end):"暂无完整目标期";
     [
       ["目标周期",target],
       ["基准",latestOutside?"—":fmtNum(profile.baseline)],
@@ -772,15 +786,30 @@ function renderForecast() {
 }
 function updateTrial(){
   const mode=document.querySelector('input[name="trialMode"]:checked').value;
-  const daysField=$("trialDaysField"),label=$("trialBaseLabel"),factorLabel=$("trialFactorLabel");
-  if(mode==="daily"){daysField.hidden=false;label.textContent="参考日均（辆 / 日）";if(factorLabel)factorLabel.textContent="日均倍率";}
-  else{daysField.hidden=true;label.textContent="上期总量（辆）";if(factorLabel)factorLabel.textContent="总量倍率";}
+  const daily=mode==="daily";
+  $("trialDaysField").hidden=!daily;
+  $("trialBaseLabel").textContent=daily?"参考日均（辆 / 日）":"上期总量（辆）";
+  $("trialFactorLabel").textContent=daily?"日均倍率":"总量倍率";
+  const ids=daily?["trialBase","trialFactor","trialDays"]:["trialBase","trialFactor"];
+  const labels={trialBase:"基准",trialFactor:"倍率",trialDays:"预测天数"};
+  let error="",missing=false;
+  for(const id of ["trialBase","trialFactor","trialDays"]){
+    const input=$(id); input.removeAttribute("aria-invalid");
+    if(!ids.includes(id))continue;
+    const blank=input.value.trim()===""; const value=Number(input.value);
+    const invalid=input.validity.badInput || (!blank&&(!Number.isFinite(value)||value<0||(id==="trialDays"&&(!Number.isInteger(value)||value<1))));
+    if(invalid){input.setAttribute("aria-invalid","true");error=error||labels[id]+(id==="trialDays"?"必须是大于等于1的整数。":"必须是有限的非负数。");}
+    if(blank){missing=true;if(input.validity.badInput)error=error||labels[id]+"请输入有效数字。";}
+  }
+  const out=$("trialResult"),errorNode=$("trialError");clear(out);el("span","","单一倍率试算",out);
   const base=Number($("trialBase").value),factor=Number($("trialFactor").value),days=Number($("trialDays").value);
-  const out=$("trialResult");clear(out);el("span","","单一倍率试算",out);
-  if(!Number.isFinite(base)||base<0||!Number.isFinite(factor)||factor<0||(mode==="daily"&&(!Number.isFinite(days)||days<=0))){el("strong","","—",out);el("small","","请输入非负基准、倍率和有效天数。",out);return;}
-  const total=mode==="daily"?base*factor*days:base*factor;
-  el("strong","",fmtNum(total)+" 辆",out);
-  el("small","",mode==="daily"?fmtNum(base)+" × "+fmtNum(factor)+" × "+fmtNum(days)+"天":"上期总量 "+fmtNum(base)+" × 总量倍率 "+fmtNum(factor),out);
+  const total=daily?base*factor*days:base*factor;
+  if(!missing&&!error&&!Number.isFinite(total))error="数值过大，请调小基准、倍率或天数。";
+  errorNode.textContent=error;errorNode.hidden=!error;
+  out.classList.toggle("is-invalid",Boolean(error));
+  if(error||missing){el("strong","","—",out);el("small","",error?"请修正标出的输入后继续。":"填写基准、倍率"+(daily?"和整数天数":"")+"后显示试算结果。",out);return;}
+  el("strong","",fmtNum(total)+" 辆",out);showUpdate(out);
+  el("small","",daily?fmtNum(base)+" × "+fmtNum(factor)+" × "+fmtNum(days)+"天":"上期总量 "+fmtNum(base)+" × 总量倍率 "+fmtNum(factor),out);
 }
 function evidenceRows(){
   if(state.evidence==="daily")return currentSeries(state.metric);
@@ -794,18 +823,22 @@ function searchEvidence(list){
   return list.filter(r=>Object.values(r).some(v=>String(v==null?"":v).toLocaleLowerCase().includes(q))||categoryOf(r.model).toLocaleLowerCase().includes(q));
 }
 function renderEvidence(){
-  const list=searchEvidence(evidenceRows());const wrap=$("evidenceTableWrap"),offset=state.pageNo*PAGE_SIZE,page=list.slice(offset,offset+PAGE_SIZE);
+  const list=searchEvidence(evidenceRows());
+  const pages=Math.max(1,Math.ceil(list.length/PAGE_SIZE));
+  state.pageNo=Math.min(state.pageNo,pages-1);
+  const wrap=$("evidenceTableWrap"),offset=state.pageNo*PAGE_SIZE,page=list.slice(offset,offset+PAGE_SIZE);
   $("evidenceMeta").textContent=state.evidence==="daily"?"净大定和锁单分别显示当前口径；表内保留原始阶段、批次、来源和负值。筛选命中 "+fmtInt(list.length)+" 条记录。":"净大定→交车锁单的0–3日共同日期相关性；不代表逐单转化率，也不作为锁单数量预测系数。筛选命中 "+fmtInt(list.length)+" 条记录。";
   if(state.evidence==="daily"){
     makeTable(wrap,["日期","车型","车型分类","指标口径","阶段","观测值","批次 / 周期","来源","生命周期"],
       page.map(r=>[{text:dateOnly(r.date)},{text:r.model},{text:categoryOf(r.model)},{text:metricName(r.metric)+" · "+metricSource(r.metric)},{text:r.stage},{text:fmtNum(r.value),cls:"number"+(num(r.value)<0?" negative":"")},{text:r.cycle},{text:r.source},{text:r.life==null?"—":"D"+r.life}]),
-      "当前口径、车型、阶段和日期范围内没有逐日观测。");
+      state.search.trim()?"没有匹配“"+state.search.trim()+"”的记录。清除搜索后查看当前范围。":"当前范围没有逐日观测，可调整日期、车型或销售阶段。");
   }else{
     makeTable(wrap,["车型","分类","阶段","大定来源","锁单来源","滞后日","共同日期数","日期范围","水平相关","日变化相关","说明"],
       page.map(r=>[{text:r.model},{text:categoryOf(r.model)},{text:r.stage},{text:r.deposit_source},{text:r.lock_source},{text:fmtInt(r.lag),cls:"number"},{text:fmtInt(r.pairs),cls:"number"},{text:dateOnly(r.start)+"～"+dateOnly(r.end)},{text:fmtNum(r.level_corr),cls:"number"},{text:fmtNum(r.change_corr),cls:"number"},{text:r.status}]),
       "当前选择没有满足完整日期范围的净大定与锁单配对样本。");
   }
-  const pages=Math.max(1,Math.ceil(list.length/PAGE_SIZE));
+  $("exportCsv").disabled=!list.length;
+  $("exportCsv").title=list.length?"导出所有搜索命中的记录，不限当前页":"没有匹配记录可导出";
   $("evidencePageInfo").textContent="第 "+(state.pageNo+1)+" / "+pages+" 页 · 共 "+fmtInt(list.length)+" 条";
   $("prevPage").disabled=state.pageNo<=0;$("nextPage").disabled=state.pageNo+1>=pages;
 }
@@ -815,7 +848,9 @@ function csvEscape(v){
   return '"'+x.replace(/"/g,'""')+'"';
 }
 function exportCsv(){
-  const list=searchEvidence(evidenceRows());let headers,items;
+  const list=searchEvidence(evidenceRows());
+  if(!list.length){announce("没有匹配记录可导出，请清除搜索或调整范围。");return;}
+  let headers,items;
   if(state.evidence==="daily"){
     headers=["日期","车型","车型分类","指标源口径","阶段","观测值","批次周期","来源","生命周期"];
     items=list.map(r=>[dateOnly(r.date),r.model,categoryOf(r.model),metricSource(r.metric),r.stage,r.value,r.cycle,r.source,r.life==null?"":"D"+r.life]);
@@ -825,10 +860,12 @@ function exportCsv(){
   }
   const content="\uFEFF"+[headers,...items].map(row=>row.map(csvEscape).join(",")).join("\r\n");
   const blob=new Blob([content],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=el("a");
-  a.href=url;a.download="销量规律_"+metricName(state.metric)+"_"+state.stage+"_"+(state.evidence==="daily"?"逐日明细":"净大定锁单相关")+".csv";a.click();
+  a.href=url;a.download="销量规律_"+(state.evidence==="daily"?metricName(state.metric):"净大定锁单")+"_"+state.stage+"_"+(state.evidence==="daily"?"逐日明细":"净大定锁单相关")+".csv";a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
+  announce("已生成 "+fmtInt(list.length)+" 条记录的 CSV，下载已交给浏览器。");
 }
-function updatePage(page){
+function updatePage(page,save=true){
+  if(!["overview","patterns","forecast","evidence"].includes(page))page="overview";
   state.page=page;
   const info={
     overview:["销量规律概览","先确认口径与样本范围，再查看可用于预测的历史信号。"],
@@ -837,16 +874,22 @@ function updatePage(page){
     evidence:["证据明细","从汇总指标追溯到每日观测和净大定→锁单共同日期相关性。"]
   }[page];
   $("pageTitle").textContent=info[0];$("pageDescription").textContent=info[1];
-  document.querySelectorAll("[data-panel]").forEach(b=>{const on=b.dataset.panel===page;b.classList.toggle("is-active",on);b.setAttribute("aria-selected",on?"true":"false");});
+  document.querySelectorAll("[data-panel]").forEach(b=>{const on=b.dataset.panel===page;b.classList.toggle("is-active",on);b.setAttribute("aria-selected",on?"true":"false");b.tabIndex=on?0:-1;});
   document.querySelectorAll(".page-panel").forEach(p=>p.hidden=p.id!=="panel-"+page);
-  if(page==="patterns")renderPatterns();if(page==="forecast")renderForecast();if(page==="evidence")renderEvidence();
+  if(page==="overview")renderOverview();if(page==="patterns")renderPatterns();if(page==="forecast")renderForecast();if(page==="evidence")renderEvidence();
+  showUpdate($("panel-"+page));
+  if(save){saveRoute(true);window.scrollTo({top:0});}
 }
-function refresh(){
+function refresh(resetPage=true){
   cache.clear();
-  renderOverview();
+  if(resetPage)state.pageNo=0;
+  renderRangeNotice();
+  if(state.page==="overview")renderOverview();
   if(state.page==="patterns")renderPatterns();
   if(state.page==="forecast")renderForecast();
   if(state.page==="evidence")renderEvidence();
+  showUpdate($("panel-"+state.page));
+  saveRoute(false);
 }
 function setExcelLink(){
   const link=$("excelLink"),topLink=$("excelTopLink");
@@ -855,38 +898,109 @@ function setExcelLink(){
   $("sourceBadge").textContent="数据源 · "+(meta.source_name||"未提供");
   $("footerSource").textContent="源文件："+(meta.source_name||"未提供")+" · "+dateOnly(meta.date_start)+" 至 "+dateOnly(meta.date_end)+" · SHA-256 "+(meta.sha256||"未提供");
 }
+const motionPreference=window.matchMedia("(prefers-reduced-motion: reduce)");
+const runningMotion=new Map();
+function showUpdate(node){
+  if(!node||node.hidden)return;
+  const previous=runningMotion.get(node);if(previous)previous.cancel();
+  runningMotion.delete(node);
+  if(motionPreference.matches||!node.animate)return;
+  const animation=node.animate([{opacity:.78,transform:"translateY(4px)"},{opacity:1,transform:"translateY(0)"}],{duration:180,easing:"ease-out"});
+  runningMotion.set(node,animation);
+  animation.finished.then(()=>{if(runningMotion.get(node)===animation)runningMotion.delete(node);}).catch(()=>{});
+}
+motionPreference.addEventListener("change",()=>{if(motionPreference.matches){runningMotion.forEach(a=>a.cancel());runningMotion.clear();}});
+let statusTimer;
+function announce(message){
+  const node=$("actionStatus");clearTimeout(statusTimer);
+  node.textContent=message;node.classList.add("is-visible");
+  statusTimer=setTimeout(()=>node.classList.remove("is-visible"),5000);
+}
+const routeKeys=["page","pattern","metric","category","model","stage","start","end","grain","compare","evidence","forecastModel","forecastGrain","profileKey"];
+function saveRoute(push){
+  const params=new URLSearchParams();routeKeys.forEach(k=>params.set(k,String(state[k])));
+  const hash="#"+params.toString();
+  if(location.hash!==hash)history[push?"pushState":"replaceState"](null,"",hash);
+}
+function restoreRoute(){
+  const hash=location.hash.slice(1),params=new URLSearchParams(hash);
+  routeKeys.forEach(k=>{if(params.has(k))state[k]=k==="compare"?params.get(k)==="true":params.get(k);});
+  if(!hash.includes("=")&&["overview","patterns","forecast","evidence"].includes(hash))state.page=hash;
+  if(!metricByKey.get(state.metric)?.available)state.metric=defaultMetric.key;
+  if(!["months","week","holiday","cycles"].includes(state.pattern))state.pattern="months";
+  if(!["daily","lags"].includes(state.evidence))state.evidence="daily";
+  if(!["日","周","月","年"].includes(state.grain))state.grain="月";
+  if(!["日","周","月"].includes(state.forecastGrain))state.forecastGrain="月";
+  const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+"T00:00:00Z"))&&new Date(value+"T00:00:00Z").toISOString().slice(0,10)===value;
+  if(!validDate(state.start)||!validDate(state.end)){state.start="";state.end="";}
+  updateFilters(false);
+  $("trendGrain").value=state.grain;$("compareMetrics").checked=state.compare;$("forecastGrain").value=state.forecastGrain;
+  document.querySelectorAll("[data-evidence]").forEach(b=>{const on=b.dataset.evidence===state.evidence;b.classList.toggle("is-active",on);b.setAttribute("aria-pressed",String(on));});
+  clearDateError();refresh();updatePage(state.page,false);
+}
+function clearDateError(){
+  $("dateError").hidden=true;$("dateError").textContent="";
+  ["dateStart","dateEnd"].forEach(id=>$(id).removeAttribute("aria-invalid"));
+}
+function applyDates(){
+  clearDateError();const from=$("dateStart"),to=$("dateEnd");let error="";
+  if(!from.value||!to.value)error="请填写开始和结束日期。";
+  else if(!from.validity.valid||!to.validity.valid)error="日期须在原始数据覆盖范围内。";
+  else if(from.value>to.value)error="开始日期不能晚于结束日期。";
+  if(error){
+    [from,to].forEach(input=>input.setAttribute("aria-invalid","true"));
+    $("dateError").textContent=error+" 结果仍使用上次有效范围；请修正日期或重置。";$("dateError").hidden=false;return;
+  }
+  state.start=from.value;state.end=to.value;refresh();
+}
+function bindTabs(container,selector,activate){
+  const buttons=[...container.querySelectorAll(selector)];
+  container.addEventListener("keydown",event=>{
+    if(!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(event.key))return;
+    const index=buttons.indexOf(event.target);if(index<0)return;
+    event.preventDefault();
+    const next=event.key==="Home"?0:event.key==="End"?buttons.length-1:(index+(["ArrowRight","ArrowDown"].includes(event.key)?1:-1)+buttons.length)%buttons.length;
+    buttons[next].focus();activate(buttons[next]);
+  });
+}
+bindTabs(document.querySelector(".main-nav"),"[data-panel]",b=>updatePage(b.dataset.panel));
+bindTabs(document.querySelector(".subnav"),"[data-pattern]",b=>{state.pattern=b.dataset.pattern;renderPatterns();showUpdate($("patternPanels"));saveRoute(false);});
+window.addEventListener("popstate",restoreRoute);window.addEventListener("hashchange",restoreRoute);
+document.querySelector(".skip-link").addEventListener("click",e=>{e.preventDefault();$("mainContent").focus();});
+document.querySelector(".brand").addEventListener("click",e=>{e.preventDefault();updatePage("overview");});
 document.querySelectorAll("[data-panel]").forEach(b=>b.addEventListener("click",()=>updatePage(b.dataset.panel)));
-document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>updatePage(b.dataset.go)));
+document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>{updatePage(b.dataset.go);$("pageTitle").focus({preventScroll:true});window.scrollTo({top:0});}));
 document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click",()=>{
   if(b.disabled||state.metric===b.dataset.metric)return;
   state.metric=b.dataset.metric;state.category="__ALL__";state.model="__ALL__";state.stage="";
-  updateFilters(true);refresh();
+  clearDateError();updateFilters(true);refresh();
 }));
 $("categoryFilter").addEventListener("change",e=>{state.category=e.target.value;state.model="__ALL__";state.stage="";updateFilters(false);refresh();});
 $("modelFilter").addEventListener("change",e=>{state.model=e.target.value;state.stage="";updateFilters(false);refresh();});
 $("stageFilter").addEventListener("change",e=>{state.stage=e.target.value;refresh();});
-$("dateStart").addEventListener("change",e=>{state.start=e.target.value;if(state.start>state.end)state.end=state.start;$("dateEnd").value=state.end;refresh();});
-$("dateEnd").addEventListener("change",e=>{state.end=e.target.value;if(state.end<state.start)state.start=state.end;$("dateStart").value=state.start;refresh();});
-$("resetFilters").addEventListener("click",()=>{state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.compare=false;$("trendGrain").value="月";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;updateFilters(true);refresh();});
+$("dateStart").addEventListener("change",applyDates);
+$("dateEnd").addEventListener("change",applyDates);
+$("resetFilters").addEventListener("click",()=>{state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.compare=false;$("trendGrain").value="月";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);refresh();announce("已恢复默认口径、车型和日期范围。");});
 $("trendGrain").addEventListener("change",e=>{state.grain=e.target.value;refresh();});
 $("compareMetrics").addEventListener("change",e=>{state.compare=e.target.checked;refresh();});
-document.querySelectorAll("[data-pattern]").forEach(b=>b.addEventListener("click",()=>{state.pattern=b.dataset.pattern;renderPatterns();}));
-$("forecastModel").addEventListener("change",e=>{state.forecastModel=e.target.value;state.profileKey="";renderForecast();});
-$("forecastGrain").addEventListener("change",e=>{state.forecastGrain=e.target.value;state.profileKey="";renderForecast();});
-$("forecastProfile").addEventListener("change",e=>{state.profileKey=e.target.value;renderForecast();});
+document.querySelectorAll("[data-pattern]").forEach(b=>b.addEventListener("click",()=>{state.pattern=b.dataset.pattern;renderPatterns();showUpdate($("patternPanels"));saveRoute(false);}));
+$("forecastModel").addEventListener("change",e=>{state.forecastModel=e.target.value;state.profileKey="";renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});
+$("forecastGrain").addEventListener("change",e=>{state.forecastGrain=e.target.value;state.profileKey="";renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});
+$("forecastProfile").addEventListener("change",e=>{state.profileKey=e.target.value;renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});
 document.querySelectorAll('input[name="trialMode"]').forEach(x=>x.addEventListener("change",updateTrial));
-["trialBase","trialDays","trialFactor"].forEach(id=>$(id).addEventListener("input",updateTrial));
+let trialTimer;["trialBase","trialDays","trialFactor"].forEach(id=>$(id).addEventListener("input",()=>{clearTimeout(trialTimer);trialTimer=setTimeout(updateTrial,120);}));
 document.querySelectorAll("[data-evidence]").forEach(b=>b.addEventListener("click",()=>{
   state.evidence=b.dataset.evidence;state.pageNo=0;
   document.querySelectorAll("[data-evidence]").forEach(x=>{const on=x===b;x.classList.toggle("is-active",on);x.setAttribute("aria-pressed",on?"true":"false");});
-  renderEvidence();
+  renderEvidence();showUpdate($("evidenceTableWrap"));saveRoute(false);
 }));
-$("evidenceSearch").addEventListener("input",e=>{state.search=e.target.value;state.pageNo=0;renderEvidence();});
-$("prevPage").addEventListener("click",()=>{state.pageNo=Math.max(0,state.pageNo-1);renderEvidence();});
-$("nextPage").addEventListener("click",()=>{state.pageNo+=1;renderEvidence();});
+let searchTimer;$("evidenceSearch").addEventListener("input",e=>{state.search=e.target.value;state.pageNo=0;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{renderEvidence();showUpdate($("evidenceTableWrap"));},120);});
+$("prevPage").addEventListener("click",()=>{state.pageNo=Math.max(0,state.pageNo-1);renderEvidence();showUpdate($("evidenceTableWrap"));});
+$("nextPage").addEventListener("click",()=>{state.pageNo+=1;renderEvidence();showUpdate($("evidenceTableWrap"));});
 $("exportCsv").addEventListener("click",exportCsv);
-setExcelLink();updateFilters(true);
+let resizeTimer;window.addEventListener("resize",()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>refresh(false),150);});
+setExcelLink();restoreRoute();
 document.querySelectorAll("[data-metric]").forEach(b=>{if(b.dataset.metric==="交车锁单"&&!metrics.some(x=>x.key==="交车锁单"&&x.available))b.disabled=true;});
 document.querySelectorAll("[data-pattern]").forEach(b=>{const on=b.dataset.pattern===state.pattern;b.classList.toggle("is-active",on);b.setAttribute("aria-selected",on?"true":"false");});
-renderOverview();renderForecast();renderEvidence();
+refresh();saveRoute(false);
 })();

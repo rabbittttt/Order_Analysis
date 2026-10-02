@@ -8,6 +8,7 @@
   <style>__PATTERNS_CSS__</style>
 </head>
 <body>
+  <a class="skip-link" href="#mainContent">跳到分析内容</a>
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="#overview" aria-label="鸿蒙智行销量规律分析首页">
@@ -24,16 +25,16 @@
       <div class="sidebar-label">分析工作台</div>
       <nav class="main-nav" role="tablist" aria-label="分析页面">
         <button class="nav-item is-active" id="nav-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-panel="overview">
-          <span class="nav-icon" aria-hidden="true">▦</span><span>概览</span>
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span>概览</span>
         </button>
         <button class="nav-item" id="nav-patterns" role="tab" aria-selected="false" aria-controls="panel-patterns" data-panel="patterns">
-          <span class="nav-icon" aria-hidden="true">⌁</span><span>规律探索</span>
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16l5-7 5 4 8-10M3 21h18"/></svg></span><span>规律探索</span>
         </button>
         <button class="nav-item" id="nav-forecast" role="tab" aria-selected="false" aria-controls="panel-forecast" data-panel="forecast">
-          <span class="nav-icon" aria-hidden="true">↗</span><span>预测试算与回测</span>
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18l7-7 4 4 7-12M15 3h6v6"/></svg></span><span>预测试算与回测</span>
         </button>
         <button class="nav-item" id="nav-evidence" role="tab" aria-selected="false" aria-controls="panel-evidence" data-panel="evidence">
-          <span class="nav-icon" aria-hidden="true">≡</span><span>证据明细</span>
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></svg></span><span>证据明细</span>
         </button>
       </nav>
       <div class="sidebar-spacer"></div>
@@ -44,16 +45,21 @@
       <div class="sidebar-foot">数据保留在本机 · 无网络请求</div>
     </aside>
 
-    <main class="workspace">
+    <main class="workspace" id="mainContent" tabindex="-1">
       <section class="page-heading">
         <div>
           <div class="eyebrow">SALES PATTERN LAB</div>
-          <h1 id="pageTitle">销量规律概览</h1>
+          <h1 id="pageTitle" tabindex="-1">销量规律概览</h1>
           <p id="pageDescription">先确认口径与样本范围，再查看可用于预测的历史信号。</p>
         </div>
         <div id="sourceBadge" class="source-badge"></div>
       </section>
 
+      <nav class="workflow-guide" aria-label="分析流程">
+        <button type="button" data-go="patterns"><span class="step-number">1</span><span>发现规律<small>看比例与适用范围</small></span></button>
+        <button type="button" data-go="forecast"><span class="step-number">2</span><span>验证与试算<small>对比回测基准</small></span></button>
+        <button type="button" data-go="evidence"><span class="step-number">3</span><span>核对与导出<small>追溯原始观测</small></span></button>
+      </nav>
       <section class="metric-control" aria-label="销量口径">
         <div class="metric-control-copy">
           <span class="control-label">分析口径</span>
@@ -70,17 +76,22 @@
         <div class="filter-title"><span class="filter-glyph" aria-hidden="true">⌕</span>分析范围</div>
         <label class="filter-field"><span>车型分类</span><select id="categoryFilter" aria-label="按车型分类筛选"></select></label>
         <label class="filter-field"><span>车型</span><select id="modelFilter" aria-label="按车型筛选"></select></label>
-        <label class="filter-field"><span>销售阶段</span><select id="stageFilter" aria-label="按销售阶段筛选"></select></label>
-        <label class="filter-field date-field"><span>开始日期</span><input type="date" id="dateStart" aria-label="开始日期"></label>
+        <label class="filter-field stage-field"><span>销售阶段</span><select id="stageFilter" aria-label="按销售阶段筛选"></select></label>
+        <label class="filter-field date-field"><span>开始日期</span><input type="date" id="dateStart" aria-label="开始日期" aria-describedby="dateError"></label>
         <span class="date-separator" aria-hidden="true">至</span>
-        <label class="filter-field date-field"><span>结束日期</span><input type="date" id="dateEnd" aria-label="结束日期"></label>
+        <label class="filter-field date-field"><span>结束日期</span><input type="date" id="dateEnd" aria-label="结束日期" aria-describedby="dateError"></label>
         <button type="button" id="resetFilters" class="button button-quiet reset-button">重置</button>
       </section>
+      <div id="dateError" class="field-error" role="alert" hidden></div>
       <div id="rangeNotice" class="range-notice" role="status" aria-live="polite"></div>
 
       <section id="panel-overview" class="page-panel" role="tabpanel" aria-labelledby="nav-overview">
         <div class="kpi-grid" id="overviewKpis"></div>
 
+        <section class="insight-summary" aria-label="当前规律线索">
+          <div><span class="section-kicker">当前可检验的规律线索</span><strong id="overviewInsight"></strong><p>仅描述当前可比样本；普适性与预测有效性仍须跨年验证和回测。</p></div>
+          <button type="button" class="text-button" data-go="patterns">查看证据 →</button>
+        </section>
         <section class="card trend-card">
           <div class="card-heading">
             <div><span class="section-kicker">实际观测</span><h2>销量走势</h2><p class="card-subtitle">按当前口径、车型和阶段聚合；缺失日期不补零。</p></div>
@@ -118,14 +129,14 @@
 
       <section id="panel-patterns" class="page-panel" role="tabpanel" aria-labelledby="nav-patterns" hidden>
         <div class="subnav" role="tablist" aria-label="规律类别">
-          <button class="subnav-item is-active" data-pattern="months" aria-selected="true">月度变化</button>
-          <button class="subnav-item" data-pattern="week">周内与月末</button>
-          <button class="subnav-item" data-pattern="holiday">节假日</button>
-          <button class="subnav-item" data-pattern="cycles">周期比例</button>
+          <button class="subnav-item is-active" role="tab" id="pattern-months" aria-controls="patternPanels" data-pattern="months" aria-selected="true">月度变化</button>
+          <button class="subnav-item" role="tab" id="pattern-week" aria-controls="patternPanels" data-pattern="week">周内与月末</button>
+          <button class="subnav-item" role="tab" id="pattern-holiday" aria-controls="patternPanels" data-pattern="holiday">节假日</button>
+          <button class="subnav-item" role="tab" id="pattern-cycles" aria-controls="patternPanels" data-pattern="cycles">周期比例</button>
         </div>
         <div class="pattern-intro" id="patternIntro"></div>
         <div class="pattern-kpis" id="patternKpis"></div>
-        <div class="pattern-panels" id="patternPanels"></div>
+        <div class="pattern-panels" id="patternPanels" role="tabpanel" aria-labelledby="pattern-months"></div>
       </section>
 
       <section id="panel-forecast" class="page-panel" role="tabpanel" aria-labelledby="nav-forecast" hidden>
@@ -139,6 +150,7 @@
                 <label class="filter-field"><span>预测周期</span><select id="forecastGrain"><option value="日">日</option><option value="周">周</option><option value="月">月</option></select></label>
                 <label class="filter-field"><span>批次 / 来源</span><select id="forecastProfile"></select></label>
               </div>
+              <details class="profile-detail"><summary>查看当前序列、批次与完整来源</summary><p id="forecastSelection"></p></details>
               <div id="forecastKpis" class="forecast-kpis"></div>
               <div id="forecastProfileNote" class="forecast-note"></div>
               <div id="backtestChart" class="backtest-chart"></div>
@@ -150,10 +162,11 @@
               <div class="card-heading compact-heading"><div><span class="section-kicker">单一倍率试算</span><h2>快速场景试算</h2><p class="card-subtitle">填写可比基准，只应用一个倍率。</p></div></div>
               <label class="input-choice"><input type="radio" name="trialMode" value="daily" checked><span>参考日均 × 预测天数</span></label>
               <label class="input-choice"><input type="radio" name="trialMode" value="period"><span>上期总量</span></label>
-              <label class="trial-field"><span id="trialBaseLabel">参考日均（辆 / 日）</span><input type="number" min="0" step="any" id="trialBase" inputmode="decimal" placeholder="输入可比基准"></label>
-              <label class="trial-field" id="trialDaysField"><span>预测天数</span><input type="number" min="1" step="1" id="trialDays" value="30" inputmode="numeric"></label>
-              <label class="trial-field"><span id="trialFactorLabel">日均倍率</span><div class="factor-input"><input type="number" min="0" step="0.01" id="trialFactor" value="1" inputmode="decimal"><span>×</span></div></label>
-              <div id="trialResult" class="trial-result"><span>试算结果</span><strong>—</strong><small>输入基准后计算</small></div>
+              <label class="trial-field"><span id="trialBaseLabel">参考日均（辆 / 日）</span><input type="number" min="0" step="any" id="trialBase" aria-describedby="trialError" inputmode="decimal" placeholder="输入可比基准"></label>
+              <label class="trial-field" id="trialDaysField"><span>预测天数</span><input type="number" min="1" step="1" id="trialDays" aria-describedby="trialError" value="30" inputmode="numeric"></label>
+              <label class="trial-field"><span id="trialFactorLabel">日均倍率</span><div class="factor-input"><input type="number" min="0" step="any" id="trialFactor" aria-describedby="trialError" value="1" inputmode="decimal"><span>×</span></div></label>
+              <div id="trialError" class="field-error" role="alert" hidden></div>
+              <div id="trialResult" class="trial-result" role="status" aria-live="polite" aria-atomic="true"><span>试算结果</span><strong>—</strong><small>输入基准后计算</small></div>
               <p class="trial-footnote">试算是用户设定的情景值，不是系统预测承诺。请勿把重叠的周内、月度、节日规律连乘。</p>
             </section>
           </aside>
@@ -164,7 +177,7 @@
       <section id="panel-evidence" class="page-panel" role="tabpanel" aria-labelledby="nav-evidence" hidden>
         <section class="card evidence-card">
           <div class="card-heading evidence-heading">
-            <div><span class="section-kicker">可追溯数据</span><h2>筛选后证据明细</h2><p class="card-subtitle">逐日记录按当前筛选展示；支持搜索、分页和当前筛选导出。</p></div>
+            <div><span class="section-kicker">可追溯数据</span><h2>筛选后证据明细</h2><p class="card-subtitle">逐日记录按当前筛选展示；导出包含所有搜索命中记录，不限当前页。</p></div>
             <div class="evidence-actions"><label class="search-field"><span class="visually-hidden">搜索记录</span><input id="evidenceSearch" type="search" placeholder="搜索车型、日期、阶段、来源…" autocomplete="off"></label><button type="button" id="exportCsv" class="button button-primary">导出当前筛选 CSV</button></div>
           </div>
           <div class="evidence-mode" role="group" aria-label="证据类型">
@@ -183,6 +196,7 @@
       </footer>
     </main>
   </div>
+  <div id="actionStatus" class="action-status" role="status" aria-live="polite" aria-atomic="true"></div>
   <script id="patterns-data" type="application/json">__PATTERNS_DATA__</script>
   <script>__PATTERNS_JS__</script>
 </body>
