@@ -321,5 +321,71 @@ class ForecastMathTests(unittest.TestCase):
         self.assertFalse(eligible["eligible"])  # Metadata alone cannot establish a trend match.
 
 
+    def launch_daily(self, expression, values=None):
+        item = {'days': 40, 'launch_date': '2026-09-01', 'end_date': '2026-10-10',
+                'daily_orders': [100]+[10]*39}
+        item.update(values or {})
+        return self.run_node(expression.replace('ITEM', json.dumps(item)))
+
+    def test_partial_launch_daily_curve_is_not_stretched_into_full_cycle(self):
+        result = self.launch_daily("m.launchDailyReference(ITEM,'2026-10-11')", {'daily_orders':[100]+[10]*19})
+        self.assertFalse(result['available'])
+        self.assertEqual(len(result['observed']), 20)
+        self.assertEqual(result['orders'], [])
+        self.assertEqual(self.launch_daily("m.adaptLaunchDailyOrders(ITEM,40,'2026-10-11')", {'daily_orders':[100]+[10]*19}), [])
+
+    def test_ongoing_launch_is_excluded_even_if_future_cells_have_values(self):
+        result = self.launch_daily("m.launchDailyReference(ITEM,'2026-09-21')")
+        self.assertFalse(result['available'])
+        self.assertEqual(result['reason'], '首销期尚未结束')
+        self.assertEqual(len(result['observed']), 20)
+        self.assertEqual(self.launch_daily("m.adaptLaunchDailyOrders(ITEM,40,'2026-09-21')"), [])
+
+    def test_launch_final_day_is_not_yet_a_completed_reference(self):
+        result = self.launch_daily("m.launchDailyReference(ITEM,'2026-10-10')")
+        self.assertFalse(result['available'])
+        self.assertEqual(len(result['observed']), 39)
+        self.assertTrue(self.launch_daily("m.launchDailyReference(ITEM,'2026-10-11')")['available'])
+
+    def test_complete_daily_reference_preserves_edge_days_mass_and_zeros(self):
+        item = {'days':8, 'launch_date':'2026-09-01', 'end_date':'2026-09-08', 'daily_orders':[100,20,0,10,15,5,25,35]}
+        same = self.launch_daily("m.adaptLaunchDailyOrders(ITEM,8,'2026-09-09')", item)
+        for value, expected in zip(same, item['daily_orders']):
+            self.assertAlmostEqual(value, expected)
+        stretched = self.launch_daily("m.adaptLaunchDailyOrders(ITEM,12,'2026-09-09')", item)
+        self.assertAlmostEqual(sum(stretched), sum(item['daily_orders']))
+        for actual, expected in zip(stretched[:2]+stretched[-2:], [100,20,25,35]):
+            self.assertAlmostEqual(actual, expected)
+
+    def test_daily_reference_rejects_gaps_invalid_counts_and_bad_windows(self):
+        for value in (None, '', -1, True):
+            with self.subTest(value=value):
+                self.assertFalse(self.launch_daily("m.launchDailyReference(ITEM,'2026-10-11')", {'daily_orders':[100,value]+[10]*38})['available'])
+        for change in ({'days':0}, {'days':39}, {'launch_date':''}, {'end_date':''}, {'end_date':'2026-02-30'}):
+            self.assertFalse(self.launch_daily("m.launchDailyReference(ITEM,'2026-10-11')", change)['available'])
+
+    def daily_runtime(self, expression):
+        script = (ROOT / 'templates' / 'dashboard.js').read_text(encoding='utf-8')
+        declarations = [next(line.strip() for line in script.splitlines() if line.strip().startswith('const '+name+'='))
+                        for name in ('adaptedDailyOrders', 'dailyUnavailable', 'rankedForTask', 'dailyShape')]
+        valid = {'model':'完整参考', 'days':40, 'launch_date':'2026-09-01', 'end_date':'2026-10-10',
+                 'daily_orders':[100]+[10]*39}
+        partial = dict(valid, model='未收齐参考', daily_orders=[100]+[10]*19)
+        return self.run_node("(()=>{const window={ForecastMath:m},todayIso=()=> '2026-10-11',minimumScoreCoverage=.45;"
+            + 'const valid='+json.dumps(valid)+',partial='+json.dumps(partial)+';'
+            + "const historyList=[partial,valid],scoredForTask=()=>historyList.map(item=>({item,summary:{coverage:1}}));"
+            + "const historicalFactor=()=>1,slotWeight=index=>index===0?.7:.3,genericDailyShape=m.genericDailyShape;"
+            + ''.join(declarations) + 'return '+expression+';})()')
+
+    def test_page_recommendation_excludes_partial_daily_reference(self):
+        result = self.daily_runtime("rankedForTask('daily',{days:40}).map(row=>row.item.model)")
+        self.assertEqual(result, ['完整参考'])
+
+    def test_stale_manual_partial_reference_does_not_dilute_valid_daily_shape(self):
+        result = self.daily_runtime("[dailyShape([partial,valid],5,40),dailyShape([valid],5,40),adaptedDailyOrders(partial,40)]")
+        self.assertAlmostEqual(result[0], result[1])
+        self.assertEqual(result[2], [])
+
+
 if __name__ == "__main__":
     unittest.main()

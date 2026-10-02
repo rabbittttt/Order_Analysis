@@ -224,6 +224,40 @@
     return Array.from({length:m},(_,i)=>i<2?normalized[i]:i>=m-2?normalized[n-m+i]:at(1+(i-1)*(n-4)/(m-4)));
   }
 
+  function launchDailyReference(item = {}, today) {
+    const parse = value => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return NaN;
+      const time = Date.parse(value + 'T00:00:00Z');
+      return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value ? time : NaN;
+    };
+    const days = Number(item.days), start = parse(item.launch_date), end = parse(item.end_date), now = parse(today);
+    const source = item.daily_orders || [], observed = [];
+    const completed = Number.isInteger(days) && days > 0 && Number.isFinite(start) && Number.isFinite(now)
+      ? Math.max(0, Math.min(days, Math.floor((now - start) / 86400000))) : 0;
+    for (let i = 0; i < Math.min(completed, source.length); i++) {
+      const value = weightedObserved([{value:source[i], weight:1}]);
+      if (!Number.isFinite(value) || value < 0) break;
+      observed.push(value);
+    }
+    const fail = reason => ({available:false, reason, orders:[], observed});
+    if (!Number.isInteger(days) || days < 1 || ![start, end, now].every(Number.isFinite))
+      return fail('首销完整时间窗口未维护');
+    if (end - start !== (days - 1) * 86400000) return fail('首销日期与天数不一致');
+    if (end >= now) return fail('首销期尚未结束');
+    if (observed.length !== days) return fail('首销逐日大定未收齐或存在无效数量');
+    if (!(observed[0] > 0)) return fail('D1大定不大于0，无法构建相对D1基础曲线');
+    return {available:true, reason:'', orders:observed, observed};
+  }
+
+  function adaptLaunchDailyOrders(item, targetDays, today) {
+    const reference = launchDailyReference(item, today);
+    if (!reference.available) return [];
+    let total = 0;
+    const curve = reference.orders.map(value => (total += value));
+    const adapted = stretchCompletion(curve, targetDays);
+    return adapted.map((value, index) => Math.max((value - (index ? adapted[index-1] : 0)) * total, 0));
+  }
+
   function normalizedShapeSimilarity(current, reference) {
     if(current.length<3||reference.length<3)return NaN;
     if(!current.every(v=>Number.isFinite(v)&&v>=0)||!reference.every(v=>Number.isFinite(v)&&v>=0))return NaN;
@@ -457,6 +491,8 @@
     referenceParameter,
     forecastWindows,
     stretchCompletion,
+    launchDailyReference,
+    adaptLaunchDailyOrders,
     normalizedShapeSimilarity,
     launchHourlyItem,
     applyObservedFloor,
