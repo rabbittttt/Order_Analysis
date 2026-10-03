@@ -3567,6 +3567,37 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 
+/* Lifecycle stages share the launch result/evidence hierarchy, not its formulas. */
+.forecast-workspace.forecast-v2 .forecast-lifecycle-conclusion{border-top:4px solid var(--forecast-blue)}
+.forecast-workspace.forecast-v2 .forecast-lifecycle-conclusion .forecast-scenario-result{grid-template-columns:minmax(190px,.65fr) minmax(0,1.6fr)}
+.forecast-workspace.forecast-v2 .forecast-lifecycle-conclusion .forecast-scenario-breakdown{margin-top:0;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch}
+.forecast-workspace.forecast-v2 .forecast-steady .forecast-scenario-breakdown{grid-template-columns:repeat(3,minmax(0,1fr))}
+.forecast-workspace.forecast-v2 .forecast-lifecycle-conclusion [data-steady-kpi="basis"]{font-size:15px;line-height:1.5;overflow-wrap:anywhere}
+.forecast-workspace.forecast-v2 .forecast-lifecycle-parameters{display:grid;grid-template-columns:minmax(160px,.5fr) minmax(0,1fr);gap:8px 16px;align-items:end}
+.forecast-workspace.forecast-v2 .forecast-lifecycle-parameters .forecast-rail-head{margin:0}
+.forecast-workspace.forecast-v2 .forecast-lifecycle-parameters>.forecast-progress-source{grid-column:1/-1;margin:0}
+.forecast-lifecycle-workspace .forecast-result-main>.forecast-progress-source{margin:0;line-height:1.6}
+.forecast-lifecycle-workspace .forecast-result-main>*{min-width:0}
+.forecast-lifecycle-workspace .forecast-lifecycle-bars article{flex:1 0 40px;width:auto;min-width:40px}
+.forecast-lifecycle-workspace .forecast-ref-grid{align-items:start}
+.forecast-small-order:has([data-small-error]:not([hidden])) [data-small-source],
+.forecast-steady:has([data-steady-error]:not([hidden])) [data-steady-source]{display:none}
+.forecast-reference-context{margin-top:10px;color:#526d82;font-size:11px;line-height:1.6}
+.forecast-reference-context p{margin:6px 0 0!important;min-height:0!important}
+.forecast-reference-facts{display:grid;gap:5px}
+.forecast-reference-facts>div{display:flex;flex-wrap:wrap;gap:3px 12px}
+.forecast-reference-facts b{flex-basis:100%;font-weight:600}
+[data-lifecycle-reference="steady-weekly"]>[data-steady-evidence]{margin-top:14px;padding-top:12px;border-top:1px solid #dce6ef}
+@media(max-width:1100px){
+  .forecast-workspace.forecast-v2 .forecast-lifecycle-workspace .forecast-ref-grid{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:700px){
+  .forecast-workspace.forecast-v2 .forecast-lifecycle-conclusion .forecast-scenario-result{grid-template-columns:minmax(0,1fr)!important}
+  .forecast-workspace.forecast-v2 .forecast-lifecycle-conclusion .forecast-scenario-breakdown{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .forecast-workspace.forecast-v2 .forecast-steady .forecast-scenario-breakdown article:last-child{grid-column:1/-1}
+  .forecast-workspace.forecast-v2 .forecast-lifecycle-parameters{grid-template-columns:minmax(0,1fr)}
+}
+
 /* Compact reference controls: reference and its weight stay adjacent. */
 .forecast-workspace.forecast-v2 .forecast-ref-card .forecast-ref-selects:has(.forecast-ref-weights){
   grid-template-columns:minmax(0,1fr) 70px minmax(0,1fr) 70px auto;

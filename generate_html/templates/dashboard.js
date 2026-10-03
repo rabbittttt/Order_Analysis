@@ -796,36 +796,63 @@
       card._refreshLifecycleControls=refresh;
     });
   }
+  function renderForecastEvidenceGroup(title,note,cards,count){
+    return `<section class="forecast-evidence-group"><div class="forecast-evidence-group-head"><div><small>${esc(note)}</small><h4>${esc(title)}</h4></div><span>${count}个参考模块</span></div><div class="forecast-ref-grid">${cards}</div></section>`;
+  }
+  function renderLifecycleConclusion(stage,title,note,metrics){
+    const [primary,...support]=metrics,metric=item=>`<span>${esc(item.label)}</span><div><strong data-${stage}-kpi="${item.key}">—</strong>${item.unit?`<em>${esc(item.unit)}</em>`:''}</div>`;
+    return `<article class="forecast-scenario forecast-lifecycle-conclusion"><div class="forecast-scenario-head"><div><small>${esc(note)}</small><h4>${esc(title)}</h4></div><span data-${stage}-confidence>等待计算</span></div><div class="forecast-scenario-result"><div class="forecast-scenario-hero">${metric(primary)}</div><div class="forecast-scenario-breakdown">${support.map(item=>`<article>${metric(item)}</article>`).join('')}</div></div></article>`;
+  }
   function renderSmallOrderWorkspace(data){
-    const target=data.target||{},history=data.small_order_history||[],options=lifecycleReferenceOptions(history);
+    const history=data.small_order_history||[];
+    const progress=renderLifecycleReferenceCard('small','progress','小订累计完成度','按已发生进度反推最终总小订',history,'data-small-ref','data-small-weight','data-small-reference-chart')
+      .replace('<div class="forecast-ref-comparison" data-lifecycle-ref-reason></div></details>', '<div class="forecast-ref-comparison" data-lifecycle-ref-reason></div><div class="forecast-reference-context" data-small-evidence></div></details>');
+    const hourly=renderLifecycleReferenceCard('small','hourly','D1 小订分时预测','按发布时间、分时斜率和累计占比选参考；不比较D1绝对量',history,'data-small-hourly-ref','data-small-hourly-weight','data-small-hourly-reference-chart');
+    const daily=renderLifecycleReferenceCard('small','daily','小订到天基础曲线','分配未来逐日小订；历史日历影响先剔除，再应用目标日期系数',history,'data-small-daily-ref','data-small-daily-weight','data-small-daily-reference-chart');
     return `<div class="forecast-lifecycle-workspace forecast-small-order" data-small-order-workspace>
       <div class="forecast-data-error" data-small-error role="alert" aria-live="assertive" hidden></div>
       <section id="small-forecast-pane-result" aria-labelledby="forecast-tab-result" class="forecast-lifecycle-subpane${state.forecastView==='result'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-result">
-        <div class="forecast-lifecycle-kpis"><article><span>D1小订终值</span><strong data-small-kpi="d1">—</strong><small>单</small></article><article><span>预计最终总小订</span><strong data-small-kpi="total">—</strong><small>单</small></article><article><span>当前已发生</span><strong data-small-kpi="actual">—</strong><small>单</small></article></div>
-        <div class="forecast-lifecycle-grid">
-          <section class="forecast-lifecycle-controls"><div class="forecast-block-head"><div><small>当前对象驱动</small><h4>小订预测参数 · 参考见预测依据</h4></div><span>修改后实时重算</span></div><div class="forecast-lifecycle-fields"><label>线索量<input type="number" min="0" data-small-input="leads" placeholder="未维护"></label><label>互联网热度<input type="number" min="0" step="0.1" data-small-input="heat" placeholder="未维护"></label></div><p class="forecast-lifecycle-source" data-small-source>正在检查小订窗口和历史曲线。</p></section>
-          <section class="forecast-lifecycle-chart-card"><div class="forecast-pane-head"><div><small>真实值冻结，未来按参考曲线分配</small><h4>小订逐日实际与预测</h4></div><span data-small-confidence>等待计算</span></div><div data-small-chart></div><div data-forecast-import-anchor="small"></div></section>
-        </div>
-        ${renderStageCommonControls('small')}
+        <div class="forecast-result-shell"><div class="forecast-result-main">
+          ${renderLifecycleConclusion('small','小订预测结论','已发生数量与未来预测分开显示',[
+            {key:'total',label:'预计最终总小订',unit:'单'},{key:'actual',label:'当前已发生',unit:'单'},{key:'d1',label:'D1小订终值',unit:'单'}])}
+          <section class="forecast-parameter-rail forecast-lifecycle-parameters"><div class="forecast-rail-head"><div><small>当前对象驱动</small><h4>小订预测参数</h4></div><span>修改后实时重算</span></div><div class="forecast-input-grid"><label>线索量<input type="number" min="0" data-small-input="leads" placeholder="未维护"></label><label>互联网热度<input type="number" min="0" step="0.1" data-small-input="heat" placeholder="未维护"></label></div><p class="forecast-progress-source" data-small-source>正在检查小订窗口和历史曲线。</p></section>
+          <section class="forecast-decision-card"><div class="forecast-pane-head"><div><small>真实值冻结，未来按参考曲线分配</small><h4>小订逐日实际与预测</h4></div></div><div data-small-chart></div></section>
+          <div data-forecast-import-anchor="small"></div>
+          ${renderStageCommonControls('small')}
+        </div></div>
       </section>
-      <section id="small-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-evidence"><div class="forecast-lifecycle-evidence"><section><small>当前参考对比</small><h4>小订预测依据</h4><div data-small-evidence></div></section><section><small>阶段规则</small><h4>三阶段预测与回退</h4><ol>${(data.small_order_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></section></div><div class="forecast-ref-grid">${renderLifecycleReferenceCard('small','progress','小订累计完成度','按已发生进度反推最终总小订',history,'data-small-ref','data-small-weight','data-small-reference-chart')}${renderLifecycleReferenceCard('small','daily','小订到天基础曲线','分配未来逐日小订；历史日历影响先剔除，再应用目标日期系数',history,'data-small-daily-ref','data-small-daily-weight','data-small-daily-reference-chart')}${renderLifecycleReferenceCard('small','hourly','D1 小订分时预测','按发布时间、分时斜率和累计占比选参考；不比较D1绝对量',history,'data-small-hourly-ref','data-small-hourly-weight','data-small-hourly-reference-chart')}</div></section>
+      <section id="small-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-evidence">
+        <div class="forecast-evidence-groups">
+          ${renderForecastEvidenceGroup('终局预测参考','累计完成度用于日进度反推；D1分时用于首日滚动预测',progress+hourly,2)}
+          ${renderForecastEvidenceGroup('逐日分配参考','只分配未来剩余量，不改写已发生销量',daily,1)}
+        </div>
+        <details class="forecast-method"><summary>查看小订预测逻辑与回退规则</summary><ol>${(data.small_order_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>
+      </section>
       <section id="small-forecast-pane-score" aria-labelledby="forecast-tab-score" class="forecast-lifecycle-subpane${state.forecastView==='score'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-score"><div data-small-score></div></section>
     </div>`;
   }
   function renderSteadyWorkspace(data){
-    const target=data.target||{},history=data.steady_history||[],options=lifecycleReferenceOptions(history);
+    const history=data.steady_history||[];
+    const reference=renderLifecycleReferenceCard('steady','weekly','首销规律与平销承接','两张趋势图共用此处的主辅参考与权重；额外对比不参与预测',history,'data-steady-ref','data-steady-weight','data-steady-reference-chart')
+      .replace('<div class="forecast-task-chart" data-steady-reference-chart></div>', '<div class="forecast-task-chart" data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence></div>');
     return `<div class="forecast-lifecycle-workspace forecast-steady" data-steady-workspace>
       <div class="forecast-data-error" data-steady-error role="alert" aria-live="assertive" hidden></div>
       <section id="steady-forecast-pane-result" aria-labelledby="forecast-tab-result" class="forecast-lifecycle-subpane${state.forecastView==='result'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-result">
-        <div class="forecast-boundary-rule"><b>口径边界</b><span>平销预测指标 = 交车锁单</span><em>真实日读取《锁单选配比例分析》by天，历史完整周读取by周；按天预测、按周汇总，不再预测平销大定。</em></div>
-        <div class="forecast-lifecycle-kpis steady"><article><span>预测区间锁单（含已实现）</span><strong data-steady-kpi="total">—</strong><small>单</small></article><article><span>近期真实日均锁单</span><strong data-steady-kpi="daily">—</strong><small>单／天</small></article><article><span>未来日均较近期实际</span><strong data-steady-kpi="change">—</strong><small>%</small></article><article><span>当前预测依据</span><strong data-steady-kpi="basis">—</strong></article></div>
-        <div class="forecast-lifecycle-grid">
-          <section class="forecast-lifecycle-controls"><div class="forecast-block-head"><div><small>锁单选配 by周历史参考</small><h4>平销锁单依据 · 参考见预测依据</h4></div><span>主辅自动归一</span></div><p class="forecast-lifecycle-source" data-steady-source>正在读取《锁单选配比例分析》的平销期交车锁单。</p></section>
-          <section class="forecast-lifecycle-chart-card"><div class="forecast-pane-head"><div><small>已结束日冻结，日预测汇总为周</small><h4>平销交车锁单by周</h4></div><span data-steady-confidence>等待计算</span></div><div data-steady-chart></div><div data-forecast-import-anchor="steady"></div></section>
-        </div>
-        ${renderStageCommonControls('steady')}
+        <div class="forecast-result-shell"><div class="forecast-result-main">
+          <p class="forecast-progress-source">平销预测指标为交车锁单：按天预测、按周汇总；已结束日使用真实值，不再预测平销大定。</p>
+          ${renderLifecycleConclusion('steady','平销预测结论','本车型实际校准规模，历史参考提供相对趋势',[
+            {key:'total',label:'预测区间锁单（含已实现）',unit:'单'},{key:'daily',label:'近期真实日均锁单',unit:'单／天'},
+            {key:'change',label:'未来日均较近期实际',unit:'%'},{key:'basis',label:'当前预测依据'}])}
+          <p class="forecast-progress-source" data-steady-source>正在读取《锁单选配比例分析》的平销期交车锁单。</p>
+          <section class="forecast-decision-card"><div class="forecast-pane-head"><div><small>已结束日冻结，日预测汇总为周</small><h4>平销交车锁单by周</h4></div></div><div data-steady-chart></div></section>
+          <div data-forecast-import-anchor="steady"></div>
+          ${renderStageCommonControls('steady')}
+        </div></div>
       </section>
-      <section id="steady-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-evidence"><div class="forecast-lifecycle-evidence"><section><small>当前参考对比</small><h4>平销相对承接趋势</h4><div data-steady-evidence></div></section><section><small>业务规则</small><h4>平销交车锁单周预测</h4><ol>${(data.steady_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></section></div><div class="forecast-ref-grid">${renderLifecycleReferenceCard('steady','weekly','平销交车锁单参考','首销全周期直接大定形状与平销承接趋势；到天按节假日、周末、工作日系数分配',history,'data-steady-ref','data-steady-weight','data-steady-reference-chart')}</div></section>
+      <section id="steady-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-evidence">
+        <div class="forecast-evidence-groups">${renderForecastEvidenceGroup('趋势参考','比较首销全周期直接大定规律和进入平销后的相对承接，不套用历史绝对量',reference,1)}</div>
+        <details class="forecast-method"><summary>查看平销预测逻辑与取数规则</summary><ol>${(data.steady_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>
+      </section>
       <section id="steady-forecast-pane-score" aria-labelledby="forecast-tab-score" class="forecast-lifecycle-subpane${state.forecastView==='score'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-score"><div data-steady-score></div></section>
     </div>`;
   }
@@ -850,7 +877,7 @@
       {title:'方法一参考',note:'决定同期完成率反推所采用的历史曲线',keys:['small_progress','direct_progress']},
       {title:'方法二参考',note:'决定小订转化率与直接大定占比',keys:['conversion','direct_share']},
       {title:'公共参考',note:'共同影响D1、锁单换算与未来到天分配',keys:['hourly','lock','daily','daily_slope']},
-    ].map(group=>{const cards=group.keys.map(key=>key==='daily_slope'?slopeTask:tasks.find(task=>task.key===key)).filter(Boolean).map(task=>task.key==='daily_slope'?slopeCard():refCard(task)).join('');return cards?`<section class="forecast-evidence-group"><div class="forecast-evidence-group-head"><div><small>${esc(group.note)}</small><h4>${esc(group.title)}</h4></div><span>${group.keys.length}个参考模块</span></div><div class="forecast-ref-grid">${cards}</div></section>`:''}).join('');
+    ].map(group=>{const cards=group.keys.map(key=>key==='daily_slope'?slopeTask:tasks.find(task=>task.key===key)).filter(Boolean).map(task=>task.key==='daily_slope'?slopeCard():refCard(task)).join('');return cards?renderForecastEvidenceGroup(group.title,group.note,cards,group.keys.length):''}).join('');
     const defaults=data.day_type_defaults||{};
     const smallOrderWorkspace=renderSmallOrderWorkspace(data),steadyWorkspace=renderSteadyWorkspace(data);
     const scenario=(key,title,subtitle)=>`<article class="forecast-scenario ${key}"><div class="forecast-scenario-head"><div><small>${esc(subtitle)}</small><h4>${esc(title)}</h4></div><span data-forecast-method-status="${key}">等待计算</span></div><div class="forecast-scenario-result"><div class="forecast-scenario-hero"><span>首销期大定</span><div><strong data-forecast-value="${key}-gross">—</strong><em>单</em></div><small data-forecast-kpi-note="${key}-gross"></small></div><div class="forecast-scenario-lock"><span>预计首销期锁单</span><div><strong data-forecast-value="${key}-lock">—</strong><em>单</em></div><small>按公共大定到锁单率换算</small></div></div><div class="forecast-scenario-breakdown"><article><span>小订转大</span><div><strong data-forecast-value="${key}-small">—</strong><em>单</em></div><small data-forecast-kpi-note="${key}-small"></small></article><article><span>直接大定</span><div><strong data-forecast-value="${key}-direct">—</strong><em>单</em></div><small data-forecast-kpi-note="${key}-direct"></small></article></div><div class="forecast-scenario-meta"><span>小订转化率 <b data-forecast-value="${key}-conversion">—</b>%</span><span>直接大定占比 <b data-forecast-value="${key}-share">—</b>%</span></div></article>`;
@@ -961,13 +988,13 @@
     const referenceCompletion=(day,days)=>weightedValue(item=>{const field=(item.small_progress||[]).some(Number)?'small_progress':'standard_progress';return rebasedForecastCompletion(item,field,day,days).value});
     const referenceHourlyCompletion=hour=>weightedValue(item=>window.ForecastMath.smallHourlyCurve(item,hourlyContext().startHour)[hour],NaN,'hourly');
     const renderEvidence=(target,stage,forecast)=>{
-      const refs=selectedRefs(),chartRefs=lifecycleChartReferences(workspace.querySelector('[data-lifecycle-reference="small-progress"]'),history,refs),body=refs.map(({item,weight},index)=>{const result=scoreResult(item,target,targetItem());return `<tr><td>${index?'辅助':'主参考'}${result.eligible?'':'·人工'}</td><td><b>${esc(item.model)}</b></td><td>${Math.round(result.score*100)}分 · ${result.evidenceCount}/${smallScoreRules.length}项</td><td>${fmt(item.total)}</td><td>${item.days||0}天</td><td>${(Number(item.d1_share||0)*100).toFixed(1)}%</td><td>${(item.small_hourly_curve||[]).some(Number)?'可用':'缺失'}</td><td>${weight.toFixed(0)}%</td></tr>`}).join('');
+      const refs=selectedRefs(),chartRefs=lifecycleChartReferences(workspace.querySelector('[data-lifecycle-reference="small-progress"]'),history,refs),body=refs.map(({item},index)=>`<div><b>${index?'辅助':'主参考'} · ${esc(item.model)}</b><span>最终小订 ${fmt(item.total)}单</span><span>周期 ${item.days||0}天</span><span>D1占比 ${(Number(item.d1_share||0)*100).toFixed(1)}%</span><span>D1分时 ${(item.small_hourly_curve||[]).some(Number)?'可用':'缺失'}</span></div>`).join('');
       const days=Math.max(Number(forecast?.targetDays||target.smallDays||1),1),labels=Array.from({length:days},(_,index)=>`D${index+1}`),total=Number(forecast?.total||0),actualValues=Array(days).fill(null),forecastValues=Array(days).fill(null);let running=0;
       (forecast?.actualRows||[]).forEach((row,index)=>{running+=Number(row.orders||0);if(index<days&&total>0)actualValues[index]=Math.min(running/total,1)});
       if(!forecast.error&&total>0){running=0;(forecast.rows||[]).forEach((row,index)=>{running+=Number(row.orders||0);if(index<days&&row.actual===false)forecastValues[index]=running/total});const anchor=(forecast.actualRows||[]).length-1;if(anchor>=0&&anchor<days&&forecastValues.some(Number.isFinite))forecastValues[anchor]=actualValues[anchor];}
       const chartSeries=[];if(actualValues.some(Number.isFinite))chartSeries.push({label:`${target.name} · 真实累计`,values:actualValues,color:'#1677FF',role:'actual'});if(forecastValues.some(Number.isFinite))chartSeries.push({label:`${target.name} · 预测累计`,values:forecastValues,color:'#00A878',role:'forecast',dashed:true});
       chartRefs.forEach(({item,label,color})=>{const field=(item.small_progress||[]).some(Number)?'small_progress':'standard_progress';chartSeries.push({label,values:rebasedForecastCompletionCurve(item,field,days),color,role:'reference'})});
-      workspace.querySelector('[data-small-evidence]').innerHTML=`<div class="forecast-score-table"><table><thead><tr><th>角色</th><th>参考车型</th><th>匹配分/证据</th><th>最终小订</th><th>曲线天数</th><th>D1占比</th><th>D1分时</th><th>权重</th></tr></thead><tbody>${body||'<tr><td colspan="8">暂无有效参考车型</td></tr>'}</tbody></table></div><p>当前阶段：<b>${esc(stage.label)}</b>。系统自动推荐至少需要${minimumEvidence}项有效评分证据；证据不足的车型仅在人工选择后参与。真实逐日曲线优先，标准化“小订进度”只在真实曲线不可用时回退。主辅权重只影响后续预测加权，不反向改变候选车型得分。</p>`;
+      workspace.querySelector('[data-small-evidence]').innerHTML=`<div class="forecast-reference-facts">${body||'暂无有效参考车型'}</div><p>当前阶段：${esc(stage.label)}。自动推荐至少需${minimumEvidence}项有效证据；真实逐日曲线优先，缺失时回退到标准化小订进度。主辅权重不改变候选得分。</p>`;
       workspace.querySelector('[data-small-reference-chart]').innerHTML=renderLifecycleLineChart({series:chartSeries,labels,unit:'percent',title:'当前真实进度与主辅参考累计完成度',note:'蓝色实线为已结束完整日真实累计÷本次预测终局；绿色虚线为本次预测的后续累计。橙/紫线为主辅参考按当前小订窗口重定基的完成度，与预测使用同一条参考曲线。周期对齐：D1、D2及最后两天的日占比保持不变，中间部分按剩余周期比例拉伸后重新累计；仅对齐参考曲线，不改写历史真实销量。同长度不拉伸；不同长度且任一周期不足5天时不自动推荐该完成度参考。',ariaLabel:`${target.name}当前真实累计小订完成度与主辅参考累计曲线对比`,empty:'当前与所选参考均没有可绘制的小订累计曲线'});
       const dailyNode=workspace.querySelector('[data-small-daily-reference-chart]');
       if(dailyNode){

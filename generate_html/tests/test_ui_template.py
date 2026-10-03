@@ -128,7 +128,7 @@ assert.strictEqual(fmt(null),'');
         self.assertIn("scheduleForecastUpdate", script)
         self.assertIn("scrollIntoView({block:'start'", script)
         self.assertIn("button.setAttribute('aria-controls',`${prefix}-pane-${button.dataset.forecastTab}`)", script)
-        self.assertIn("平销预测指标 = 交车锁单", script)
+        self.assertIn("平销预测指标为交车锁单", script)
         self.assertNotIn("平销期大定 = 平销期直接大定", script)
         self.assertIn("不再预测平销大定", script)
         self.assertIn("bindForecastLifecycleNavigation", script)
@@ -501,7 +501,7 @@ assert.strictEqual(fmt(null),'');
         self.assertIn("有效单项相似度之和", script)
         self.assertIn("实际对比、评分规则与贡献", script)
         self.assertIn("排序与本页明细直接调用同一个逐项评分结果", script)
-        self.assertIn("主辅权重只影响后续预测加权，不反向改变候选车型得分", script)
+        self.assertIn("主辅权重不改变候选得分", script)
         self.assertIn("以全首销直接大定归一化形状为主", script)
         self.assertIn("证据不足的车型仍可人工选择", script)
         self.assertIn("event_id||item.model", script)
@@ -509,6 +509,20 @@ assert.strictEqual(fmt(null),'');
         self.assertIn("基线优先本车型已有平销真实日", module)
         self.assertIn("所有平销KPI、图表、周合计和来源说明均为交车锁单口径", module)
         self.assertNotIn("最近2至4周稳健周均", module)
+
+    def test_lifecycle_result_and_evidence_share_launch_structure(self):
+        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
+        lifecycle = script[script.index("function renderSmallOrderWorkspace"):script.index("function renderForecastWorkspaceV2")]
+        self.assertEqual(lifecycle.count("renderLifecycleConclusion("), 2)
+        self.assertEqual(lifecycle.count('class="forecast-result-main"'), 2)
+        self.assertEqual(lifecycle.count('class="forecast-method"'), 2)
+        self.assertNotIn('class="forecast-lifecycle-evidence"', lifecycle)
+        self.assertNotIn('class="forecast-lifecycle-kpis"', lifecycle)
+        self.assertIn("renderForecastEvidenceGroup('终局预测参考'", lifecycle)
+        self.assertIn("renderForecastEvidenceGroup('逐日分配参考'", lifecycle)
+        self.assertIn("renderForecastEvidenceGroup('趋势参考'", lifecycle)
+        self.assertIn('renderForecastEvidenceGroup(group.title,group.note,cards,group.keys.length)', script)
+        self.assertIn('data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence', lifecycle)
 
     def test_small_and_steady_evidence_use_the_prediction_curves(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
