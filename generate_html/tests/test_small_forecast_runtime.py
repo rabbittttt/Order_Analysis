@@ -18,11 +18,12 @@ class SmallForecastRuntimeTests(unittest.TestCase):
         script = r'''
 const fs=require('fs'),assert=require('assert');
 const source=fs.readFileSync(DASHBOARD,'utf8');
+global.window={ForecastMath:require(require('path').join(require('path').dirname(DASHBOARD),'forecast-math.js'))};
 const linkStart=source.indexOf('      const smallInput=root.querySelector');
 const linkEnd=source.indexOf('      const linkedSignature=',linkStart);
 const blockStart=source.indexOf('      const validQuantity=');
 const blockEnd=source.indexOf('      const hasSmall=',blockStart);
-const methodStart=source.indexOf('      const parameterAvailable=');
+const methodStart=source.indexOf('      const parameterResult=');
 const methodEnd=source.indexOf('      const referenceSmallEstimate=',methodStart);
 assert(linkStart>=0&&linkEnd>linkStart&&blockStart>=0&&blockEnd>blockStart);
 const link=new Function('root','targetState','absoluteStage','todayIso','sameModel','actualForTarget','findTarget',
@@ -30,11 +31,11 @@ const link=new Function('root','targetState','absoluteStage','todayIso','sameMod
 const check=new Function('root','actual','target','stageInfo','small','resolvedFixed','pastMissingIndexes','smallOngoing','esc','forecastDateRanges',
  source.slice(blockStart,blockEnd)+'return {rawDataError,componentsReady:componentIssues.length===0};');
 const method=new Function('rawDataError','small','baseConversion','componentsReady',
- 'const endedComplete=false,hasSmall=true,baseShare=.2,actualSmall=0,actualDirect=0,actualGross=0,anchorSmall=0,anchorDirect=0;'+
- source.slice(methodStart,methodEnd)+'return {available:parameterAvailable,gross:parameterGross};');
+ 'const endedComplete=false,hasSmall=true,baseShare=.2,actualSmall=0,actualDirect=0,actualGross=0,anchorSmall=0,anchorDirect=0,directD1=0,d1Ratio=0;'+
+ source.slice(methodStart,methodEnd)+'return {available:parameterAvailable,gross:parameterGross,rawSmall:parameterRawSmall,rawDirect:parameterRawDirect};');
 const probe=(end,total,error='',invalidDay=false,stage='active')=>{
  const input={value:0},root={_smallForecastResult:{name:'RX',date:'2026-09-28',stage:'active',total,error},querySelector:key=>key==='[data-forecast-input="small"]'?input:null};
- const target={name:'RX',smallEndDate:end,hardErrors:['总小订缺失或不大于0']};
+ const target={name:'RX',smallEndDate:end,validationIssues:[{code:'TOTAL_SMALL_REQUIRED',message:'总小订缺失或不大于0'}]};
  const linked=link(root,()=>target,()=>({key:'active'}),()=> '2026-09-28',(a,b)=>a===b,()=>null,()=>({small:0}));
  const checked=check(root,null,target,{key:stage},Number(input.value),invalidDay?[{date:'2026-09-27',gross:1,small_to_big:null,direct:1}]:[],[],linked.smallOngoing,String,dates=>dates.join('、'));
  return {linked:!!linked.linkSmall,value:Number(input.value),rawError:checked.rawDataError,...method(checked.rawDataError,Number(input.value),.5,checked.componentsReady)};
@@ -50,6 +51,8 @@ console.log(JSON.stringify({ongoing:probe('2026-09-28',1000),pending:probe('2026
         self.assertFalse(data['ongoing']['rawError'])
         self.assertTrue(data['ongoing']['available'])
         self.assertEqual(data['ongoing']['gross'], 625)
+        self.assertEqual(data['ongoing']['rawSmall'], 500)
+        self.assertEqual(data['ongoing']['rawDirect'], 125)
         self.assertTrue(data['before']['linked'])
         self.assertFalse(data['before']['rawError'])
         self.assertTrue(data['before']['available'])

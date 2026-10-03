@@ -171,7 +171,7 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
           const canonical=value=>String(value||'').replace(/\\s/g,'');
           for(const item of data.history)item.hourly_curve=[...Array(18).fill(0),.2,.4,.6,.8,.9,1];
           const patch=profile=>{
-            profile.days=[];profile.hard_errors=[];
+            profile.days=[];profile.hard_errors=[];profile.validation_issues=[];
             profile.hourly_days=missing?[]:[{date:asOf,last_hour:19,gross:80,small_to_big:40,direct:40,hours:[{hour:18,gross:40,small_to_big:20,direct:20},{hour:19,gross:40,small_to_big:20,direct:20}]}];
           };
           for(const profile of data.actuals)if(canonical(profile.model)===canonical(name)){

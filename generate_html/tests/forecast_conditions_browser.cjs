@@ -7,7 +7,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
  const browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[];let checks=0;
  const check=(label,ok)=>{assert(ok,label);checks++;console.log('PASS '+label)};
  try{
-  for(const scenario of ['no_small','missing_total','ended_components','unknown_window','missing_direct']){
+  for(const scenario of ['no_small','missing_total','ended_components','unknown_window','missing_direct','invalid_rows','unknown_issue','conflicting_window']){
    const context=await browser.newContext({viewport:{width:1440,height:1000}});
    await context.addInitScript(({scenario})=>{
     const parse=JSON.parse;
@@ -18,23 +18,27 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
       if(data.config&&data.subjects)data.config.forecast_as_of_date='2026-09-30';
       if(data.target&&Array.isArray(data.history)&&Array.isArray(data.actuals)){
        const name='问界 M9 2026款',same=value=>String(value||'').replace(/\s/g,'')===name.replace(/\s/g,'');
-       const hasSmall=scenario!=='no_small',end=scenario==='ended_components'?'2026-09-29':'2026-10-07';
+       const hasSmall=scenario!=='no_small',end=scenario==='conflicting_window'?'2026-09-27':scenario==='ended_components'?'2026-09-29':'2026-10-07';
        for(const target of [data.target,...data.targets||[]])if(same(target.name))Object.assign(target,{
         has_small:hasSmall,launch_date:scenario==='unknown_window'?'':'2026-09-28',end_date:end,days:scenario==='ended_components'?2:10,
         launch_days_maintained:true,steady_start_date:end==='2026-09-29'?'2026-09-30':'2026-10-08',
         small:0,small_start_date:'2026-09-01',small_end_date:hasSmall?'2026-09-27':'',
-        hard_errors:[],data_error:false
+        hard_errors:[],validation_issues:[],data_error:false
        });
        for(const item of data.history)Object.assign(item,{
+        launch_date:'2026-08-01',end_date:'2026-08-10',
         days:10,daily_orders:Array(10).fill(10),daily_small:Array(10).fill(4),daily_direct:Array(10).fill(6),
         direct_progress:Array.from({length:10},(_,i)=>(i+1)/10),small_progress:Array.from({length:10},(_,i)=>(i+1)/10)
        });
        const rows=[100,80].map((gross,index)=>({date:'2026-09-'+(28+index),day:'D'+(index+1),gross,lock:gross*.8,
         small_to_big:scenario==='ended_components'||scenario==='no_small'?null:gross*.4,
         direct:['ended_components','no_small','missing_direct'].includes(scenario)?null:gross*.6}));
+       if(scenario==='invalid_rows')rows[1].gross=null;
+       const issues=scenario==='invalid_rows'?[{code:'COMPLETED_DAYS_INVALID',message:'来源旧窗口中有异常记录'}]:
+        scenario==='unknown_issue'?[{code:'CUSTOM_SOURCE_BLOCKER',message:'不可忽略的来源异常'}]:[];
        for(const profile of data.actuals)if(same(profile.model)){
         for(const candidate of [profile,...Object.values(profile.stage_profiles||{})])Object.assign(candidate,{
-         days:rows.map(row=>({...row})),total_small:0,hourly_days:[],hard_errors:[],data_error:false,has_small:hasSmall});
+         days:rows.map(row=>({...row})),total_small:0,hourly_days:[],hard_errors:issues.map(issue=>issue.message),validation_issues:issues,data_error:!!issues.length,has_small:hasSmall});
        }
       }
       Object.values(data).forEach(visit);
@@ -65,9 +69,26 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
     check('分项不完整提示明确保留总大定',notice.includes('实际分项不完整')&&notice.includes('真实总大定正常展示'));
    }else if(scenario==='unknown_window'){
     check('预测窗口缺失说明原因及影响',notice.includes('首销开始日期未维护')&&notice.includes('影响：'));
-   }else{
+   }else if(scenario==='missing_direct'){
     check('历史分项缺失按具体字段与日期提示',notice.includes('直接大定缺失或无效')&&notice.includes('2026-09-28～2026-09-29'));
     check('预测不可用时仍显示已知真实大定',result.rows.length===2&&result.rows.every(row=>row.actual));
+   }else if(scenario==='conflicting_window'){
+    check('冲突结束日期不按天数偷偷回退',notice.includes('首销窗口冲突')&&!result.scenarios.progress.available&&!result.scenarios.parameter.available);
+   }else{
+    const unknown=scenario==='unknown_issue';
+    check(unknown?'未知错误代码保守拦截':'已结束日无效总量重新校验',notice.includes(unknown?'不可忽略的来源异常':'大定缺失或无效')&&!result.scenarios.progress.available);
+    const changeDays=async value=>{
+     await page.locator('[data-forecast-target="days"]').fill(value);
+     await page.locator('[data-forecast-target="days"]').dispatchEvent('change');
+     await page.waitForFunction(()=>document.querySelector('[data-forecast-feedback]').dataset.state==='success');
+     return page.locator('.forecast-workspace').evaluate(root=>root._forecastComparison);
+    };
+    const stillInvalid=await changeDays('9');
+    check('修改窗口后仍拦截窗口内无效数据：'+scenario,!stillInvalid.scenarios.progress.available);
+    const narrowed=await changeDays('1'),currentNotice=await page.locator('[data-forecast-data-error]').innerText();
+    check(unknown?'调整窗口不能绕过未知来源错误':'缩短窗口清除范围外旧错误并保留真实值',unknown?
+     !narrowed.scenarios.progress.available&&currentNotice.includes('不可忽略的来源异常'):
+     narrowed.scenarios.progress.available&&narrowed.scenarios.progress.gross===100&&!currentNotice.includes('来源旧窗口'));
    }
    await context.close();
   }

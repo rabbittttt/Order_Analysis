@@ -136,18 +136,6 @@ def window_profile(launch_date: Any, days: Any) -> dict[str, Any]:
     }
 
 
-def profile_similarity(left: dict[str, Any] | None, right: dict[str, Any] | None) -> float:
-    if not left or not right or not left.get("early_types") or not right.get("early_types"):
-        return 0.7
-    holiday_max = max(int(left.get("holidays") or 0), int(right.get("holidays") or 0), 1)
-    holiday_score = max(0.0, 1 - abs(int(left.get("holidays") or 0) - int(right.get("holidays") or 0)) / holiday_max)
-    adjusted_max = max(int(left.get("adjusted_workdays") or 0), int(right.get("adjusted_workdays") or 0), 1)
-    adjusted_score = max(0.0, 1 - abs(int(left.get("adjusted_workdays") or 0) - int(right.get("adjusted_workdays") or 0)) / adjusted_max)
-    pairs = list(zip(left["early_types"], right["early_types"]))
-    early_score = sum(a == b for a, b in pairs) / len(pairs) if pairs else 0.7
-    return 0.5 * holiday_score + 0.35 * early_score + 0.15 * adjusted_score
-
-
 def calendar_payload() -> dict[str, Any]:
     return {
         "holidays": HOLIDAY_DATES,

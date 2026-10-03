@@ -761,11 +761,12 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
         self.assertIn('data-forecast-data-error role="alert" aria-live="assertive"', script)
         self.assertIn("rawDataError", script)
-        self.assertIn("parameterAvailable=!rawDataError", script)
-        self.assertIn("progressAvailable=!rawDataError&&historyComplete", script)
+        math_script = (ROOT / "templates" / "forecast-math.js").read_text(encoding="utf-8")
+        self.assertIn("const available=!rawDataError", math_script)
+        self.assertIn("const available=!rawDataError&&historyComplete", math_script)
         self.assertIn("showForecastCondition", script)
         self.assertIn("其他可用方法及已知实际数据保留", script)
-        self.assertIn("hasSmall?(small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1)", script)
+        self.assertIn("hasSmall?(small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1)", math_script)
         self.assertIn(".forecast-data-error", css)
 
 

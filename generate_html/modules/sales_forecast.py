@@ -201,14 +201,22 @@ def _configured_forecast_date(value: Any) -> date | None:
     return parsed
 
 
+def _positive_day_count(value: Any) -> int:
+    number = _number(value)
+    return int(number) if not isinstance(value, bool) and math.isfinite(number) and number > 0 and number.is_integer() else 0
+
+
 def _forecast_stage(launch_date: Any, end_date: Any = None, days: Any = None, today: date | None = None) -> dict[str, Any]:
     """Classify the launch window by absolute dates; D1 is the launch date itself."""
     current = today or date.today()
     start = _as_date(launch_date)
     explicit_end = _as_date(end_date)
-    maintained_span = max(int(_number(days, 0)), 0)
+    maintained_span = _positive_day_count(days)
     if start is None:
         return {"key": "unknown", "label": "时间缺失", "day": 0, "days": 0, "launch_date": "", "end_date": ""}
+    if end_date not in (None, "") and explicit_end is None:
+        return {"key": "unknown", "label": "首销结束日期无效", "day": 0, "days": 0,
+                "launch_date": start.isoformat(), "end_date": ""}
     if explicit_end and explicit_end < start:
         return {
             "key": "unknown", "label": "首销窗口冲突", "day": 0, "days": 0,
@@ -2734,11 +2742,11 @@ def _apply_small_order_applicability(target, profile):
     target["small_stage_label"] = "无小订阶段"
 
 
-def _profile_hard_errors(
+def _profile_issues(
     target: dict[str, Any],
     profile: dict[str, Any],
     today: date | None = None,
-) -> list[str]:
+) -> list[dict[str, Any]]:
     """Return blocking raw-data errors for one forecast target.
 
     Forecasting may fall back between the three approved sources field by field,
@@ -2754,29 +2762,33 @@ def _profile_hard_errors(
         return []
     stage = str(target.get("stage") or "unknown")
     start = _as_date(target.get("launch_date"))
-    span = max(int(_number(target.get("days"), 0)), 0)
-    errors: list[str] = []
+    span = _positive_day_count(target.get("days"))
+    errors: list[dict[str, Any]] = []
+
+    def add(code, message, **details):
+        errors.append({"code": code, "message": message, **details})
 
     if start is None:
-        errors.append("首销开始日期缺失或无法解析")
+        add("LAUNCH_START_INVALID", "首销开始日期缺失或无法解析", fields=["launch_date"])
     if span <= 0:
-        errors.append("首销期天数缺失或不是正整数")
+        add("LAUNCH_DAYS_INVALID", "首销期天数缺失或不是正整数", fields=["days"])
     elif not target.get("launch_days_maintained", True):
-        errors.append("首销截止日期和首销期天数均未维护")
+        add("LAUNCH_WINDOW_UNMAINTAINED", "首销截止日期和首销期天数均未维护", fields=["end_date", "days"])
     profile_dates = [
         parsed for row in profile.get("days", [])
         if (parsed := _as_date(row.get("date"))) is not None
     ]
     if start and profile_dates and min(profile_dates) != start:
-        errors.append(
+        add("ACTUAL_START_MISMATCH",
             f"首销真实by天起始日{min(profile_dates).isoformat()}"
-            f"与车型汇总开始日{start.isoformat()}不一致"
+            f"与车型汇总开始日{start.isoformat()}不一致", dates=[min(profile_dates).isoformat()],
+            expected_start=start.isoformat(), fields=["date"]
         )
 
     if stage == "unknown":
-        errors.append("无法按绝对日期判断首销阶段")
+        add("LAUNCH_STAGE_UNKNOWN", "无法按绝对日期判断首销阶段")
     if start is None or span <= 0 or stage not in {"active", "ended"}:
-        return list(dict.fromkeys(errors))
+        return errors
 
     completed_days = span if stage == "ended" else min(max((current - start).days, 0), span)
     rows_by_date = {
@@ -2786,6 +2798,7 @@ def _profile_hard_errors(
     }
     missing_days: list[int] = []
     invalid_days: list[str] = []
+    invalid_details = []
     for index in range(completed_days):
         expected_date = (start + timedelta(days=index)).isoformat()
         row = rows_by_date.get(expected_date)
@@ -2799,26 +2812,36 @@ def _profile_hard_errors(
         # Missing component inputs are checked per method; ended gross stays visible.
         missing_fields = [
             label for label, value in (("大定", gross),)
-            if value is None or not math.isfinite(float(value)) or value < 0
+            if isinstance(row.get("gross"), bool) or value is None or not math.isfinite(float(value)) or value < 0
         ]
         if missing_fields:
             invalid_days.append(f"D{index + 1}缺{'+'.join(missing_fields)}")
+            invalid_details.append({"date": expected_date, "fields": ["gross"]})
             continue
         if target.get("stage") != "ended" and small_to_big is not None and direct is not None and (
+            not math.isfinite(small_to_big) or not math.isfinite(direct) or
+            isinstance(row.get("small_to_big"), bool) or isinstance(row.get("direct"), bool) or
             small_to_big < 0 or direct < 0 or abs((small_to_big + direct) - gross) > max(1.0, abs(gross) * .005)
         ):
             invalid_days.append(
                 f"D{index + 1}分项不一致（小转大{small_to_big:g}+直接大定{direct:g}≠大定{gross:g}）"
             )
+            invalid_details.append({"date": expected_date, "fields": ["gross", "small_to_big", "direct"]})
     if missing_days:
         labels = "、".join(f"D{day}" for day in missing_days[:12])
         suffix = f"等{len(missing_days)}天" if len(missing_days) > 12 else ""
-        errors.append(f"已结束日期缺少真实数据：{labels}{suffix}")
+        add("COMPLETED_DAYS_MISSING", f"已结束日期缺少真实数据：{labels}{suffix}",
+            dates=[(start + timedelta(days=day - 1)).isoformat() for day in missing_days], fields=["gross"])
     if invalid_days:
         labels = "；".join(invalid_days[:8])
         suffix = f"；另有{len(invalid_days) - 8}天" if len(invalid_days) > 8 else ""
-        errors.append(f"已结束日期字段缺失或校验失败：{labels}{suffix}")
-    return list(dict.fromkeys(errors))
+        add("COMPLETED_DAYS_INVALID", f"已结束日期字段缺失或校验失败：{labels}{suffix}", details=invalid_details)
+    return errors
+
+
+def _profile_hard_errors(target, profile, today=None) -> list[str]:
+    """Display/log compatibility only; clients branch on validation_issues.code."""
+    return [issue["message"] for issue in _profile_issues(target, profile, today)]
 
 
 
@@ -2839,7 +2862,8 @@ def _combined_steady_inputs(targets, profiles, history):
                 "primary_generation": parent, "secondary_generation": "", "aggregate": True,
                 "launch_date": "", "end_date": "", "steady_start_date": "", "days": 0,
                 "stage": "unknown", "stage_label": "时间缺失", "calendar_day": 0,
-                "date_source_label": reason, "hard_errors": [reason], "data_error": True})
+                "date_source_label": reason, "hard_errors": [reason], "data_error": True,
+                "validation_issues": [{"code": "CAMPAIGN_WINDOWS_MISSING", "message": reason}]})
             continue
         start, finish = min(starts), max(ends)
         target = dict(max(children, key=lambda t: t.get("end_date") or ""))
@@ -2847,7 +2871,7 @@ def _combined_steady_inputs(targets, profiles, history):
         target.update(name=parent, history_model=parent, secondary_generation="", primary_generation=parent, energy=energy,
                       launch_date=start.isoformat(), end_date=finish.isoformat(),
                       days=(finish-start).days+1, steady_start_date=(finish+timedelta(days=1)).isoformat(),
-                      hard_errors=[], data_error=False, aggregate=True)
+                      hard_errors=[], validation_issues=[], data_error=False, aggregate=True)
         buckets = {t["name"]: {r.get("date"): r for r in next((p for p in profiles if p["model"] == t["name"]), {}).get("days", [])}
                    for t in children}
         rows = []
@@ -2946,9 +2970,10 @@ class SalesForecastModule:
                 target[key] = candidate.get(key)
             target["small"] = candidate.get("total_small", profile.get("total_small"))
             _apply_small_order_applicability(target, profile)
-            errors = _profile_hard_errors(target, profile, today=self.as_of_date)
-            target.update(hard_errors=errors, data_error=bool(errors))
-            profile.update(hard_errors=errors, data_error=bool(errors))
+            issues = _profile_issues(target, profile, today=self.as_of_date)
+            errors = [issue["message"] for issue in issues]
+            target.update(hard_errors=errors, validation_issues=issues, data_error=bool(errors))
+            profile.update(hard_errors=errors, validation_issues=issues, data_error=bool(errors))
         refs = [SourceRef(path.name, name, "销量预测可见数据") for name in (DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET)]
         dashboard = self._assemble_dashboard(None, subject, path, history, targets, profiles,
             small_history, steady_history, master, mapping, source, None, None, refs, [])
@@ -3005,10 +3030,13 @@ class SalesForecastModule:
         for option in targets:
             profile = next((item for item in profiles if _same_model(item.get("model"), option["name"])), {})
             _apply_small_order_applicability(option, profile)
-            hard_errors = _profile_hard_errors(option, profile, today=self.as_of_date)
+            issues = _profile_issues(option, profile, today=self.as_of_date)
+            hard_errors = [issue["message"] for issue in issues]
+            option["validation_issues"] = issues
             option["hard_errors"] = hard_errors
             option["data_error"] = bool(hard_errors)
             if profile:
+                profile["validation_issues"] = issues
                 profile["hard_errors"] = hard_errors
                 profile["data_error"] = bool(hard_errors)
             if hard_errors:
@@ -3061,6 +3089,7 @@ class SalesForecastModule:
             "field_sources": default_option.get("field_sources", {}),
             "missing_fields": default_option.get("missing_fields", []),
             "hard_errors": default_option.get("hard_errors", []),
+            "validation_issues": default_option.get("validation_issues", []),
             "data_error": default_option.get("data_error", False),
             "source_latest_date": default_option.get("source_latest_date", ""),
             "launch_weekday": default_option.get("launch_weekday") or _weekday(default_option["launch_date"]),

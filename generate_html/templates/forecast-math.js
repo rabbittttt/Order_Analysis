@@ -33,14 +33,91 @@
   }
 
   // Editable windows change date alignment, never the dates of actual orders.
+  function dateNumber(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return NaN;
+    const stamp = Date.parse(value+'T00:00:00Z');
+    return Number.isFinite(stamp) && new Date(stamp).toISOString().slice(0,10) === value ? stamp : NaN;
+  }
+
+  function positiveDays(value) {
+    const count = Number(value);
+    return typeof value !== 'boolean' && Number.isInteger(count) && count > 0 ? count : 0;
+  }
+
+  // UTC date-only arithmetic: the contract matches Python's calendar dates,
+  // independently of browser timezone/DST. Explicit conflicting ends never fall back.
+  function launchStage({launchDate='', endDate='', days=0} = {}, today) {
+    const start = dateNumber(launchDate), current = dateNumber(today), count = positiveDays(days);
+    const unknown = label => ({key:'unknown',label,day:0,days:0,start:Number.isFinite(start)?launchDate:'',end:''});
+    if (!Number.isFinite(start)) return unknown('时间缺失');
+    if (endDate && !Number.isFinite(dateNumber(endDate))) return unknown('首销结束日期无效');
+    const end = endDate ? dateNumber(endDate) : count ? start+(count-1)*86400000 : NaN;
+    if (end < start) return {...unknown('首销窗口冲突'),end:endDate};
+    if (!Number.isFinite(end)) return unknown('首销截止日期与天数缺失');
+    if (!Number.isFinite(current)) return unknown('判定日期无效');
+    const span = (end-start)/86400000+1, finish = new Date(end).toISOString().slice(0,10);
+    const key = current < start ? 'before' : current > end ? 'ended' : 'active';
+    return {key,label:{before:'首销期未开始',active:'首销期进行中',ended:'首销期已结束'}[key],
+      day:key==='before'?0:key==='ended'?span:(current-start)/86400000+1,days:span,start:launchDate,end:finish};
+  }
+
+  function smallStage({smallStartDate='', smallEndDate=''} = {}, today) {
+    const start = dateNumber(smallStartDate), end = dateNumber(smallEndDate), current = dateNumber(today);
+    const unknown = label => ({key:'unknown',label,day:0,days:0});
+    if (!Number.isFinite(start)) return unknown('小订时间缺失');
+    if (!Number.isFinite(end)) return unknown('小订结束日期缺失');
+    if (end < start) return unknown('小订窗口冲突');
+    if (!Number.isFinite(current)) return unknown('判定日期无效');
+    const days=(end-start)/86400000+1,key=current<start?'before':current===start?'d1':current>end?'ended':'active';
+    return {key,label:{before:'小订D1未到',d1:'小订D1进行中',active:'小订D1已过',ended:'小订期已结束'}[key],
+      day:key==='before'?0:key==='ended'?days:(current-start)/86400000+1,days};
+  }
+
+  // Known date/row checks are reevaluated against editable windows below.
+  // Unknown codes and legacy unstructured errors fail closed, without parsing prose.
+  function sourceBlockingIssues(issues, legacyErrors = [], windowChanged = false) {
+    if (!Array.isArray(issues)) return legacyErrors.map(message=>({code:'LEGACY_SOURCE_ERROR',message}));
+    const live = new Set(['COMPLETED_DAYS_MISSING','COMPLETED_DAYS_INVALID','TOTAL_SMALL_REQUIRED']);
+    const windowCodes = new Set(['LAUNCH_START_INVALID','LAUNCH_DAYS_INVALID','LAUNCH_WINDOW_UNMAINTAINED','LAUNCH_STAGE_UNKNOWN','ACTUAL_START_MISMATCH']);
+    return issues.filter(issue=>!live.has(issue.code)&&!(windowChanged&&windowCodes.has(issue.code)));
+  }
+
+  function launchRowIssues(rows, ended = false) {
+    const valid = value => value!==null&&value!==undefined&&String(value).trim()!==''&&typeof value!=='boolean'&&Number.isFinite(Number(value))&&Number(value)>=0;
+    const issues=[];
+    for (const row of rows || []) {
+      if (!valid(row.gross)) {issues.push({code:'GROSS_INVALID',date:row.date,fields:['gross']});continue;}
+      const present = value => value!==null&&value!==undefined&&String(value).trim()!=='';
+      if (!ended && present(row.small_to_big) && present(row.direct) &&
+          (!valid(row.small_to_big)||!valid(row.direct)||Math.abs(Number(row.small_to_big)+Number(row.direct)-Number(row.gross))>Math.max(1,Math.abs(Number(row.gross))*.005)))
+        issues.push({code:'COMPONENTS_INCONSISTENT',date:row.date,fields:['gross','small_to_big','direct']});
+    }
+    return issues;
+  }
+
+  // Launch terminal arithmetic has one owner; no DOM or source-reading dependencies.
+  function launchParameterTerminal({rawDataError,endedComplete,componentsReady,hasSmall,small,baseConversion,baseShare,directD1,d1Ratio,actualSmall,actualDirect,actualGross,anchorSmall,anchorDirect}) {
+    const available=!rawDataError&&(endedComplete||(componentsReady&&(hasSmall?(small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1):(directD1>0&&d1Ratio>0))));
+    const rawSmall=available&&hasSmall?small*baseConversion:0,rawDirect=available?(hasSmall?rawSmall*baseShare/(1-baseShare):directD1/d1Ratio):0;
+    const totalSmall=endedComplete?actualSmall:available?Math.max(rawSmall,anchorSmall):0,totalDirect=endedComplete?actualDirect:available?Math.max(rawDirect,anchorDirect):0;
+    return {available,rawSmall,rawDirect,small:totalSmall,direct:totalDirect,gross:endedComplete?actualGross:totalSmall+totalDirect,
+      adjusted:!endedComplete&&available&&(totalSmall>rawSmall+.5||totalDirect>rawDirect+.5)};
+  }
+
+  function launchProgressTerminal({rawDataError,historyComplete,endedComplete,d1Unavailable,componentsReady,effectiveDays,hasSmall,smallCompletion,directCompletion,actualSmall,actualDirect,actualGross,anchorSmall,anchorDirect}) {
+    const available=!rawDataError&&historyComplete&&(endedComplete||(!d1Unavailable&&componentsReady&&effectiveDays>0&&anchorSmall+anchorDirect>0&&(!hasSmall||Number.isFinite(smallCompletion))&&Number.isFinite(directCompletion)));
+    const small=endedComplete?actualSmall:!hasSmall?0:available?Math.max(anchorSmall,anchorSmall/smallCompletion):0,direct=endedComplete?actualDirect:available?Math.max(anchorDirect,anchorDirect/directCompletion):0;
+    return {available,small,direct,gross:endedComplete?actualGross:small+direct};
+  }
+
   function forecastWindows(configured = {}, values = {}) {
-    const parse = value => /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) ? Date.parse(value+'T00:00:00Z') : NaN;
+    const parse = dateNumber;
     const shift = (start, count) => Number.isFinite(parse(start)) && count > 0
       ? new Date(parse(start)+(count-1)*86400000).toISOString().slice(0,10) : '';
     const launchDate = values.launchDate ?? configured.launch_date ?? '';
-    const days = Math.max(0, Math.round(Number(values.days ?? configured.days ?? configured.launch_days) || 0));
+    const days = positiveDays(values.days ?? configured.days ?? configured.launch_days);
     const smallStartDate = values.smallStartDate ?? configured.small_start_date ?? '';
-    const smallDays = Math.max(0, Math.round(Number(values.smallDays ?? configured.small_days) || 0));
+    const smallDays = positiveDays(values.smallDays ?? configured.small_days);
     const launchChanged = launchDate !== (configured.launch_date || '') || days !== Number(configured.days ?? configured.launch_days ?? 0);
     const smallChanged = smallStartDate !== (configured.small_start_date || '') || smallDays !== Number(configured.small_days || 0);
     const endDate = launchChanged ? shift(launchDate, days) : configured.end_date || shift(launchDate, days);
@@ -490,6 +567,12 @@
     weightedObserved,
     referenceParameter,
     forecastWindows,
+    launchStage,
+    smallStage,
+    sourceBlockingIssues,
+    launchRowIssues,
+    launchParameterTerminal,
+    launchProgressTerminal,
     stretchCompletion,
     launchDailyReference,
     adaptLaunchDailyOrders,

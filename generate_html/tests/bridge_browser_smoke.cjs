@@ -293,7 +293,7 @@ const templates=path.resolve(__dirname,'../templates');
  Object.assign(reservationEnd.target,{launch_date:'2026-09-04',small_start_date:'2026-09-01',small_end_date:'2026-09-04',total_small:0});
  Object.assign(reservationEnd.targets[0],{launch_date:'2026-09-04',end_date:'2026-09-11',small_start_date:'2026-09-01',small_end_date:'2026-09-04',small_days:4,small:0});
  reservationEnd.small_order_history=[{...reservationEnd.small_order_history[0],days:4,small_progress:[.25,.5,.75,1]}];
- reservationEnd.actuals=[{model:'current',total_small:0,hard_errors:['总小订缺失或不大于0'],days:[],small_daily_days:[
+ reservationEnd.actuals=[{model:'current',total_small:0,validation_issues:[{code:'TOTAL_SMALL_REQUIRED',message:'总小订缺失或不大于0'}],days:[],small_daily_days:[
   {date:'2026-09-01',orders:1000},{date:'2026-09-02',orders:0},{date:'2026-09-03',orders:2000},{date:'2026-09-04',orders:500}
  ]}];
  const renderEnd=async f=>{await page.evaluate(f=>{window.bridgeTest.state.forecastStage='launch';document.querySelector('#page').innerHTML=window.bridgeTest.renderForecastWorkspaceV2(f);window.bridgeTest.bindForecastWorkspaceV2()},f);};
