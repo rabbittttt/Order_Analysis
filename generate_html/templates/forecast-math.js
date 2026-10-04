@@ -7,6 +7,19 @@
 
   const DEFAULT_COMPLETION_FLOOR = 0.005;
 
+  // Preserve the distinction between a real zero and unavailable evidence.
+  function observedQuantity(value) {
+    if (value === null || value === undefined || typeof value === 'boolean' ||
+        (typeof value === 'string' && !value.trim())) return NaN;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : NaN;
+  }
+
+  function observedRatio(numerator, denominator) {
+    const top = observedQuantity(numerator), bottom = observedQuantity(denominator);
+    return bottom > 0 ? top / bottom : NaN;
+  }
+
   // A missing ratio is not a zero observation. Normalize only usable weights.
   function weightedObserved(rows, fallback = NaN) {
     const usable = (rows || []).filter(row => row.value !== null && row.value !== undefined &&
@@ -105,9 +118,18 @@
   }
 
   function launchProgressTerminal({rawDataError,historyComplete,endedComplete,d1Unavailable,componentsReady,effectiveDays,hasSmall,smallCompletion,directCompletion,actualSmall,actualDirect,actualGross,anchorSmall,anchorDirect}) {
-    const available=!rawDataError&&historyComplete&&(endedComplete||(!d1Unavailable&&componentsReady&&effectiveDays>0&&anchorSmall+anchorDirect>0&&(!hasSmall||Number.isFinite(smallCompletion))&&Number.isFinite(directCompletion)));
+    const validCompletion = value => Number.isFinite(value) && value > 0 && value <= 1;
+    const available=!rawDataError&&historyComplete&&(endedComplete||(!d1Unavailable&&componentsReady&&effectiveDays>0&&anchorSmall+anchorDirect>0&&(!hasSmall||validCompletion(smallCompletion))&&validCompletion(directCompletion)));
     const small=endedComplete?actualSmall:!hasSmall?0:available?Math.max(anchorSmall,anchorSmall/smallCompletion):0,direct=endedComplete?actualDirect:available?Math.max(anchorDirect,anchorDirect/directCompletion):0;
     return {available,small,direct,gross:endedComplete?actualGross:small+direct};
+  }
+
+  // Empty overrides restore the reference; invalid nonempty overrides must not
+  // silently fall back or be used as divisors. Manual values retain their precision.
+  function launchCompletion(reference, manual, overridden = false) {
+    const supplied = overridden && manual !== null && manual !== undefined && String(manual).trim() !== '';
+    const value = supplied ? observedQuantity(manual) / 100 : observedQuantity(reference);
+    return value > 0 && value <= 1 ? value : NaN;
   }
 
   function forecastWindows(configured = {}, values = {}) {
@@ -565,6 +587,9 @@
 
   return {
     weightedObserved,
+    observedQuantity,
+    observedRatio,
+    launchCompletion,
     referenceParameter,
     forecastWindows,
     launchStage,

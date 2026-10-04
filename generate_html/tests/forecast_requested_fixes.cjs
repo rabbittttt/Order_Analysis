@@ -19,9 +19,9 @@ root._smallForecastResult.error=null;
 assert.equal(small('另一车型',{small:0}).value,0);
 assert.equal(small('智界 RX 2027款',{small:123,small_end_date:'2026-09-27'}).value,123);
 // Exercise the real launch scoring rules before D1, not just the linked-input helper.
-const score=new Function('sameModel','actualSignals','calendarProfile','calendarSimilarity','fmt',
-  section('    const closeness=','    const updateWeightSummary=')+';return scoreSummary;')(
-  (a,b)=>a===b,()=>({days:[]}),()=>({}),()=>NaN,String);
+const score=new Function('window','sameModel','actualSignals','calendarProfile','calendarSimilarity','fmt',
+  section('    const observed=window.ForecastMath.observedQuantity','    const updateWeightSummary=')+';return scoreSummary;')(
+  {ForecastMath:require('../templates/forecast-math.js')},(a,b)=>a===b,()=>({days:[]}),()=>({}),()=>NaN,String);
 const target={name:'智界 RX 2027款',tier:'中大型SUV',energy:'增程',node:'全新发布',period:'下午',days:35,small:18000,smallEstimated:true};
 const reference={model:'历史参考',tier:target.tier,energy:target.energy,node:target.node,launch_period:target.period,days:35,small:20000,conversion:.5,direct_share:.2};
 for(const task of ['conversion','direct_share']){

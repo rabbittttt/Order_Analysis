@@ -108,3 +108,29 @@ class ForecastContractTests(unittest.TestCase):
         self.assertIn('ForecastMath.smallStage(target,today())',script)
         self.assertIn('ForecastMath.launchParameterTerminal(',script)
         self.assertIn('ForecastMath.launchProgressTerminal(',script)
+
+    def test_progress_terminal_rejects_invalid_completion_without_infinity(self):
+        args = dict(rawDataError=False, historyComplete=True, endedComplete=False,
+                    d1Unavailable=False, componentsReady=True, effectiveDays=2,
+                    hasSmall=True, anchorSmall=100, anchorDirect=50,
+                    smallCompletion=.25, directCompletion=.2,
+                    actualSmall=100, actualDirect=50, actualGross=150)
+        for field in ('smallCompletion', 'directCompletion'):
+            for value in (None, False, '', 0, -1, 1.2):
+                result = self.js('m.launchProgressTerminal('+json.dumps({**args, field:value})+')')
+                self.assertFalse(result['available'], (field, value))
+                self.assertEqual(result['gross'], 0)
+        args.update(endedComplete=True, smallCompletion=None, directCompletion=None)
+        result = self.js('m.launchProgressTerminal('+json.dumps(args)+')')
+        self.assertTrue(result['available'])
+        self.assertEqual(result['gross'], 150)
+        args.update(endedComplete=False, hasSmall=False, anchorSmall=0, directCompletion=.2)
+        self.assertTrue(self.js('m.launchProgressTerminal('+json.dumps(args)+').available'))
+
+    def test_manual_completion_empty_restores_reference_invalid_never_falls_back(self):
+        for value in ('0', '-10', '120', 'Infinity', 'abc'):
+            self.assertIsNone(self.js('m.launchCompletion(.25,'+json.dumps(value)+',true)'))
+        self.assertEqual(self.js("m.launchCompletion(.25,'',true)"), .25)
+        self.assertEqual(self.js("m.launchCompletion(.25,'120',false)"), .25)
+        self.assertEqual(self.js("m.launchCompletion(.25,'100',true)"), 1)
+        self.assertEqual(self.js("m.launchCompletion(.25,'0.1',true)"), .001)

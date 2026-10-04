@@ -54,6 +54,16 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
     check('无小订车型方法二使用D1直接大定基准',result.scenarios.parameter.available&&Math.abs(result.scenarios.parameter.gross-1000)<1);
     check('无小订不伪造小转大',result.rows.every(row=>row.small_to_big===0));
     check('无小订相关输入不参与界面',!(await page.locator('[data-forecast-input="small"]').isVisible()));
+    const completion=page.locator('[data-forecast-input="progressDirectCompletion"]');
+    await completion.fill('120');await completion.dispatchEvent('change');
+    await page.waitForFunction(()=>!document.querySelector('.forecast-workspace')._forecastComparison.scenarios.progress.available);
+    check('人工完成率超过100%时明确指出字段',(await page.locator('[data-forecast-data-error]').innerText()).includes('直接大定人工完成率必须大于0%且不超过100%'));
+    check('无效方法一参数不影响方法二',await page.locator('.forecast-workspace').evaluate(root=>root._forecastComparison.scenarios.parameter.available));
+    await completion.fill('0');await completion.dispatchEvent('change');
+    check('人工零完成率不偷偷回退',!(await page.locator('.forecast-workspace').evaluate(root=>root._forecastComparison.scenarios.progress.available)));
+    await completion.fill('');await completion.dispatchEvent('change');
+    await page.waitForFunction(()=>document.querySelector('.forecast-workspace')._forecastComparison.scenarios.progress.available);
+    check('清空人工完成率恢复原有结果',await page.locator('.forecast-workspace').evaluate((root,original)=>root._forecastComparison.scenarios.progress.gross===original,result.scenarios.progress.gross));
     await page.locator('[data-forecast-stage-switch="small"]').click();
     check('小订明确不适用而非原始数据错误',(await page.locator('[data-small-error]').innerText()).includes('不适用'));
     await page.locator('[data-forecast-stage-switch="steady"]').click();
@@ -63,6 +73,10 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
     check('缺总小订只限制方法二',!result.scenarios.parameter.available&&notice.includes('方法二')&&!notice.includes('方法一：'));
     check('无总小订的小转大率保持未知',result.rows.every(row=>row.small_conversion===null));
     check('无总小订的转化率KPI不显示伪造0',await page.locator('[data-forecast-value="progress-conversion"]').innerText()==='—');
+    const completion=page.locator('[data-forecast-input="progressSmallCompletion"]');
+    await completion.fill('120');await completion.dispatchEvent('change');
+    await page.waitForFunction(()=>!document.querySelector('.forecast-workspace')._forecastComparison.scenarios.progress.available);
+    check('小转大人工完成率无效也准确提示',(await page.locator('[data-forecast-data-error]').innerText()).includes('小转大人工完成率必须大于0%且不超过100%'));
    }else if(scenario==='ended_components'){
     check('首销结束后保留真实总大定',result.scenarios.progress.gross===180&&result.scenarios.progress.available);
     check('缺失实际分项没有伪造0',await page.locator('[data-forecast-value="progress-small"]').innerText()==='—');
