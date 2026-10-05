@@ -493,6 +493,21 @@
     return {available:true,level,ratio:previous>0?level/previous:1,days:values.length,flatTrend:!(previous>0)};
   }
 
+  // Keep absolute calendar positions: a missing/duplicate date is unknown,
+  // never a reason to shift a later order into an earlier Dn or calendar factor.
+  function launchDirectObservations({rows = [], launchDate, endDate, days, today, factor = () => 1}) {
+    const stage = launchStage({launchDate,endDate,days},today);
+    const count = stage.key === 'ended' ? stage.days : stage.key === 'active' ? stage.day-1 : 0;
+    const byDate = new Map();
+    for (const row of rows) byDate.set(row.date,byDate.has(row.date)?null:row);
+    const first = dateNumber(launchDate);
+    return Array.from({length:count}, (_,index) => {
+      const day = new Date(first+index*86400000).toISOString().slice(0,10);
+      const value = observedQuantity(byDate.get(day)?.direct), multiplier = factor(day,index);
+      return Number.isFinite(multiplier) && multiplier > 0 ? value/multiplier : NaN;
+    });
+  }
+
   function launchDirectLockBaseline({rows = [], launchDate, endDate, today, factor = () => 1}) {
     const unavailable = reason => ({available:false, level:null, ratio:null, reason});
     const valid = value => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -608,6 +623,7 @@
     intradayComponents,
     hourlyComparison,
     launchDirectLockBaseline,
+    launchDirectObservations,
     recentSteadyBaseline,
     defaultBridgeWeights,
     dailySlope,
