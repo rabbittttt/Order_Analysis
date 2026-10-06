@@ -323,6 +323,28 @@
     return Array.from({length:m},(_,i)=>i<2?normalized[i]:i>=m-2?normalized[n-m+i]:at(1+(i-1)*(n-4)/(m-4)));
   }
 
+  // A known terminal total does not make a partial daily history complete.
+  // Do not replace missing actual days with a standardized curve or stretch a prefix.
+  function adaptSmallDailyOrders(item = {}, targetDays) {
+    if (item.total_complete === false) return [];
+    const orders = item.daily_orders || [];
+    let curve;
+    if (orders.length) {
+      const days = Number(item.days || orders.length);
+      if (orders.length !== days) return [];
+      const values = orders.map(observedQuantity);
+      if (!values.every(Number.isFinite)) return [];
+      let total = 0;
+      curve = values.map(value => (total += value));
+    } else {
+      const progress = (item.small_progress || []).some(Number) ? item.small_progress : item.standard_progress || [];
+      if (progress.length !== Number(item.days || progress.length)) return [];
+      curve = progress.map(observedQuantity);
+    }
+    const adapted = stretchCompletion(curve, targetDays);
+    return adapted.map((value, index) => value - (index ? adapted[index - 1] : 0));
+  }
+
   function launchDailyReference(item = {}, today) {
     const parse = value => {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return NaN;
@@ -439,7 +461,8 @@
     const fail = error => ({values:[], base:[], weights:[], warnings, error});
     if (!Number.isFinite(total) || total < 0) return fail('剩余量无效');
     if (!n) return total ? fail('没有剩余日期承接剩余量') : {values:[],base:[],weights:[],warnings,error:''};
-    if (factors.length!==n || weights.length!==n || !shapes.every(v=>Number.isFinite(v)&&v>=0) || !factors.every(v=>Number.isFinite(v)&&v>0) || !weights.every(v=>Number.isFinite(v)&&v>=0)) return fail('日历系数必须为正数，差额权重必须为非负数且覆盖全部待预测日期');
+    if (!shapes.every(v=>Number.isFinite(v)&&v>=0)) return fail('到天基础曲线缺失或无效，请检查所选参考车型的完整逐日数据');
+    if (factors.length!==n || weights.length!==n || !factors.every(v=>Number.isFinite(v)&&v>0) || !weights.every(v=>Number.isFinite(v)&&v>=0)) return fail('日历系数必须为正数，差额权重必须为非负数且覆盖全部待预测日期');
     const anchored = anchor!==null && Number.isFinite(anchor) && anchor>=0 && anchorFactor>0 && anchorShape>0;
     const shape = shapes.map((value,i)=>value*factors[i]);
     const shapeSum = shape.reduce((a,b)=>a+b,0);
@@ -636,6 +659,7 @@
     genericHourlyCompletion,
     isKnownAttribute,
     closeness,
+    adaptSmallDailyOrders,
     smallReferenceScore,
     smallHourlyStart,
     smallHourlyCurve,
