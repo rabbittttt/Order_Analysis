@@ -56,6 +56,8 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   const upload=async(stage,name,rows)=>{
    await page.locator('[data-forecast-stage-switch="'+stage+'"]').click();
    const panel=page.locator('[data-forecast-import="'+stage+'"]');
+   const manager=panel.locator('.forecast-import-manager');
+   if(!await manager.evaluate(node=>node.open))await manager.locator('summary').click();
    await panel.locator('[data-forecast-import-file]').setInputFiles({name,mimeType:'text/csv',buffer:Buffer.from(csv(rows))});
    await page.waitForFunction(stage=>document.querySelector('[data-forecast-import="'+stage+'"] [data-forecast-import-status]').textContent.includes('导入成功'),stage);
    return panel;
@@ -74,11 +76,14 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   check('错误文件不改内存或本机保存数据',JSON.stringify(await records(page))===beforeBad);
   await page.reload();await ready(page);
   launch=page.locator('[data-forecast-import="launch"]');
+  check('已有外部预测时管理表单默认收起',!await launch.locator('.forecast-import-manager').evaluate(node=>node.open));
+  check('收起管理表单不隐藏导入状态',await launch.locator('[data-forecast-import-status]').isVisible());
   check('刷新恢复全部日期外部预测',await launch.locator('input[type="radio"]').count()===0&&(await launch.locator('[data-forecast-import-result]').innerText()).includes('350'));
   check('刷新恢复外部预测折线',await launch.locator('[data-forecast-import-result] svg circle[stroke="#7C3AED"]').count()===2);
   const small=await upload('small','small.csv',[[d1,7]]);
   const overlap=await records(page);check('交界同日不同阶段不互相覆盖',overlap.filter(r=>r.date===d1).length===2&&overlap.some(r=>r.stage==='small'&&r.quantity===7)&&overlap.some(r=>r.stage==='launch'&&r.quantity===100));
   await page.locator('[data-forecast-stage-switch="launch"]').click();
+  if(!await launch.locator('.forecast-import-manager').evaluate(node=>node.open))await launch.locator('.forecast-import-manager > summary').click();
   await launch.locator('[data-forecast-import-mode]').selectOption('replace');
   page.once('dialog',dialog=>dialog.dismiss());
   await launch.locator('[data-forecast-import-file]').setInputFiles({name:'replace.csv',mimeType:'text/csv',buffer:Buffer.from(csv([[d1,9]]))});
@@ -94,6 +99,8 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   check('恢复系统参数不删除外部导入',(await records(page)).length===1&&(await storage(page)).drafts.length===0);
   await page.reload();await ready(page);
   check('系统参数重置也能跨刷新保持',await page.locator('[data-forecast-input="conversion"]').inputValue()===defaultConversion);
+  const importManager=page.locator('[data-forecast-import="launch"] .forecast-import-manager');
+  if(!await importManager.evaluate(node=>node.open))await importManager.locator('summary').click();
   await page.locator('[data-forecast-import="launch"] [data-forecast-import-clear]').click();
   await page.reload();await ready(page);
   check('清除导入同步删除本机保存',(await records(page)).length===0);

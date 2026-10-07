@@ -594,7 +594,7 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         scale = script.index('<section class="forecast-scale-check">')
         self.assertLess(scenarios, parameters)
         self.assertLess(parameters, charts)
-        self.assertLess(charts, common)
+        self.assertLess(common, parameters)
         self.assertLess(common, scale)
         self.assertLess(charts, scale)
         self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))", css)
@@ -609,7 +609,7 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-template-columns:1fr}", css)
         self.assertNotIn('<details class="forecast-parameter-rail">', script)
 
-    def test_forecast_stage_errors_are_top_aligned_and_bridge_controls_are_bottom_aligned(self):
+    def test_forecast_stage_errors_are_top_aligned_and_common_controls_precede_curves(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         small = script[script.index("function renderSmallOrderWorkspace"):script.index("function renderSteadyWorkspace")]
         steady = script[script.index("function renderSteadyWorkspace"):script.index("function renderForecastWorkspaceV2")]
@@ -617,10 +617,10 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertLess(small.index('data-small-error'), small.index('id="small-forecast-pane-result"'))
         self.assertLess(steady.index('data-steady-error'), steady.index('id="steady-forecast-pane-result"'))
         self.assertLess(steady.index('data-steady-chart'), steady.index('data-forecast-import-anchor="steady"'))
-        self.assertLess(steady.index('data-forecast-import-anchor="steady"'), steady.index("renderStageCommonControls('steady')"))
+        self.assertLess(steady.index("renderStageCommonControls('steady')"), steady.index('data-steady-chart'))
         self.assertLess(launch.index('data-forecast-data-error'), launch.index('id="forecast-pane-result"'))
         self.assertLess(launch.index('data-forecast-decision-chart="parameter"'), launch.index('data-forecast-import-anchor="launch"'))
-        self.assertLess(launch.index('data-forecast-import-anchor="launch"'), launch.index('data-forecast-region="common"'))
+        self.assertLess(launch.index('data-forecast-region="common"'), launch.index('data-forecast-decision-chart="parameter"'))
         self.assertLess(launch.index('data-forecast-allocation-note'), launch.index("renderBridgeControls('launch')"))
         self.assertLess(launch.index("renderBridgeControls('launch')"), launch.index('<section class="forecast-scale-check">'))
 
@@ -739,14 +739,14 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
         refresh = (ROOT / "tools" / "refresh_sales_forecast_data.py").read_text(encoding="utf-8")
-        parameter_block = script.split('forecast-parameter-controls', 1)[1].split('forecast-common-controls', 1)[0]
+        parameter_block = script.split('forecast-parameter-controls', 1)[1].split('data-forecast-region="curves"', 1)[0]
         self.assertNotIn('data-forecast-input="lock"', parameter_block)
         self.assertIn('class="forecast-common-lock">大定到锁单率', script)
         self.assertIn('首销期锁单 ÷ 总大定', script)
         self.assertIn('"首销期锁单", "大定到锁单率"', refresh)
         self.assertIn('.forecast-v2 .forecast-ref-grid{grid-template-columns:repeat(2,minmax(0,1fr))', css)
         self.assertIn('.forecast-common-controls{grid-column:1/-1', css)
-        self.assertLess(script.index('forecast-progress-controls'), script.index('forecast-d1-card'))
+        self.assertLess(script.index('forecast-d1-card'), script.index('forecast-progress-controls'))
 
     def test_forecast_short_panels_keep_natural_height_and_single_refs_use_full_width(self):
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")

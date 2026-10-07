@@ -137,7 +137,8 @@
     for(const [stage,[label,unit]] of Object.entries(stages)){
       const anchor=root.querySelector(`[data-forecast-import-anchor="${stage}"]`);if(!anchor)continue;
       const card=document.createElement('section');card.className='forecast-import';card.dataset.forecastImport=stage;
-      card.innerHTML='<div class="forecast-import-head"><div><small>预测曲线外部对照</small><h4>外部逐日预测 · '+label+'</h4></div><p>三个阶段共用导入：小订量、总大定分列；平销总大定按大定到锁单率换算。导入值独立展示，不覆盖真实订单或算法结果。</p></div><div class="forecast-import-actions"><label>导入方式<select data-forecast-import-mode aria-label="外部预测导入方式"><option value="merge">合并（同指标同日更新）</option><option value="replace">替换该车型全部外部预测</option></select></label><label>选择Excel/CSV<input type="file" accept=".xlsx,.csv" data-forecast-import-file aria-label="导入'+label+'逐日预测"></label><button type="button" data-forecast-import-template>下载CSV模板</button><button type="button" data-forecast-import-clear>清除该车型全部导入</button></div><p class="forecast-import-help">字段：车型（代际）、日期、预测小订、预测大定（总大定，不是留存大定）；数量为非负整数，可只填其中一列。一次导入供三个阶段使用；按各阶段日期展示，保留已过日期预测。</p><p role="status" aria-live="polite" data-forecast-import-status>尚未导入；成功后自动保存到当前浏览器，不上传。</p><div data-forecast-import-result></div>';
+      card.innerHTML='<div class="forecast-import-head"><div><small>预测曲线外部对照</small><h4>外部逐日预测 · '+label+'</h4></div><p>三个阶段共用导入：小订量、总大定分列；平销总大定按大定到锁单率换算。导入值独立展示，不覆盖真实订单或算法结果。</p></div><details class="forecast-import-manager"><summary>管理导入</summary><div class="forecast-import-actions"><label>导入方式<select data-forecast-import-mode aria-label="外部预测导入方式"><option value="merge">合并（同指标同日更新）</option><option value="replace">替换该车型全部外部预测</option></select></label><label>选择Excel/CSV<input type="file" accept=".xlsx,.csv" data-forecast-import-file aria-label="导入'+label+'逐日预测"></label><button type="button" data-forecast-import-template>下载CSV模板</button><button type="button" data-forecast-import-clear>清除该车型全部导入</button></div><p class="forecast-import-help">字段：车型（代际）、日期、预测小订、预测大定（总大定，不是留存大定）；数量为非负整数，可只填其中一列。一次导入供三个阶段使用；按各阶段日期展示，保留已过日期预测。</p></details><p role="status" aria-live="polite" data-forecast-import-status>尚未导入；成功后自动保存到当前浏览器，不上传。</p><div data-forecast-import-result></div>';
+      card.querySelector('.forecast-import-manager').open=!importedForecastRows.get(context.targetState().name)?.rows.length;
       anchor.append(card);cards.push({stage,unit,card});
       const undo=document.createElement('button');undo.type='button';undo.dataset.forecastImportUndo='';undo.textContent='撤销清除';undo.hidden=true;
       card.querySelector('.forecast-import-actions').append(undo);
@@ -817,10 +818,11 @@
         <div class="forecast-result-shell"><div class="forecast-result-main">
           <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${renderLifecycleConclusion('small','小订预测结论','已发生数量与未来预测分开显示',[
             {key:'total',label:'预计最终总小订',unit:'单'},{key:'actual',label:'当前已发生',unit:'单'},{key:'d1',label:'D1小订终值',unit:'单'}])}</div></section>
+          <aside class="forecast-controls-rail" data-forecast-region="controls" aria-label="预测参数">${renderStageCommonControls('small')}
           <section class="forecast-parameter-rail forecast-lifecycle-parameters forecast-result-section" data-forecast-region="parameters"><div class="forecast-rail-head"><div><small>当前对象驱动</small><h4>预测参数</h4></div><span>修改后实时重算</span></div><div class="forecast-input-grid"><label>线索量<input type="number" min="0" data-small-input="leads" placeholder="未维护"></label><label>互联网热度<input type="number" min="0" step="0.1" data-small-input="heat" placeholder="未维护"></label></div><p class="forecast-progress-source" data-small-source>正在检查小订窗口和历史曲线。</p></section>
+          </aside>
           <section class="forecast-decision-card forecast-result-section" data-forecast-region="curves"><div class="forecast-pane-head"><div><small>真实值冻结，未来按参考曲线分配</small><h4>小订逐日实际与预测</h4></div></div><div data-small-chart></div></section>
           <div data-forecast-import-anchor="small" data-forecast-region="import"></div>
-          ${renderStageCommonControls('small')}
         </div></div>
       </section>
       <section id="small-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-evidence">
@@ -844,10 +846,9 @@
           <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${renderLifecycleConclusion('steady','平销预测结论','本车型实际校准规模，历史参考提供相对趋势',[
             {key:'total',label:'预测区间锁单（含已实现）',unit:'单'},{key:'daily',label:'近期真实日均锁单',unit:'单／天'},
             {key:'change',label:'未来日均较近期实际',unit:'%'},{key:'basis',label:'当前预测依据'}])}</div></section>
-          <section class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters"><div class="forecast-rail-head"><div><small>当前实际与首销曲线承接</small><h4>预测参数</h4></div><span>参考车型及权重在预测依据中调整</span></div><dl class="forecast-parameter-facts"><div><dt>数量口径</dt><dd>交车锁单</dd></div><div><dt>规模基准</dt><dd>本车型实际 / 首销结果</dd></div><div><dt>分配方式</dt><dd>按天预测 · 按周汇总</dd></div></dl><p class="forecast-progress-source" data-steady-source>正在读取《锁单选配比例分析》的平销期交车锁单。</p></section>
-          <section class="forecast-decision-card forecast-result-section" data-forecast-region="curves"><div class="forecast-pane-head"><div><small>交车锁单口径：按天预测、按周汇总，已结束日冻结</small><h4>平销交车锁单by周</h4></div></div><div data-steady-chart></div></section>
+          <aside class="forecast-controls-rail" data-forecast-region="controls" aria-label="预测参数">${renderStageCommonControls('steady')}</aside>
+          <section class="forecast-decision-card forecast-result-section" data-forecast-region="curves"><div class="forecast-pane-head"><div><small>交车锁单口径：按天预测、按周汇总，已结束日冻结</small><h4>平销交车锁单by周</h4></div></div><p class="forecast-progress-source" data-steady-source>正在读取《锁单选配比例分析》的平销期交车锁单。</p><div data-steady-chart></div></section>
           <div data-forecast-import-anchor="steady" data-forecast-region="import"></div>
-          ${renderStageCommonControls('steady')}
         </div></div>
       </section>
       <section id="steady-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-evidence">
@@ -912,7 +913,12 @@
         <div class="forecast-result-shell">
           <main class="forecast-result-main">
             <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${scenario('progress','方法一 · 同期完成率反推','真实累计量 ÷ 参考传播名同期完成率')}${scenario('parameter','方法二 · 转化参数测算','总小订 × 转化率，并按直接大定占比换算')}</div><p class="forecast-progress-source">首销结论为总大定（小转大＋直接大定，未扣大定退订）；锁单单独展示。累计小转大率＝累计小转大÷总小订；真实累计与当日滚动估算分开显示。</p></section>
-            <aside class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters">
+            <aside class="forecast-controls-rail" data-forecast-region="controls" aria-label="预测参数">
+             <section class="forecast-common-controls forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>首日锚点、锁单换算与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div><div class="forecast-common-grid">
+               <div class="forecast-d1-card" data-forecast-d1-card><div class="forecast-block-head"><div><small>首日锚点</small><h4 data-forecast-d1-title>D1大定</h4></div><span data-forecast-d1-stage>判定中</span></div><label data-forecast-d1-input-wrap>D1预测大定<input data-forecast-input="d1Gross" type="number" min="0" placeholder="系统自动"><small>单</small></label><div class="forecast-d1-value"><strong data-forecast-d1-value>—</strong><em>单</em><details class="forecast-d1-details"><summary>来源与状态</summary><small data-forecast-d1-note></small></details></div><div class="forecast-d1-components"><span>小转大 <b data-forecast-d1-small>—</b></span><span>直接大定 <b data-forecast-d1-direct>—</b></span></div></div>
+               <label class="forecast-common-lock">大定到锁单率<span>首销期锁单 ÷ 总大定</span><span class="forecast-common-lock-input"><input data-forecast-input="lock" type="number" min="0" max="100" step="0.1" value="${(target.lock_rate*100).toFixed(1)}"><small>%</small></span><em>用于两种方法的首销期锁单测算</em></label>
+             </div><p data-forecast-allocation-note></p>${renderBridgeControls('launch')}</section>
+            <section class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters">
               <div class="forecast-rail-head"><div><small>人工确认与共同调整</small><h4>预测参数</h4></div><span>修改后实时重算</span></div>
               <div class="forecast-result-grid forecast-control-grid">
                 <div class="forecast-assumptions forecast-progress-controls"><div class="forecast-block-head"><div><small>方法一人工确认区</small><h4>同期完成率参数</h4></div><button data-forecast-apply-progress>采用参考完成率</button></div><div class="forecast-progress-actuals"><span>已结束日真实小转大 <b data-forecast-progress-actual-small>—</b></span><span>已结束日真实直接大定 <b data-forecast-progress-actual-direct>—</b></span><span data-forecast-progress-intraday></span></div><div class="forecast-input-grid">
@@ -926,16 +932,12 @@
                 </div></div>
                </div>
               <div class="forecast-suggestion" data-forecast-suggestion></div>
-            </aside>
+            </section></aside>
             <div class="forecast-decision-grid forecast-result-section" data-forecast-region="curves">
               <section class="forecast-decision-card progress"><div class="forecast-pane-head"><div><small>方法一：已发生进度决定终局，未来只分配剩余量</small><h4>同期完成率法 · 到天拆解</h4></div><span>每个未来Dn基础权重 × 日期调整系数</span></div><div data-forecast-decision-chart="progress"></div><p class="forecast-monitor-status" data-forecast-monitor-status></p><details class="forecast-weekly"><summary>查看方法一by周预测汇总</summary><div data-forecast-weekly="progress"></div></details></section>
               <section class="forecast-decision-card parameter"><div class="forecast-pane-head"><div><small>方法二：总小订、转化率和直接大定占比决定终局</small><h4>转化参数法 · 到天拆解</h4></div><span>与方法一独立展示，不合并、不平均</span></div><div data-forecast-decision-chart="parameter"></div><details class="forecast-weekly"><summary>查看方法二by周预测汇总</summary><div data-forecast-weekly="parameter"></div></details></section>
              </div>
              <div data-forecast-import-anchor="launch" data-forecast-region="import"></div>
-             <section class="forecast-common-controls forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>首日锚点、锁单换算与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div><div class="forecast-common-grid">
-               <div class="forecast-d1-card" data-forecast-d1-card><div class="forecast-block-head"><div><small>首日锚点</small><h4 data-forecast-d1-title>D1大定</h4></div><span data-forecast-d1-stage>判定中</span></div><label data-forecast-d1-input-wrap>D1预测大定<input data-forecast-input="d1Gross" type="number" min="0" placeholder="系统自动"><small>单</small></label><div class="forecast-d1-value"><strong data-forecast-d1-value>—</strong><em>单</em><small data-forecast-d1-note></small></div><div class="forecast-d1-components"><span>小转大 <b data-forecast-d1-small>—</b></span><span>直接大定 <b data-forecast-d1-direct>—</b></span></div></div>
-               <label class="forecast-common-lock">大定到锁单率<span>首销期锁单 ÷ 总大定</span><span class="forecast-common-lock-input"><input data-forecast-input="lock" type="number" min="0" max="100" step="0.1" value="${(target.lock_rate*100).toFixed(1)}"><small>%</small></span><em>用于两种方法的首销期锁单测算</em></label>
-             </div><p data-forecast-allocation-note></p>${renderBridgeControls('launch')}</section>
              <section class="forecast-scale-check"><div class="forecast-pane-head"><div><small>不参与公式，只检查预测是否偏离可比传播名区间</small><h4>总体量级合理性校验</h4></div></div><div data-forecast-scale-check></div></section>
           </main>
         </div>
@@ -1334,8 +1336,19 @@
     target.innerHTML=[...groups.values()].map(group=>`<article><span>${esc(group.key)}</span><strong>${fmt(group.daily)}</strong><small>周大定 · 期末累计${fmt(group.end)}</small><em>${group.backfill?`含过期补估${fmt(group.backfill)}${group.forecast?` · 未来预测${fmt(group.forecast)}`:''}`:group.forecast?`含预测${fmt(group.forecast)}`:'全部真实'}</em></article>`).join('');
   }
 
+  let forecastRailObserver;
   function bindForecastWorkspaceV2(){
+    forecastRailObserver?.disconnect();
     const root=document.querySelector('.forecast-workspace.forecast-v2');if(!root)return;
+    // Only pin controls that fit in the actual page scroller; taller rails scroll normally.
+    const scroller=document.querySelector('#page'),rails=[...root.querySelectorAll('.forecast-controls-rail')];
+    forecastRailObserver=new ResizeObserver(()=>{
+      const available=Math.min(window.innerHeight,scroller?.clientHeight||window.innerHeight)-16;
+      const fits=rails.map(rail=>rail.offsetHeight>0&&rail.offsetHeight<=available);
+      rails.forEach((rail,index)=>rail.dataset.sticky=String(fits[index]));
+    });
+    rails.forEach(rail=>forecastRailObserver.observe(rail));
+    if(scroller)forecastRailObserver.observe(scroller);
     const draftTarget=JSON.parse(root.dataset.forecastConfig||'{}').target;
     root._forecastSubjectId=state.subject+(draftTarget?.secondary_generation?'|'+forecastModelKey(draftTarget.name):'');root._forecastTouched=new Set();
     const data=JSON.parse(root.dataset.forecastConfig||'{}'),historyList=data.history||[],history=new Map(historyList.map(item=>[item.model,item])),targetList=[...data.targets||[],...data.steady_targets||[]],actualList=[...data.steady_actuals||[],...data.actuals||[]],modelAliases=data.model_aliases||{};
@@ -1624,6 +1637,10 @@
         const note=root.querySelector(`[data-forecast-kpi-note="${method}-gross"]`);if(note)note.textContent=method==='progress'?'直接大定真实进度 ÷ 参考同期完成率':'有效D1大定量 ÷ 到天参考D1占比';
       }
       const d1Row=resolvedFixed.find(row=>row.index===0),d1Completed=!!d1Row,d1Wrap=root.querySelector('[data-forecast-d1-input-wrap]'),d1Title=root.querySelector('[data-forecast-d1-title]'),d1Stage=root.querySelector('[data-forecast-d1-stage]'),d1Value=root.querySelector('[data-forecast-d1-value]'),d1Note=root.querySelector('[data-forecast-d1-note]'),stageNeedsActual=stageInfo.key==='active'||stageInfo.key==='ended',d1FieldSource=field=>target.fieldSources?.[`首销日·${field}`]||'数据缺失',d1SourceText=`大定：${d1FieldSource('gross')}；小转大：${d1FieldSource('small_to_big')}；直接大定：${d1FieldSource('direct')}`;if(d1Wrap)d1Wrap.hidden=target.hasSmall===false?!(!d1Completed&&!partial):d1Completed||!!partial||stageNeedsActual;if(d1Completed){d1Title.textContent='D1实际大定';d1Stage.textContent='已结束 · 真实值冻结';d1Value.textContent=fmt(d1Row.gross);d1Note.textContent=`${d1SourceText}。预测值不再填写和使用`}else if(partial&&partial.index===0){d1Title.textContent='D1预计全天大定';d1Stage.textContent=`进行中 · 截至${partial.last_hour}时`;d1Value.textContent=fmt(partialGross);d1Note.textContent=`当前累计${fmt(partial.gross)}单 ÷ 同期分时完成率${(partialFactor*100).toFixed(1)}%；${hourlyFallbackUsed?'无可用历史分时曲线，当前使用通用线性回退（低置信度）':'来自当前主辅分时参考'}`}else if(stageNeedsActual){d1Title.textContent='D1真实大定';d1Stage.textContent=d1Unavailable?'无D1分时数据':'数据缺失';d1Value.textContent='—';d1Note.textContent=d1Unavailable?'无D1分时数据或参考不足，无法估算D1全天；首销方法二可独立使用有效小订输入。':`按绝对日期已${stageInfo.key==='ended'?'结束':'开始'}，D1大定按阶段顺序逐字段回退后仍缺失`}else{d1Title.textContent='D1预测大定';d1Stage.textContent='首销前 · 可人工调整';d1Value.textContent=fmt(plannedD1);d1Note.textContent=manualD1?'采用人工输入值':`系统按D1参考传播名相对量级建议${fmt(systemD1)}单`};root.querySelector('[data-forecast-d1-small]').textContent=stageNeedsActual&&!d1Completed&&partial?.index!==0?'—':fmt(d1Completed?d1Row.small_to_big:partial?.index===0?partialSmall:plannedD1*(1-baseShare));root.querySelector('[data-forecast-d1-direct]').textContent=stageNeedsActual&&!d1Completed&&partial?.index!==0?'—':fmt(d1Completed?d1Row.direct:partial?.index===0?partialDirect:plannedD1*baseShare);
+      const d1Details=d1Note.closest('details');
+      if(d1Details.dataset.completed!==String(d1Completed)){
+        d1Details.open=!d1Completed;d1Details.dataset.completed=String(d1Completed);
+      }
       const suggest=suggestions(),gapWarning=pastMissingIndexes.length?`；D${pastMissingIndexes.map(index=>index+1).join('、D')}已过期但数据缺失`:'' ,status=effectiveDays?`绝对日期判定为${stageInfo.label}${stageInfo.key==='active'?`D${stageInfo.day}`:''}；已取得${resolvedFixed.length}/${calendarCompletedDays}个完整真实日，真实大定 <b>${fmt(actualGross)}</b> 单${partial?`；当前日按${partial.last_hour}时进度反推全天`:''}${gapWarning}`:stageInfo.key==='before'?'首销期尚未开始，方法一等待真实进度':`绝对日期判定为${stageInfo.label}，但当前优先数据源没有可用真实进度`,parameterWarning=parameterAdjusted?`<strong>方法二原参数终值${fmt(parameterRawSmall+parameterRawDirect)}单已低于真实累计分量，现按真实下限抬升至${fmt(parameterGross)}单；KPI和未来剩余量已同步。</strong>`:'',implicitConversionWarning=progressAvailable&&scenarios.progress.conversion>1?`<strong>方法一隐含小订转化率${(scenarios.progress.conversion*100).toFixed(1)}%超过100%，请复核总小订、真实累计量及参考完成率。</strong>`:'';root.querySelector('[data-forecast-suggestion]').innerHTML=rawDataError?'首销预测条件不足，具体原因和影响范围见上方提示；已知实际数据保留。':`${status}。${parameterAvailable?`方法二系统建议：转化率<b>${formatParameterRate(suggest.conversion)}</b> · 直接大定占比<b>${formatParameterRate(suggest.direct)}</b>；公共参数建议：大定到锁单率<b>${formatParameterRate(suggest.lock)}</b>（首销期锁单÷总大定）。当前${manualOverride?'含人工调整':'与参考均值同步'}。${parameterWarning}${implicitConversionWarning}`:`方法二不可用：${parameterMissingReason}，当前不输出结果。${implicitConversionWarning}`}`;
       if(!hasSmall&&!endedComplete){
         if(progressSource)progressSource.textContent=`无小订阶段，仅使用直接大定真实累计量和参考同期完成率（${Number.isFinite(directCompletion)?(directCompletion*100).toFixed(1)+'%':'未取得'}）；不计算小转大和小订转化率。`;
