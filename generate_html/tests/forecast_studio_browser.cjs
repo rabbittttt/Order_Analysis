@@ -15,6 +15,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
   const snapshot=await page.locator('.forecast-workspace').evaluate(root=>JSON.stringify({launch:root._forecastComparison,small:root._smallForecastResult,steady:root.querySelector('[data-steady-workspace]')._steadyDaily}));
   if(before)fs.writeFileSync(path.join(out,'baseline.json'),snapshot);
   else check('三个阶段的计算输出与改版前逐字段一致',snapshot===fs.readFileSync(path.join(out,'baseline.json'),'utf8'));
+  if(!before)check('预测主色沿用全站主题',await page.locator('.forecast-workspace').evaluate(root=>{const style=getComputedStyle(root);return style.getPropertyValue('--forecast-blue').trim()===style.getPropertyValue('--primary').trim()}));
   for(const stage of ['small','launch','steady']){
    await page.locator(`[data-forecast-stage-switch="${stage}"]`).click();
    const stagePane=page.locator(`[data-forecast-stage-pane="${stage}"]`);
