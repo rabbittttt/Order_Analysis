@@ -427,22 +427,23 @@
     const parse = value => Date.parse(`${value}T00:00:00Z`);
     const first = parse(start), last = parse(end), now = parse(today);
     if (![first, last, now].every(Number.isFinite) || last < first)
-      return {rows: [], missing: [], expected: 0, error: '小订时间窗口缺失或冲突'};
+      return {rows: [], missing: [], missingDates: [], expected: 0, error: '小订时间窗口缺失或冲突'};
     const expected = Math.max(0, Math.min(Math.round((now-first)/86400000), Math.round((last-first)/86400000)+1));
     const index = source => {
       const result = new Map();
       source.forEach(row => result.set(row.date, result.has(row.date) ? null : row.orders));
       return result;
     };
-    const sources = [index(primary), index(fallback)], rows = [], missing = [];
+    // Keep Dn labels for existing callers; diagnostics compare absolute dates.
+    const sources = [index(primary), index(fallback)], rows = [], missing = [], missingDates = [];
     for (let day = 0; day < expected; day += 1) {
       const date = new Date(first + day*86400000).toISOString().slice(0,10);
       const value = sources.map(source => source.get(date)).find(value =>
         value !== null && value !== undefined && String(value).trim() !== '' && Number.isFinite(Number(value)) && Number(value) >= 0);
-      if (value === undefined) missing.push(`D${day+1}`);
+      if (value === undefined) {missing.push(`D${day+1}`);missingDates.push(date);}
       else rows.push({label:`D${day+1}`, date, orders:Number(value), actual:true});
     }
-    return {rows, missing, expected, error:''};
+    return {rows, missing, missingDates, expected, error:''};
   }
 
   // Bounded transition: protect the first future day, half participation on day 2.
