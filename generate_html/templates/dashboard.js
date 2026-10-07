@@ -838,6 +838,7 @@
   function renderSteadyWorkspace(data){
     const history=data.steady_history||[];
     const reference=renderLifecycleReferenceCard('steady','weekly','首销规律与平销承接','两张趋势图共用此处的主辅参考与权重；额外对比不参与预测',history,'data-steady-ref','data-steady-weight','data-steady-reference-chart')
+      .replace('<article class="forecast-ref-card" data-lifecycle-reference="steady-weekly">','<article class="forecast-ref-card forecast-steady-shared-reference" data-lifecycle-reference="steady-weekly">')
       .replace('<div class="forecast-task-chart" data-steady-reference-chart></div>', '<div class="forecast-task-chart" data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence></div>');
     return `<div class="forecast-lifecycle-workspace forecast-steady" data-steady-workspace>
       <div class="forecast-data-error" data-steady-error role="alert" aria-live="assertive" hidden></div>
@@ -931,14 +932,15 @@
                   <label>直接大定占比<input data-forecast-input="direct" type="number" min="0" max="99.9" step="0.1" value="${(target.direct_share*100).toFixed(1)}"><small>%</small></label>
                 </div></div>
                </div>
-              <div class="forecast-suggestion" data-forecast-suggestion></div>
-            </section></aside>
+               <div class="forecast-suggestion" data-forecast-suggestion></div>
+            </section>
+            <section class="forecast-scale-check"><div class="forecast-pane-head"><div><small>不参与公式，只检查预测是否偏离可比传播名区间</small><h4>总体量级合理性校验</h4></div></div><div data-forecast-scale-check></div></section>
+            </aside>
             <div class="forecast-decision-grid forecast-result-section" data-forecast-region="curves">
               <section class="forecast-decision-card progress"><div class="forecast-pane-head"><div><small>方法一：已发生进度决定终局，未来只分配剩余量</small><h4>同期完成率法 · 到天拆解</h4></div><span>每个未来Dn基础权重 × 日期调整系数</span></div><div data-forecast-decision-chart="progress"></div><p class="forecast-monitor-status" data-forecast-monitor-status></p><details class="forecast-weekly"><summary>查看方法一by周预测汇总</summary><div data-forecast-weekly="progress"></div></details></section>
               <section class="forecast-decision-card parameter"><div class="forecast-pane-head"><div><small>方法二：总小订、转化率和直接大定占比决定终局</small><h4>转化参数法 · 到天拆解</h4></div><span>与方法一独立展示，不合并、不平均</span></div><div data-forecast-decision-chart="parameter"></div><details class="forecast-weekly"><summary>查看方法二by周预测汇总</summary><div data-forecast-weekly="parameter"></div></details></section>
              </div>
              <div data-forecast-import-anchor="launch" data-forecast-region="import"></div>
-             <section class="forecast-scale-check"><div class="forecast-pane-head"><div><small>不参与公式，只检查预测是否偏离可比传播名区间</small><h4>总体量级合理性校验</h4></div></div><div data-forecast-scale-check></div></section>
           </main>
         </div>
         <details class="forecast-method forecast-source-method"><summary>当前第几天与数据来源如何判断</summary><ol>${(data.source_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>

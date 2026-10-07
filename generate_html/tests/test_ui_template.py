@@ -596,7 +596,8 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertLess(parameters, charts)
         self.assertLess(common, parameters)
         self.assertLess(common, scale)
-        self.assertLess(charts, scale)
+        self.assertLess(parameters, scale)
+        self.assertLess(scale, charts)
         self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))", css)
         self.assertIn(".forecast-result-main>.forecast-common-controls{grid-column:1/-1", css)
         self.assertIn(".forecast-decision-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px", css)
@@ -748,8 +749,9 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn('.forecast-common-controls{grid-column:1/-1', css)
         self.assertLess(script.index('forecast-d1-card'), script.index('forecast-progress-controls'))
 
-    def test_forecast_short_panels_keep_natural_height_and_single_refs_use_full_width(self):
+    def test_forecast_short_panels_keep_natural_height_and_reference_charts_use_half_width(self):
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
+        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn(".forecast-lifecycle-grid{display:grid;grid-template-columns:minmax(300px,.72fr) minmax(0,1.55fr);gap:12px;align-items:start}", css)
         self.assertIn(".forecast-lifecycle-evidence{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.7fr);gap:12px;align-items:start}", css)
         self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start;min-width:0;min-height:0}", css)
@@ -762,8 +764,13 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn(".forecast-workspace.forecast-v2 .forecast-parameter-controls .forecast-input-grid{grid-template-columns:repeat(3,minmax(0,1fr))}", css)
         self.assertIn('.forecast-v2 .forecast-pane[data-forecast-pane="score"].active{min-width:0;max-width:100%;box-sizing:border-box;overflow-x:hidden;overflow-y:auto}', css)
         self.assertIn(".forecast-v2 .forecast-score-table{min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-ref-grid>.forecast-ref-card:only-child{grid-column:1/-1}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-small-order .forecast-ref-grid>.forecast-ref-card:nth-child(3):last-child{grid-column:1/-1}", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-ref-grid>.forecast-ref-card:only-child{grid-column:auto}", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-small-order .forecast-ref-grid>.forecast-ref-card:nth-child(3):last-child{grid-column:auto}", css)
+        self.assertIn(".forecast-workspace.forecast-v2 .forecast-steady .forecast-ref-grid>.forecast-steady-shared-reference{grid-column:1/-1}", css)
+        self.assertIn('class="forecast-ref-card forecast-steady-shared-reference"', script)
+        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference{grid-template-columns:repeat(2,minmax(0,1fr))}", css)
+        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart{grid-column:auto;margin-top:10px}", css)
+        self.assertIn(".forecast-workspace.forecast-studio .forecast-controls-rail>.forecast-scale-check{grid-column:1/-1}", css)
 
     def test_history_tables_follow_the_top_grain_without_local_selector(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
