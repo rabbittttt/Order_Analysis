@@ -522,7 +522,9 @@ assert.strictEqual(fmt(null),'');
         self.assertIn("renderForecastEvidenceGroup('逐日分配参考'", lifecycle)
         self.assertIn("renderForecastEvidenceGroup('趋势参考'", lifecycle)
         self.assertIn('renderForecastEvidenceGroup(group.title,group.note,cards,group.keys.length)', script)
-        self.assertIn('data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence', lifecycle)
+        self.assertIn('<p class="forecast-steady-chart-note">首销全周期直接大定形状决定参考；历史车型提供进入平销后的相对承接关系。本车型平销实际逐步校准规模和趋势，不套历史绝对量。</p><div class="forecast-task-chart" data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence', lifecycle)
+        self.assertEqual(script.count('首销全周期直接大定形状决定参考；历史车型提供进入平销后的相对承接关系。本车型平销实际逐步校准规模和趋势，不套历史绝对量。'), 1)
+        self.assertNotIn("data-steady-evidence]').innerHTML='<p>", script)
 
     def test_small_and_steady_evidence_use_the_prediction_curves(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
@@ -769,7 +771,10 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         self.assertIn(".forecast-workspace.forecast-v2 .forecast-steady .forecast-ref-grid>.forecast-steady-shared-reference{grid-column:1/-1}", css)
         self.assertIn('class="forecast-ref-card forecast-steady-shared-reference"', script)
         self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference{grid-template-columns:repeat(2,minmax(0,1fr))}", css)
-        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart{grid-column:auto;margin-top:10px}", css)
+        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-steady-chart-note{grid-column:1/-1;", css)
+        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart{grid-column:auto;margin-top:10px;padding-top:10px;border-color:var(--line)}", css)
+        self.assertIn('grid-row:span 6;grid-template-rows:subgrid;row-gap:0;align-content:start', css)
+        self.assertIn('grid-row:span 2;grid-template-rows:subgrid;align-items:start;row-gap:3px', css)
         self.assertIn(".forecast-workspace.forecast-studio .forecast-controls-rail>.forecast-scale-check{grid-column:1/-1}", css)
 
     def test_history_tables_follow_the_top_grain_without_local_selector(self):

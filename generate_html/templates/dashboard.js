@@ -839,7 +839,7 @@
     const history=data.steady_history||[];
     const reference=renderLifecycleReferenceCard('steady','weekly','首销规律与平销承接','两张趋势图共用此处的主辅参考与权重；额外对比不参与预测',history,'data-steady-ref','data-steady-weight','data-steady-reference-chart')
       .replace('<article class="forecast-ref-card" data-lifecycle-reference="steady-weekly">','<article class="forecast-ref-card forecast-steady-shared-reference" data-lifecycle-reference="steady-weekly">')
-      .replace('<div class="forecast-task-chart" data-steady-reference-chart></div>', '<div class="forecast-task-chart" data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence></div>');
+      .replace('<div class="forecast-task-chart" data-steady-reference-chart></div>', '<p class="forecast-steady-chart-note">首销全周期直接大定形状决定参考；历史车型提供进入平销后的相对承接关系。本车型平销实际逐步校准规模和趋势，不套历史绝对量。</p><div class="forecast-task-chart" data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence></div>');
     return `<div class="forecast-lifecycle-workspace forecast-steady" data-steady-workspace>
       <div class="forecast-data-error" data-steady-error role="alert" aria-live="assertive" hidden></div>
       <section id="steady-forecast-pane-result" aria-labelledby="forecast-tab-result" class="forecast-lifecycle-subpane${state.forecastView==='result'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-result">
@@ -1134,7 +1134,7 @@
       workspace.querySelector('[data-steady-reference-chart]').innerHTML=renderLifecycleLineChart({series,labels:Array.from({length:count},(_,i)=>'D'+(i+1)),title:'全首销直接大定曲线规律',note:'各车型先剔除日历影响，再以首个正数日归一；实际历史不改写。评分按周期适配后比较形状，不比较绝对销量。'});
       const transitionSeries=chartRefs.map(({item,label,color})=>({label,values:normalize(directFeature(item).steady_curve),color,role:'reference'}));
       if(currentFeature.steady_curve.length)transitionSeries.unshift({label:target.name+' · 平销实际',values:normalize(currentFeature.steady_curve),color:'#1677FF',role:'actual'});
-      workspace.querySelector('[data-steady-evidence]').innerHTML='<p>首销全周期直接大定形状决定参考；历史车型提供进入平销后的相对承接关系。本车型平销实际逐步校准规模和趋势，不套历史绝对量。</p>'+renderLifecycleLineChart({series:transitionSeries,labels:Array.from({length:Math.max(...transitionSeries.map(row=>row.values.length),1)},(_,i)=>'近期完整周'+(i+1)),title:'近期平销趋势（窗口首个正数周＝100%）',note:'仅完整自然周，剔除日历影响，展示各自最近4周；评分另按相同平销进度对齐。无有效完整周时留空。'});
+      workspace.querySelector('[data-steady-evidence]').innerHTML=renderLifecycleLineChart({series:transitionSeries,labels:Array.from({length:Math.max(...transitionSeries.map(row=>row.values.length),1)},(_,i)=>'近期完整周'+(i+1)),title:'近期平销趋势（窗口首个正数周＝100%）',note:'仅完整自然周，剔除日历影响，展示各自最近4周；评分另按相同平销进度对齐。无有效完整周时留空。'});
       workspace.querySelectorAll('[data-lifecycle-reference]').forEach(card=>{card.querySelector('[data-lifecycle-ref-reason]').innerHTML=renderLifecycleReferenceScores(selected,item=>scoreResult(item,target));card._refreshLifecycleControls?.();});
       workspace.querySelector('[data-steady-score]').innerHTML=renderLifecycleScorePage({eyebrow:'平销趋势独立评分',title:'全首销直接大定与平销承接参考',description:'以全首销直接大定归一化形状为主，结合已发生平销趋势；无首销形状证据不自动推荐。',rules:steadyScoreRules,rows:ranked().slice(0,10),selected:selects.map(select=>select.value),empty:'暂无有效趋势参考',minimumEvidence,weighted:true});
     };

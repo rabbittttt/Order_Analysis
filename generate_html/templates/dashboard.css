@@ -3904,7 +3904,13 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .forecast-workspace.forecast-studio .forecast-ref-card{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:8px}
 .forecast-workspace.forecast-studio .forecast-ref-card> :is(.forecast-ref-card-head,.forecast-ref-selects,.forecast-task-chart){grid-column:1/-1;min-width:0}
 .forecast-workspace.forecast-studio .forecast-steady-shared-reference{grid-template-columns:repeat(2,minmax(0,1fr))}
-.forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart{grid-column:auto;margin-top:10px}
+.forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-steady-chart-note{grid-column:1/-1;min-width:0;margin-top:10px;color:var(--muted);font-size:11px;line-height:1.6;overflow-wrap:anywhere}
+.forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart{grid-column:auto;margin-top:10px;padding-top:10px;border-color:var(--line)}
+@media(min-width:701px){
+  .forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart{display:grid;grid-row:span 6;grid-template-rows:subgrid;row-gap:0;align-content:start}
+  .forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart>.forecast-task-chart-title{display:grid;grid-row:span 2;grid-template-rows:subgrid;align-items:start;row-gap:3px}
+  .forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart>.legend{align-self:start}
+}
 .forecast-workspace.forecast-studio .forecast-ref-card>.forecast-ref-score-details{grid-column:1;grid-row:3;align-self:start}
 .forecast-workspace.forecast-studio .forecast-ref-card>.forecast-ref-actions{grid-column:2;grid-row:3;align-self:start;margin-top:8px;flex-wrap:wrap}
 .forecast-workspace.forecast-studio .forecast-ref-card>.forecast-ref-score-details[open]{grid-column:1/-1}
