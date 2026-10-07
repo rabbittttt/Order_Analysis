@@ -42,7 +42,7 @@ const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析
   check('小订天数修改进入窗口计算',(await page.locator('[data-forecast-time-summary]').textContent()).includes(smallStart+' ~ '+smallEnd));
   check('窗口编辑未改写绝对日期真实订单',await page.locator('.forecast-workspace').getAttribute('data-forecast-config')===raw);
   await change('days','');
-  check('清空天数不伪造一天预测',(await page.locator('[data-forecast-data-error]').textContent()).includes('首销天数未维护或不是正整数'));
+  check('清空天数不伪造一天预测',(await page.locator('[data-forecast-data-error]').textContent()).includes('首销截止日期与天数缺失')&&await page.locator('.forecast-workspace').evaluate(root=>Object.values(root._forecastComparison.scenarios).every(scenario=>!scenario.available&&scenario.rows.length===0)));
   await change('days',String(configured.target.launch_days));
   await page.locator('[data-forecast-tab="evidence"]').click();
   const ref=page.locator('[data-forecast-task="daily"] [data-forecast-ref]').first();

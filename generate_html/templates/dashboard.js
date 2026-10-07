@@ -799,9 +799,11 @@
   function renderForecastEvidenceGroup(title,note,cards,count){
     return `<section class="forecast-evidence-group"><div class="forecast-evidence-group-head"><div><small>${esc(note)}</small><h4>${esc(title)}</h4></div><span>${count}个参考模块</span></div><div class="forecast-ref-grid">${cards}</div></section>`;
   }
+  function renderForecastScenarioCard({title,note,variant='',status,metrics,meta=''}){
+    return `<article class="forecast-scenario ${variant}"><div class="forecast-scenario-head"><div><h4>${esc(title)}</h4><small>${esc(note)}</small></div><span ${status}>等待计算</span></div><div class="forecast-metric-strip">${metrics.map((item,index)=>`<div class="forecast-metric${index===0?' primary':''}"><span>${esc(item.label)}</span><div><strong ${item.attribute}>—</strong>${item.unit?`<em>${esc(item.unit)}</em>`:''}</div>${item.noteAttribute?`<small ${item.noteAttribute}></small>`:''}</div>`).join('')}</div>${meta?`<div class="forecast-scenario-meta">${meta}</div>`:''}</article>`;
+  }
   function renderLifecycleConclusion(stage,title,note,metrics){
-    const [primary,...support]=metrics,metric=item=>`<span>${esc(item.label)}</span><div><strong data-${stage}-kpi="${item.key}">—</strong>${item.unit?`<em>${esc(item.unit)}</em>`:''}</div>`;
-    return `<article class="forecast-scenario forecast-lifecycle-conclusion"><div class="forecast-scenario-head"><div><small>${esc(note)}</small><h4>${esc(title)}</h4></div><span data-${stage}-confidence>等待计算</span></div><div class="forecast-scenario-result"><div class="forecast-scenario-hero">${metric(primary)}</div><div class="forecast-scenario-breakdown">${support.map(item=>`<article>${metric(item)}</article>`).join('')}</div></div></article>`;
+    return renderForecastScenarioCard({title,note,variant:'forecast-lifecycle-conclusion',status:`data-${stage}-confidence`,metrics:metrics.map(item=>({...item,attribute:`data-${stage}-kpi="${item.key}"`}))});
   }
   function renderSmallOrderWorkspace(data){
     const history=data.small_order_history||[];
@@ -813,11 +815,11 @@
       <div class="forecast-data-error" data-small-error role="alert" aria-live="assertive" hidden></div>
       <section id="small-forecast-pane-result" aria-labelledby="forecast-tab-result" class="forecast-lifecycle-subpane${state.forecastView==='result'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-result">
         <div class="forecast-result-shell"><div class="forecast-result-main">
-          ${renderLifecycleConclusion('small','小订预测结论','已发生数量与未来预测分开显示',[
-            {key:'total',label:'预计最终总小订',unit:'单'},{key:'actual',label:'当前已发生',unit:'单'},{key:'d1',label:'D1小订终值',unit:'单'}])}
-          <section class="forecast-parameter-rail forecast-lifecycle-parameters"><div class="forecast-rail-head"><div><small>当前对象驱动</small><h4>小订预测参数</h4></div><span>修改后实时重算</span></div><div class="forecast-input-grid"><label>线索量<input type="number" min="0" data-small-input="leads" placeholder="未维护"></label><label>互联网热度<input type="number" min="0" step="0.1" data-small-input="heat" placeholder="未维护"></label></div><p class="forecast-progress-source" data-small-source>正在检查小订窗口和历史曲线。</p></section>
-          <section class="forecast-decision-card"><div class="forecast-pane-head"><div><small>真实值冻结，未来按参考曲线分配</small><h4>小订逐日实际与预测</h4></div></div><div data-small-chart></div></section>
-          <div data-forecast-import-anchor="small"></div>
+          <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${renderLifecycleConclusion('small','小订预测结论','已发生数量与未来预测分开显示',[
+            {key:'total',label:'预计最终总小订',unit:'单'},{key:'actual',label:'当前已发生',unit:'单'},{key:'d1',label:'D1小订终值',unit:'单'}])}</div></section>
+          <section class="forecast-parameter-rail forecast-lifecycle-parameters forecast-result-section" data-forecast-region="parameters"><div class="forecast-rail-head"><div><small>当前对象驱动</small><h4>预测参数</h4></div><span>修改后实时重算</span></div><div class="forecast-input-grid"><label>线索量<input type="number" min="0" data-small-input="leads" placeholder="未维护"></label><label>互联网热度<input type="number" min="0" step="0.1" data-small-input="heat" placeholder="未维护"></label></div><p class="forecast-progress-source" data-small-source>正在检查小订窗口和历史曲线。</p></section>
+          <section class="forecast-decision-card forecast-result-section" data-forecast-region="curves"><div class="forecast-pane-head"><div><small>真实值冻结，未来按参考曲线分配</small><h4>小订逐日实际与预测</h4></div></div><div data-small-chart></div></section>
+          <div data-forecast-import-anchor="small" data-forecast-region="import"></div>
           ${renderStageCommonControls('small')}
         </div></div>
       </section>
@@ -839,13 +841,12 @@
       <div class="forecast-data-error" data-steady-error role="alert" aria-live="assertive" hidden></div>
       <section id="steady-forecast-pane-result" aria-labelledby="forecast-tab-result" class="forecast-lifecycle-subpane${state.forecastView==='result'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-result">
         <div class="forecast-result-shell"><div class="forecast-result-main">
-          <p class="forecast-progress-source">平销预测指标为交车锁单：按天预测、按周汇总；已结束日使用真实值，不再预测平销大定。</p>
-          ${renderLifecycleConclusion('steady','平销预测结论','本车型实际校准规模，历史参考提供相对趋势',[
+          <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${renderLifecycleConclusion('steady','平销预测结论','本车型实际校准规模，历史参考提供相对趋势',[
             {key:'total',label:'预测区间锁单（含已实现）',unit:'单'},{key:'daily',label:'近期真实日均锁单',unit:'单／天'},
-            {key:'change',label:'未来日均较近期实际',unit:'%'},{key:'basis',label:'当前预测依据'}])}
-          <p class="forecast-progress-source" data-steady-source>正在读取《锁单选配比例分析》的平销期交车锁单。</p>
-          <section class="forecast-decision-card"><div class="forecast-pane-head"><div><small>已结束日冻结，日预测汇总为周</small><h4>平销交车锁单by周</h4></div></div><div data-steady-chart></div></section>
-          <div data-forecast-import-anchor="steady"></div>
+            {key:'change',label:'未来日均较近期实际',unit:'%'},{key:'basis',label:'当前预测依据'}])}</div></section>
+          <section class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters"><div class="forecast-rail-head"><div><small>当前实际与首销曲线承接</small><h4>预测参数</h4></div><span>参考车型及权重在预测依据中调整</span></div><dl class="forecast-parameter-facts"><div><dt>数量口径</dt><dd>交车锁单</dd></div><div><dt>规模基准</dt><dd>本车型实际 / 首销结果</dd></div><div><dt>分配方式</dt><dd>按天预测 · 按周汇总</dd></div></dl><p class="forecast-progress-source" data-steady-source>正在读取《锁单选配比例分析》的平销期交车锁单。</p></section>
+          <section class="forecast-decision-card forecast-result-section" data-forecast-region="curves"><div class="forecast-pane-head"><div><small>交车锁单口径：按天预测、按周汇总，已结束日冻结</small><h4>平销交车锁单by周</h4></div></div><div data-steady-chart></div></section>
+          <div data-forecast-import-anchor="steady" data-forecast-region="import"></div>
           ${renderStageCommonControls('steady')}
         </div></div>
       </section>
@@ -880,11 +881,16 @@
     ].map(group=>{const cards=group.keys.map(key=>key==='daily_slope'?slopeTask:tasks.find(task=>task.key===key)).filter(Boolean).map(task=>task.key==='daily_slope'?slopeCard():refCard(task)).join('');return cards?renderForecastEvidenceGroup(group.title,group.note,cards,group.keys.length):''}).join('');
     const defaults=data.day_type_defaults||{};
     const smallOrderWorkspace=renderSmallOrderWorkspace(data),steadyWorkspace=renderSteadyWorkspace(data);
-    const scenario=(key,title,subtitle)=>`<article class="forecast-scenario ${key}"><div class="forecast-scenario-head"><div><small>${esc(subtitle)}</small><h4>${esc(title)}</h4></div><span data-forecast-method-status="${key}">等待计算</span></div><div class="forecast-scenario-result"><div class="forecast-scenario-hero"><span>首销期大定</span><div><strong data-forecast-value="${key}-gross">—</strong><em>单</em></div><small data-forecast-kpi-note="${key}-gross"></small></div><div class="forecast-scenario-lock"><span>预计首销期锁单</span><div><strong data-forecast-value="${key}-lock">—</strong><em>单</em></div><small>按公共大定到锁单率换算</small></div></div><div class="forecast-scenario-breakdown"><article><span>小订转大</span><div><strong data-forecast-value="${key}-small">—</strong><em>单</em></div><small data-forecast-kpi-note="${key}-small"></small></article><article><span>直接大定</span><div><strong data-forecast-value="${key}-direct">—</strong><em>单</em></div><small data-forecast-kpi-note="${key}-direct"></small></article></div><div class="forecast-scenario-meta"><span>小订转化率 <b data-forecast-value="${key}-conversion">—</b>%</span><span>直接大定占比 <b data-forecast-value="${key}-share">—</b>%</span></div></article>`;
-    return `<div class="forecast-workspace forecast-v2" data-forecast-config="${esc(JSON.stringify(data))}">
+    const scenario=(key,title,subtitle)=>renderForecastScenarioCard({title,note:subtitle,variant:key,status:`data-forecast-method-status="${key}"`,metrics:[
+      {label:'首销期大定',attribute:`data-forecast-value="${key}-gross"`,unit:'单',noteAttribute:`data-forecast-kpi-note="${key}-gross"`},
+      {label:'预计首销期锁单',attribute:`data-forecast-value="${key}-lock"`,unit:'单'},
+      {label:'小订转大',attribute:`data-forecast-value="${key}-small"`,unit:'单',noteAttribute:`data-forecast-kpi-note="${key}-small"`},
+      {label:'直接大定',attribute:`data-forecast-value="${key}-direct"`,unit:'单',noteAttribute:`data-forecast-kpi-note="${key}-direct"`}
+    ],meta:`<span>小订转化率 <b data-forecast-value="${key}-conversion">—</b>%</span><span>直接大定占比 <b data-forecast-value="${key}-share">—</b>%</span>`});
+    return `<div class="forecast-workspace forecast-v2 forecast-studio" data-forecast-config="${esc(JSON.stringify(data))}">
       <div class="forecast-scroll-body">
       <section class="forecast-target">
-        <div class="forecast-target-heading"><small>当前预测对象</small><h3 data-forecast-target-title>${esc(target.name)}</h3></div>
+        <div class="forecast-target-heading"><small>销量预测 · 工作台</small><h3 data-forecast-target-title>${esc(target.name)}</h3></div>
         <div class="forecast-target-settings" role="group" aria-label="车型与时间参数"><span class="sr-only">车型与时间参数</span><div class="forecast-target-form">
           <label>产品档位<select data-forecast-target="tier">${tierOptions}</select></label>
           <label>能源类型<select data-forecast-target="energy">${energyOptions}</select></label>
@@ -905,8 +911,8 @@
       <section id="forecast-pane-result" aria-labelledby="forecast-tab-result" class="forecast-pane${activeForecastView==='result'?' active':''}" role="tabpanel" data-forecast-pane="result">
         <div class="forecast-result-shell">
           <main class="forecast-result-main">
-            <p class="forecast-progress-source">首销结论为总大定（小转大＋直接大定，未扣大定退订）；锁单单独展示。累计小转大率＝累计小转大÷总小订；真实累计与当日滚动估算分开显示。</p><div class="forecast-scenarios">${scenario('progress','方法一 · 同期完成率反推','真实累计量 ÷ 参考传播名同期完成率')}${scenario('parameter','方法二 · 转化参数测算','总小订 × 转化率，并按直接大定占比换算')}</div>
-            <aside class="forecast-parameter-rail">
+            <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${scenario('progress','方法一 · 同期完成率反推','真实累计量 ÷ 参考传播名同期完成率')}${scenario('parameter','方法二 · 转化参数测算','总小订 × 转化率，并按直接大定占比换算')}</div><p class="forecast-progress-source">首销结论为总大定（小转大＋直接大定，未扣大定退订）；锁单单独展示。累计小转大率＝累计小转大÷总小订；真实累计与当日滚动估算分开显示。</p></section>
+            <aside class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters">
               <div class="forecast-rail-head"><div><small>人工确认与共同调整</small><h4>预测参数</h4></div><span>修改后实时重算</span></div>
               <div class="forecast-result-grid forecast-control-grid">
                 <div class="forecast-assumptions forecast-progress-controls"><div class="forecast-block-head"><div><small>方法一人工确认区</small><h4>同期完成率参数</h4></div><button data-forecast-apply-progress>采用参考完成率</button></div><div class="forecast-progress-actuals"><span>已结束日真实小转大 <b data-forecast-progress-actual-small>—</b></span><span>已结束日真实直接大定 <b data-forecast-progress-actual-direct>—</b></span><span data-forecast-progress-intraday></span></div><div class="forecast-input-grid">
@@ -921,12 +927,12 @@
                </div>
               <div class="forecast-suggestion" data-forecast-suggestion></div>
             </aside>
-            <div class="forecast-decision-grid">
+            <div class="forecast-decision-grid forecast-result-section" data-forecast-region="curves">
               <section class="forecast-decision-card progress"><div class="forecast-pane-head"><div><small>方法一：已发生进度决定终局，未来只分配剩余量</small><h4>同期完成率法 · 到天拆解</h4></div><span>每个未来Dn基础权重 × 日期调整系数</span></div><div data-forecast-decision-chart="progress"></div><p class="forecast-monitor-status" data-forecast-monitor-status></p><details class="forecast-weekly"><summary>查看方法一by周预测汇总</summary><div data-forecast-weekly="progress"></div></details></section>
               <section class="forecast-decision-card parameter"><div class="forecast-pane-head"><div><small>方法二：总小订、转化率和直接大定占比决定终局</small><h4>转化参数法 · 到天拆解</h4></div><span>与方法一独立展示，不合并、不平均</span></div><div data-forecast-decision-chart="parameter"></div><details class="forecast-weekly"><summary>查看方法二by周预测汇总</summary><div data-forecast-weekly="parameter"></div></details></section>
              </div>
-             <div data-forecast-import-anchor="launch"></div>
-             <section class="forecast-common-controls"><div class="forecast-block-head"><div><small>两种方法公共参数</small><h4>首日锚点、锁单换算与逐日分配</h4></div><span>统一调整</span></div><div class="forecast-common-grid">
+             <div data-forecast-import-anchor="launch" data-forecast-region="import"></div>
+             <section class="forecast-common-controls forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>首日锚点、锁单换算与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div><div class="forecast-common-grid">
                <div class="forecast-d1-card" data-forecast-d1-card><div class="forecast-block-head"><div><small>首日锚点</small><h4 data-forecast-d1-title>D1大定</h4></div><span data-forecast-d1-stage>判定中</span></div><label data-forecast-d1-input-wrap>D1预测大定<input data-forecast-input="d1Gross" type="number" min="0" placeholder="系统自动"><small>单</small></label><div class="forecast-d1-value"><strong data-forecast-d1-value>—</strong><em>单</em><small data-forecast-d1-note></small></div><div class="forecast-d1-components"><span>小转大 <b data-forecast-d1-small>—</b></span><span>直接大定 <b data-forecast-d1-direct>—</b></span></div></div>
                <label class="forecast-common-lock">大定到锁单率<span>首销期锁单 ÷ 总大定</span><span class="forecast-common-lock-input"><input data-forecast-input="lock" type="number" min="0" max="100" step="0.1" value="${(target.lock_rate*100).toFixed(1)}"><small>%</small></span><em>用于两种方法的首销期锁单测算</em></label>
              </div><p data-forecast-allocation-note></p>${renderBridgeControls('launch')}</section>
@@ -1267,12 +1273,9 @@
       if(split.forecast.some(Number.isFinite))series.push({name:currentName+' · 方法二预测',values:split.forecast,color:'#00A878',kind:'parameter',dash:'7 5'});
       items.forEach((item,index)=>{const dailySmall=observedDailyPrefix(item.daily_small||[]),dailyDirect=observedDailyPrefix(item.daily_direct||[]),dailyGross=observedDailyPrefix(item.daily_orders||[]),length=conversionTask?dailySmall.length:Math.min(dailyDirect.length,dailyGross.length),values=[];let cumulativeSmall=0,cumulativeDirect=0,cumulativeGross=0;for(let day=0;day<length;day+=1){cumulativeSmall+=Math.max(Number(dailySmall[day]||0),0);cumulativeDirect+=Math.max(Number(dailyDirect[day]||0),0);cumulativeGross+=Math.max(Number(dailyGross[day]||0),0);values.push(conversionTask?(Number(item.small)>0?cumulativeSmall/Number(item.small):NaN):(cumulativeGross>0?cumulativeDirect/cumulativeGross:NaN))}const meta=referenceMeta(card,item,index);if(values.some(Number.isFinite))series.push({name:meta.label,values,color:meta.color,kind:'reference',dash:''})});
       const finiteValues=series.flatMap(item=>item.values.filter(Number.isFinite));if(!finiteValues.length){target.innerHTML='<div class="empty-image">暂无可比较的by天比例曲线</div>';return}
-      const maxPoints=Math.max(...series.map(item=>item.values.length),1),W=Math.max(920,maxPoints*23+105),H=270,left=52,right=22,top=30,bottom=48,plotW=W-left-right,plotH=H-top-bottom,peak=Math.max(...finiteValues,.01),yMax=Math.min(1,Math.max(.1,Math.ceil(peak*1.12*10)/10)),x=index=>left+(maxPoints===1?0:index/(maxPoints-1))*plotW,y=value=>top+plotH*(1-Math.min(Math.max(value/yMax,0),1));
-      const grid=[0,.25,.5,.75,1].map(rate=>{const gy=top+plotH*(1-rate);return `<line x1="${left}" y1="${gy}" x2="${W-right}" y2="${gy}" stroke="#E8F0F7"/><text x="${left-8}" y="${gy+4}" text-anchor="end" font-size="9" fill="#7890A6">${(yMax*rate*100).toFixed(0)}%</text>`}).join('');
-      const lines=series.map(curve=>{const indexes=curve.values.map((value,index)=>Number.isFinite(value)?index:-1).filter(index=>index>=0),points=indexes.map(index=>`${x(index)},${y(curve.values[index])}`).join(' '),labels=indexes.map((index,position)=>{if(position!==indexes.length-1&&(index+1)%7!==0)return '';const value=curve.values[index];return `<circle cx="${x(index)}" cy="${y(value)}" r="3" fill="#fff" stroke="${curve.color}" stroke-width="2"/><text x="${x(index)}" y="${y(value)+(curve.kind==='parameter'?-9:14)}" text-anchor="middle" font-size="9.5" font-weight="700" fill="${curve.color}">${(value*100).toFixed(1)}%</text>`}).join('');return `${points?`<polyline points="${points}" fill="none" stroke="${curve.color}" stroke-width="${curve.kind==='parameter'?3:2}" ${curve.dash?`stroke-dasharray="${curve.dash}"`:''}><title>${esc(curve.name)}</title></polyline>`:''}${labels}`}).join('');
-      const tickCount=Math.min(maxPoints,8),ticks=Array.from({length:tickCount},(_,slot)=>{const index=Math.round(slot*(maxPoints-1)/Math.max(tickCount-1,1));return `<text x="${x(index)}" y="${H-16}" text-anchor="middle" font-size="9" fill="#7890A6">D${index+1}</text>`}).join(''),legend=series.map(curve=>`<span><i class="line-key${curve.dash?' dotted':''}" style="border-color:${curve.color}"></i>${esc(curve.name)}</span>`).join('');
-      const note=(conversionTask?'逐日累计小转大 ÷ 总小订':'逐日累计直接大定 ÷ 逐日累计总大定')+'；历史曲线按各自首销天数展示，未取得最终比例的车型仅作曲线对比、不参与终值加权';
-      target.innerHTML=`<div class="forecast-task-chart-title"><strong>${title}</strong><span>${note}；蓝色实线为当前真实；绿色虚线为方法二估算/预测；其余实线为历史参考</span></div><div class="forecast-svg-scroll"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px" role="img" aria-label="${title}折线图">${grid}${lines}${ticks}</svg></div><div class="legend forecast-task-legend">${legend}</div>`;
+      const maxPoints=Math.max(...series.map(item=>item.values.length),1),peak=Math.max(...finiteValues,.01),rangeMax=Math.min(1,Math.max(.1,Math.ceil(peak*1.12*10)/10));
+      const note=(conversionTask?'逐日累计小转大 ÷ 总小订':'逐日累计直接大定 ÷ 逐日累计总大定')+'；历史曲线按各自首销天数展示，未取得最终比例的车型仅作曲线对比、不参与终值加权。蓝色实线为真实，绿色虚线为预测。';
+      target.innerHTML=renderForecastEvidenceLines({series:series.map(curve=>({...curve,role:curve.kind==='parameter'?'forecast':curve.kind,core:true})),labels:Array.from({length:maxPoints},(_,i)=>`D${i+1}`),ariaLabel:title,title,note,table:true,rangeMax,ratePrecision:1});
     };
     const cards=scopeCard?[scopeCard]:[...root.querySelectorAll('[data-forecast-task]')];
     cards.forEach(card=>{
@@ -1296,18 +1299,32 @@
     });
   }
 
+  // All stages share chart geometry, actual/forecast styling, legend and data access.
+  // Adapters select existing fields only; no forecast or aggregation is performed here.
+  function renderForecastQuantityChart(rows,{valueKey,labelKey='label',metric='销量',method='parameter',launch=false}={}){
+    if(!rows.length)return '<div class="empty-image">暂无可绘制数据</div>';
+    const known=value=>typeof value==='number'&&Number.isFinite(value),values=rows.map(row=>row[valueKey]);
+    const W=Math.max(900,rows.length*22+108),H=280,left=60,right=launch?50:24,top=28,bottom=46,plotW=W-left-right,plotH=H-top-bottom,max=Math.max(...values.filter(known),1)*1.12;
+    const x=i=>left+(i+.5)*plotW/rows.length,y=value=>top+plotH*(1-value/max),rateY=value=>top+plotH*(1-Math.min(Math.max(value,0),1)),barW=Math.max(6,Math.min(20,plotW/rows.length*.55));
+    const stateLabel=row=>row.actual?'真实':row.past_missing?'历史缺失估算':row.partial?'分时滚动':row.current_estimate?'当日估算':'预测',futureColor=method==='progress'?'#0D9488':'#D97706';
+    const label=row=>String(row[labelKey]||row.date||''),shortLabel=row=>label(row).split('（')[0];
+    const grid=[0,.25,.5,.75,1].map(rate=>{const gy=top+plotH*(1-rate);return `<line x1="${left}" y1="${gy}" x2="${W-right}" y2="${gy}" stroke="#E5EAF0"/><text x="${left-9}" y="${gy+4}" text-anchor="end" font-size="10" fill="#64748B">${fmt(Math.round(max*rate))}</text>${launch?`<text x="${W-right+9}" y="${gy+4}" font-size="10" fill="#64748B">${Math.round(rate*100)}%</text>`:''}`}).join('');
+    const bars=rows.map((row,index)=>{const value=values[index];if(!known(value))return '';const actual=!!row.actual,color=actual?'#3979CB':futureColor,show=rows.length<=12||index===0||index===rows.length-1||row.cut||(index<rows.length-3&&(index+1)%7===0);return `<rect x="${x(index)-barW/2}" y="${y(value)}" width="${barW}" height="${Math.max(top+plotH-y(value),0)}" rx="2" fill="${actual?color:'#FFF7ED'}" stroke="${color}" ${actual?'':'stroke-dasharray="4 2"'}><title>${esc(label(row))} ${esc(row.date||'')} · ${stateLabel(row)} · ${esc(metric)} ${fmt(value)}${launch?` · 当日大定 ${fmt(row.daily_gross)}`:''}</title></rect>${show?`<text x="${x(index)}" y="${Math.max(y(value)-7,12)}" text-anchor="middle" font-size="10" fill="#334155">${fmt(value)}</text>`:''}`}).join('');
+    const rateFields=launch?[['small_conversion','累计小转大率','#2563EB'],['direct_share','直接大定占比','#BE4B53']]:[];
+    const lines=rateFields.map(([field,title,color])=>{
+      const segments=actual=>{const result=[];let current=[];rows.forEach((row,i)=>{if(!!row.actual===actual&&known(row[field]))current.push(i);else if(current.length){result.push(current);current=[]}});if(current.length)result.push(current);return result;};
+      const paths=[true,false].map(actual=>segments(actual).map(indexes=>{if(!actual&&indexes[0]>0&&rows[indexes[0]-1].actual&&known(rows[indexes[0]-1][field]))indexes=[indexes[0]-1,...indexes];return `<polyline points="${indexes.map(i=>`${x(i)},${rateY(rows[i][field])}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" ${actual?'':'stroke-dasharray="6 4"'}/>`}).join('')).join('');
+      const dots=rows.map((row,i)=>known(row[field])&&(i===rows.length-1||row.cut||(i+1)%7===0)?`<circle cx="${x(i)}" cy="${rateY(row[field])}" r="3" fill="white" stroke="${color}"><title>${esc(label(row))} · ${title} ${(row[field]*100).toFixed(1)}%</title></circle>`:'').join('');
+      return paths+dots;
+    }).join('');
+    const tickStep=Math.max(1,Math.ceil(rows.length/10)),ticks=rows.map((row,i)=>i===0||i===rows.length-1||i%tickStep===0?`<text x="${x(i)}" y="${H-25}" text-anchor="middle" font-size="10" fill="#64748B">${esc(shortLabel(row))}</text><text x="${x(i)}" y="${H-10}" text-anchor="middle" font-size="9" fill="#64748B">${esc(row.day_type_short||'')}</text>`:'').join('');
+    const legend=`<div class="legend forecast-chart-legend"><span><i style="background:#3979CB"></i>真实${esc(metric)}</span><span><i class="forecast-outline-key" style="border-color:${futureColor};background:#FFF7ED"></i>估算／预测${esc(metric)}</span>${rateFields.map(([,title,color])=>`<span><i class="line-key" style="border-color:${color}"></i>${title}</span>`).join('')}<span class="forecast-chart-key-note">实心为真实，虚线为估算／预测</span></div>`;
+    const table=`<details class="forecast-ref-score-details forecast-result-values"><summary>查看图表数值</summary><div class="forecast-score-table"><table><thead><tr><th scope="col">周期／日期</th><th scope="col">状态</th><th scope="col">${esc(metric)}（单）</th>${launch?'<th scope="col">当日大定（单）</th>':''}${rateFields.map(([,title])=>`<th scope="col">${title}</th>`).join('')}</tr></thead><tbody>${rows.map((row,i)=>`<tr><th scope="row">${esc(label(row))}${row.date?` · ${esc(row.date)}`:''}</th><td>${stateLabel(row)}</td><td>${known(values[i])?fmt(values[i]):'—'}</td>${launch?`<td>${known(row.daily_gross)?fmt(row.daily_gross):'—'}</td>`:''}${rateFields.map(([field])=>`<td>${known(row[field])?(row[field]*100).toFixed(1)+'%':'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
+    return `<div class="forecast-svg-scroll forecast-result-chart-scroll"><svg class="forecast-decision-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(metric)}实际与预测，实心为真实、虚线为估算或预测">${grid}${bars}${lines}${ticks}</svg></div>${legend}${table}`;
+  }
   function renderForecastDecisionChartV2(root,rows,method='parameter'){
     const target=root.querySelector(`[data-forecast-decision-chart="${method}"]`);if(!target)return;
-    if(!rows.length){target.innerHTML='<div class="empty-image">暂无可绘制的首销期预测</div>';return}
-    const W=Math.max(980,rows.length*23+110),H=330,left=58,right=54,top=34,bottom=52,plotW=W-left-right,plotH=H-top-bottom,maxGross=Math.max(...rows.map(row=>row.cumulative_gross||0),1)*1.12,barW=Math.max(7,Math.min(16,plotW/rows.length*.62));
-    const x=i=>left+(i+.5)*plotW/rows.length,yGross=value=>top+plotH*(1-value/maxGross),yRate=value=>top+plotH*(1-Math.min(Math.max(value,0),1));
-    const grid=[0,.25,.5,.75,1].map(rate=>{const y=top+plotH*(1-rate);return `<line x1="${left}" y1="${y}" x2="${left+plotW}" y2="${y}" stroke="#E8F0F7"/><text x="${left-9}" y="${y+4}" text-anchor="end" font-size="10" fill="#7890A6">${Math.round(maxGross*rate).toLocaleString('zh-CN')}</text><text x="${left+plotW+9}" y="${y+4}" font-size="10" fill="#7890A6">${Math.round(rate*100)}%</text>`}).join('');
-    const futureFill=method==='progress'?'#43CFA0':'#FFB340',bars=rows.map((row,index)=>{const y=yGross(row.cumulative_gross),fill=row.actual?'#6DB5FF':row.partial?'#FFAE42':row.past_missing?'#AAB8C5':row.current_estimate?'#F5C56B':futureFill,label=index===0||index===rows.length-1||row.cut||row.past_missing||((index+1)%7===0);return `<rect x="${x(index)-barW/2}" y="${y}" width="${barW}" height="${top+plotH-y}" rx="3" fill="${fill}" opacity=".9"><title>${esc(row.day)} ${esc(row.date||'')} · ${esc(row.day_type_label||'')} · 当日${fmt(row.daily_gross)} · 累计${fmt(row.cumulative_gross)}</title></rect>${label?`<text x="${x(index)}" y="${Math.max(y-7,13)}" text-anchor="middle" font-size="10" font-weight="700" fill="#49647D">${fmt(row.cumulative_gross)}</text>`:''}`}).join('');
-    const line=(field,color)=>{const segments=predicate=>{const result=[];let current=[];rows.forEach((row,index)=>{if(predicate(row)&&row[field]!=null&&Number.isFinite(Number(row[field])))current.push(index);else if(current.length){result.push(current);current=[]}});if(current.length)result.push(current);return result},path=indexes=>indexes.length>1?indexes.map(index=>`${x(index)},${yRate(Number(rows[index][field]))}`).join(' '):'',actualPaths=segments(row=>row.actual),estimatePaths=segments(row=>!row.actual).map(indexes=>indexes[0]>0&&rows[indexes[0]-1]?.actual?[indexes[0]-1,...indexes]:indexes);return `${actualPaths.map(indexes=>path(indexes)).filter(Boolean).map(points=>`<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5"/>`).join('')}${estimatePaths.map(indexes=>path(indexes)).filter(Boolean).map(points=>`<polyline points="${points}" fill="none" stroke="${color}" stroke-width="2.5" stroke-dasharray="7 5"/>`).join('')}`};
-    const dots=rows.map((row,index)=>index===rows.length-1||row.cut||((index+1)%7===0)?`<circle cx="${x(index)}" cy="${yRate(row.small_conversion)}" r="3" fill="#fff" stroke="#1677FF" stroke-width="2"/><text x="${x(index)}" y="${yRate(row.small_conversion)-7}" text-anchor="middle" font-size="9" font-weight="700" fill="#1677FF">${(row.small_conversion*100).toFixed(1)}%</text><circle cx="${x(index)}" cy="${yRate(row.direct_share)}" r="3" fill="#fff" stroke="#C00000" stroke-width="2"/><text x="${x(index)}" y="${yRate(row.direct_share)+13}" text-anchor="middle" font-size="9" font-weight="700" fill="#C00000">${(row.direct_share*100).toFixed(1)}%</text>`:'').join('');
-    const latestCancelIndex=rows.reduce((found,row,index)=>row.cancel_rate!=null&&Number.isFinite(Number(row.cancel_rate))?index:found,-1),latestCancel=latestCancelIndex>=0?rows[latestCancelIndex]:null,cancelDot=latestCancel?`<rect x="${x(latestCancelIndex)-3}" y="${yRate(latestCancel.cancel_rate)-3}" width="6" height="6" rx="1" fill="#F59E0B"/><text x="${x(latestCancelIndex)}" y="${yRate(latestCancel.cancel_rate)-8}" text-anchor="middle" font-size="9" font-weight="700" fill="#9A5B00">${(latestCancel.cancel_rate*100).toFixed(1)}%</text>`:'';
-    const ticks=rows.map((row,index)=>index===0||index===rows.length-1||((index+1)%7===0)?`<text x="${x(index)}" y="${H-27}" text-anchor="middle" font-size="9" fill="#6F879D">${esc(row.day)}</text><text x="${x(index)}" y="${H-13}" text-anchor="middle" font-size="8" fill="#94A6B7">${esc(row.day_type_short||'')}</text>`:'').join('');
-    target.innerHTML=`<div class="forecast-svg-scroll"><svg class="forecast-decision-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="累计大定柱形与小订转化率、直接大定占比折线组合图">${grid}${bars}${line('small_conversion','#1677FF')}${line('direct_share','#C00000')}${dots}${ticks}</svg></div><div class="legend forecast-chart-legend"><span><i style="background:#6DB5FF"></i>已冻结累计大定</span><span><i style="background:#FFAE42"></i>分时滚动</span><span><i style="background:#AAB8C5"></i>过期缺失补估</span><span><i style="background:#F5C56B"></i>当日整日估算</span><span><i style="background:${futureFill}"></i>${method==='progress'?'方法一未来预测':'方法二未来预测'}</span><span><i class="line-key" style="border-color:#1677FF"></i>累计小转大率（累计小转大÷总小订）</span><span><i class="line-key" style="border-color:#C00000"></i>直接大定占比</span><span><i class="line-key dotted" style="border-color:#60768D"></i>估算与预测段统一虚线</span></div>`;
+    target.innerHTML=renderForecastQuantityChart(rows,{valueKey:'cumulative_gross',labelKey:'day',metric:'累计大定',method,launch:true});
   }
 
   function renderForecastWeeklyV2(root,rows,method='parameter'){
@@ -1785,7 +1802,7 @@
     return `<section class="forecast-day-allocation" data-bridge-stage="${stage}"><strong>真实日衔接与差额渐进分配</strong><div class="forecast-allocation-inputs">${[['workday','工作日',1],['weekend','周末',1.15],['holiday','节假日',1.3]].map(([key,label,value])=>`<label title="调休按工作日，节假日不叠加周末">${label}<input data-bridge-control="${key}" type="number" min="0.01" max="5" step="0.05" value="${value}"><small>倍</small></label>`).join('')}</div><label title="填写时需覆盖全部待预测日期，以逗号分隔；0表示优先保护该日。实际分配还乘当日基础量。">逐日差额权重（从首个待预测日开始）<input data-bridge-control="weights" type="text" placeholder="留空使用0,0.5,1,1,…；第3天起封顶"><small>逗号分隔；留空按默认递增</small></label><p data-bridge-notice aria-live="polite"></p></section>`;
   }
   function renderStageCommonControls(stage){
-    return `<section class="forecast-common-controls forecast-stage-common"><div class="forecast-block-head"><div><small>当前阶段公共参数</small><h4>真实日衔接与差额渐进分配</h4></div><span>修改后实时重算</span></div>${renderBridgeControls(stage)}</section>`;
+    return `<section class="forecast-common-controls forecast-stage-common forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>日历影响与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div>${renderBridgeControls(stage)}</section>`;
   }
   function bridgeSettings(root,stage,count){
     const panel=root.querySelector(`[data-bridge-stage="${stage}"]`),factors={workday:1,weekend:1.15,holiday:1.3};
@@ -1809,14 +1826,12 @@
     root.querySelectorAll('[data-small-order-workspace],[data-steady-workspace]').forEach(workspace=>bindTabset([...workspace.querySelectorAll('[data-lifecycle-subtab]')],[...workspace.querySelectorAll('[data-lifecycle-subpane]')],button=>button.dataset.lifecycleSubtab,pane=>pane.dataset.lifecycleSubpane));
   }
   function renderLifecycleBars(rows,valueKey,labelKey='label'){
-    if(!rows.length)return '<div class="empty-image">暂无可绘制数据</div>';
-    const max=Math.max(...rows.map(row=>Number(row[valueKey]||0)),1),width=Math.max(rows.length*46,620);
-    return `<div class="forecast-lifecycle-bars-scroll"><div class="forecast-lifecycle-bars" style="min-width:${width}px">${rows.map(row=>`<article class="${row.actual?'actual':'forecast'}"><div class="forecast-lifecycle-bar"><i style="height:${Math.max(Number(row[valueKey]||0)/max*100,1)}%"></i><b>${fmt(row[valueKey])}</b></div><span>${esc(row[labelKey]||'')}</span><small>${row.actual?'实际':'预测'}</small></article>`).join('')}</div></div>`;
+    return renderForecastQuantityChart(rows,{valueKey,labelKey,metric:valueKey==='lock'?'周交车锁单':'当日小订'});
   }
-  function renderForecastEvidenceLines({series,labels,ariaLabel,title='',note='',unit='rate',slope=false,hourly=false,extra='',lifecycle=false,table=false,empty='暂无可比较曲线'}){
+  function renderForecastEvidenceLines({series,labels,ariaLabel,title='',note='',unit='rate',slope=false,hourly=false,extra='',lifecycle=false,table=false,rangeMax=null,ratePrecision=null,empty='暂无可比较曲线'}){
     const usable=series.filter(item=>(item.values||[]).some(Number.isFinite));if(!usable.length||!labels.length)return `<div class="empty-image">${esc(empty)}</div>`;
-    const maxPoints=Math.max(labels.length,...usable.map(item=>item.values.length),1),W=920,H=245,left=48,right=20,top=30,bottom=42,plotW=W-left-right,plotH=H-top-bottom,finiteValues=usable.flatMap(item=>item.values.filter(Number.isFinite)),rawMax=Math.max(...finiteValues,1),yMax=unit==='rate'?Math.max(rawMax,1):rawMax*1.12,yMin=slope?Math.min(...finiteValues,0):0;
-    const x=index=>left+(maxPoints===1?0:index/(maxPoints-1))*plotW,y=value=>top+plotH*(1-Math.min(Math.max((value-yMin)/(yMax-yMin),0),1)),format=value=>unit==='rate'?`${(value*100).toFixed(value<.1?1:0)}%`:Math.round(value).toLocaleString('zh-CN')+(lifecycle?'单':'');
+    const maxPoints=Math.max(labels.length,...usable.map(item=>item.values.length),1),W=920,H=245,left=48,right=20,top=30,bottom=42,plotW=W-left-right,plotH=H-top-bottom,finiteValues=usable.flatMap(item=>item.values.filter(Number.isFinite)),rawMax=Math.max(...finiteValues,1),yMax=Number.isFinite(rangeMax)&&rangeMax>0?rangeMax:unit==='rate'?Math.max(rawMax,1):rawMax*1.12,yMin=slope?Math.min(...finiteValues,0):0;
+    const x=index=>left+(maxPoints===1?0:index/(maxPoints-1))*plotW,y=value=>top+plotH*(1-Math.min(Math.max((value-yMin)/(yMax-yMin),0),1)),format=value=>unit==='rate'?`${(value*100).toFixed(ratePrecision??(value<.1?1:0))}%`:Math.round(value).toLocaleString('zh-CN')+(lifecycle?'单':'');
     const grid=[0,.25,.5,.75,1].map(rate=>{const gy=top+plotH*(1-rate);return `<line x1="${left}" y1="${gy}" x2="${W-right}" y2="${gy}" stroke="#E8F0F7"/><text x="${left-8}" y="${gy+4}" text-anchor="end" font-size="9" fill="#7890A6">${format(yMin+(yMax-yMin)*rate)}</text>`}).join('');
     const placedLabels=new Map(),placeLabel=(index,preferred)=>{const occupied=placedLabels.get(index)||[],start=Math.min(Math.max(preferred,12),H-bottom+13),candidates=[0,-14,14,-28,28,-42,42,-56,56,-70,70].map(delta=>start+delta),chosen=candidates.find(value=>value>=12&&value<=H-bottom+13&&occupied.every(other=>Math.abs(value-other)>=12))??start;occupied.push(chosen);placedLabels.set(index,occupied);return chosen;};
     const lines=usable.map((curve,seriesIndex)=>{
