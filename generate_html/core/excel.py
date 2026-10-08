@@ -417,6 +417,12 @@ def _coverage_date(cell, *, day_header=False):
     return None
 
 
+def _daily_period(value, number_format=""):
+    """Use one calendar key for daily joins, without changing raw Excel display."""
+    day = _coverage_date(SimpleNamespace(value=value, number_format=number_format), day_header=True)
+    return day.isoformat() if day is not None else display_period(value, number_format)
+
+
 def _source_date_range(item):
     """Infer the physical file's coverage from real daily quantities/explicit export dates.
 
@@ -698,7 +704,11 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 labels.append((value, cell.number_format))
             if not any(value not in (None, "") for value, _ in labels):
                 continue
-            if time_row and labels[time_row - 1][0] not in (None, ""):
+            if header_rows == 1 and key_columns == 3 and grain_from_sheet(sheet.title) == "day":
+                # Text dates and Excel dates must match before sparse-day zeros
+                # are inserted; otherwise a real day gets a second zero column.
+                key = (_daily_period(*labels[0]),)
+            elif time_row and labels[time_row - 1][0] not in (None, ""):
                 value = labels[time_row - 1][0]
                 if isinstance(value, (int, float)) and 20000 < value < 100000:
                     from openpyxl.utils.datetime import from_excel
@@ -1480,9 +1490,10 @@ class WorkbookStore:
         header_row = row + 1
         columns: list[int] = []
         periods: list[str] = []
+        period_label = _daily_period if grain_from_sheet(sheet.title) == "day" else display_period
         for col in range(3, sheet.max_column + 1):
             cell = sheet.cell(header_row, col)
-            value = display_period(cell.value, cell.number_format)
+            value = period_label(cell.value, cell.number_format)
             if _week_period(value):
                 value = _source_key(value)
             if not value or value == "总计":
@@ -1594,7 +1605,8 @@ def parse_metric_sheet(sheet: Any) -> dict[str, dict[str, Any]]:
     cached = _METRIC_SHEET_CACHE.get(sheet)
     if cached is not None:
         return cached
-    headers = [display_period(sheet.cell(1, col).value, sheet.cell(1, col).number_format) for col in range(4, sheet.max_column + 1)]
+    period_label = _daily_period if grain_from_sheet(sheet.title) == "day" else display_period
+    headers = [period_label(sheet.cell(1, col).value, sheet.cell(1, col).number_format) for col in range(4, sheet.max_column + 1)]
     # File-level total/rolling aggregates are not shared calendar observations.
     # Keep originals in the raw-table center, but never use these for forecasts,
     # dashboard metrics, or multi-file duplicate conflicts.
