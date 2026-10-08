@@ -14,6 +14,7 @@ from core.forecast_summary import (
     public_forecast_tables, read_public_forecast, visible_target_names, table_records,
 )
 from tools.refresh_sales_forecast_data import forecast_weekly_orders, write_rows
+from modules.sales_forecast import _history_item, _target_options
 
 
 class PublicForecastTablesTests(TestCase):
@@ -27,11 +28,50 @@ class PublicForecastTablesTests(TestCase):
         self.assertEqual(small[0]['launch_period'], '下午')
         book.close()
 
-    def make_public(self, target_start='2026-01-03', customize=None, as_of=date(2026, 1, 4)):
+    def test_legacy_period_does_not_fill_either_stage(self):
+        book = self.make_public(master_periods={'发布时段': '晚上'})
+        record = table_records(book, MASTER_SHEET)[0]
+        self.assertEqual(record['小订发布时段'], '未维护')
+        self.assertEqual(record['首销发布时段'], '未维护')
+        self.assertNotIn('发布时段', record)
+        # Also exercise reading a legacy field from an existing visible summary.
+        sheet = book[MASTER_SHEET]
+        col = sheet.max_column + 1
+        sheet.cell(1, col, '发布时段')
+        sheet.cell(2, col, '晚上')
+        for i, cell in enumerate(sheet[1], 1):
+            if cell.value == '小订发布时段':
+                sheet.cell(2, i).value = None
+        _, _, small, _ = read_public_forecast(book, [])
+        self.assertEqual(small[0]['launch_period'], '未维护')
+        book.close()
+
+    def test_stage_periods_never_borrow_from_each_other(self):
+        for small_period, launch_period in ((None, '晚上'), ('下午', None), ('下午', '晚上')):
+            with self.subTest(small=small_period, launch=launch_period):
+                attrs = {'发布时段': '上午', '小订发布时段': small_period, '首销发布时段': launch_period}
+                book = self.make_public(master_periods=attrs)
+                record = table_records(book, MASTER_SHEET)[0]
+                self.assertEqual(record['小订发布时段'], small_period or '未维护')
+                self.assertEqual(record['首销发布时段'], launch_period or '未维护')
+                _, _, small, _ = read_public_forecast(book, [])
+                self.assertEqual(small[0]['launch_period'], small_period or '未维护')
+                target = _target_options([], [{'model': '测试车', 'launch_date': '2026-01-03'}], {},
+                    today=date(2026, 1, 4), model_master={'测试车': {**attrs, '首销天数': 7}})[0]
+                self.assertEqual(target['small_period'], small_period or '未维护')
+                self.assertEqual(target['launch_period'], launch_period or '未维护')
+                self.assertEqual(_history_item({'传播名': '测试车', **attrs}, True)['launch_period'],
+                                 launch_period or '未维护')
+                book.close()
+
+    def make_public(self, target_start='2026-01-03', customize=None, as_of=date(2026, 1, 4), master_periods=None):
         book = Workbook()
         book.active.title = MASTER_SHEET
         book.active.append(['历史传播名', '订单分析代际名', '产品档位'])
         book.active.append(['历史车', '测试车', '中型SUV'])
+        for col, (field, value) in enumerate((master_periods or {}).items(), 4):
+            book.active.cell(1, col, field)
+            book.active.cell(2, col, value)
         base = book.create_sheet('预测基准总表')
         base.append(['传播名', '代际名', '总大定', '发布日', '首销截止', '总小订'])
         base.append(['历史车', '测试车', 20, datetime(2026, 1, 3), datetime(2026, 1, 9), 100])

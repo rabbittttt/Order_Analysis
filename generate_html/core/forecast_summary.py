@@ -192,15 +192,15 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
             row = {"历史传播名": target.get("history_model"), "订单分析代际名": target["name"]}
             master.append(row)
         elif any(row.get(k) is not None and iso_day(row[k]) != iso_day(v) for k, v in dates.items()):
-            row = {k: row.get(k) for k in ("订单分析代际名", "品牌", "产品档位", "能源类型", "发布类型", "发布时段", "小订发布时段", "首销发布时段")}
+            row = {k: row.get(k) for k in ("订单分析代际名", "品牌", "产品档位", "能源类型", "发布类型", "小订发布时段", "首销发布时段")}
             master.append(row)
         row.update({k: date_cell(v) for k, v in dates.items()})
         if not row.get("历史传播名"):
             row["历史传播名"] = target.get("history_model") or target["name"]
         row["首销天数"] = target.get("days")
         row["有小订"] = target.get("has_small", True)
-        row["小订发布时段"] = target.get("small_period") or row.get("小订发布时段") or row.get("发布时段")
-        row["首销发布时段"] = target.get("launch_period") or row.get("首销发布时段") or row.get("发布时段")
+        row["小订发布时段"] = target.get("small_period") or row.get("小订发布时段") or "未维护"
+        row["首销发布时段"] = target.get("launch_period") or row.get("首销发布时段") or "未维护"
         raw = next((r for r in raw_profiles if r["model"] == target["name"]), {})
         files = [_source_parts(raw.get(k))[0] for k in ("day_source", "hour_source", "small_hour_source", "cancel_source")]
         files += [_source_parts(v)[0] for v in raw.get("small_daily_sources", {}).values()]
@@ -788,7 +788,7 @@ def read_public_forecast(book, history, today=None):
         item = {"model": name, "generation": generation, "mapped": model_key(row.get("原始名称") or name) in mapping,
             "brand": attrs.get("品牌") or _brand(name), "tier": attrs.get("产品档位") or "未维护",
             "energy": attrs.get("能源类型") or "未维护", "node": attrs.get("发布类型") or attrs.get("发布节点") or "未维护",
-            "launch_period": row.get("小订发布时段") or row.get("发布时段") or attrs.get("小订发布时段") or attrs.get("发布时段") or "未维护", "small_start_date": start, "small_end_date": end,
+            "launch_period": row.get("小订发布时段") or attrs.get("小订发布时段") or "未维护", "small_start_date": start, "small_end_date": end,
             "days": row.get("小订天数") or max(len(daily), 1), "total": total, "total_complete": complete,
             "total_source": row.get("总量来源"), "leads": row.get("线索数") or 0, "heat": row.get("热度") or 0,
             "daily_orders": daily, "dates": dates, "small_progress": cumulative, "standard_progress": curve,

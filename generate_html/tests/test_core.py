@@ -30,6 +30,7 @@ class SubjectParsingTests(unittest.TestCase):
             build_mapping_workbook(path, ["问界 M9 2026款纯电"])
             workbook = load_workbook(path, read_only=True, data_only=True)
             try:
+                headers = [cell.value for cell in workbook["车型基本信息"][1]]
                 row = list(workbook["车型基本信息"].iter_rows(min_row=2, max_row=2, values_only=True))[0]
             finally:
                 workbook.close()
@@ -37,9 +38,12 @@ class SubjectParsingTests(unittest.TestCase):
         self.assertEqual(row[0], "问界 M9 2026款纯电")
         self.assertIsNone(row[1])
         self.assertEqual(row[2], "问界")
-        self.assertEqual(row[4:8], ("待维护", "待维护", "待维护", "待维护"))
-        self.assertEqual(row[8], "待人工确认")
-        self.assertIsNone(row[10])
+        record = dict(zip(headers, row))
+        for field in ("产品档位", "能源类型", "发布类型", "小订发布时段", "首销发布时段"):
+            self.assertEqual(record[field], "待维护")
+        self.assertNotIn("发布时段", record)
+        self.assertEqual(record["映射状态"], "待人工确认")
+        self.assertIsNone(record["来源URL"])
 
     def test_multi_phase_launch_sheet_names_map_to_same_generation(self):
         self.assertEqual(sheet_subject("问界 M8 2025款by天第1期"), "问界 M8 2025款")

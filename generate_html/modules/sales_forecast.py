@@ -329,7 +329,7 @@ def _primary_attributes(master):
     for parent, editions in grouped.items():
         merged = {"代际名": parent, "历史传播名": parent, "订单分析代际名": parent,
                   "primary_generation": parent, "secondary_generation": "", "二级代际名": ""}
-        for field in ("品牌", "产品档位", "发布类型", "发布时段", "小订发布时段", "首销发布时段"):
+        for field in ("品牌", "产品档位", "发布类型", "小订发布时段", "首销发布时段"):
             values = list(dict.fromkeys(str(r.get(field) or "").strip() for r in editions.values()))
             merged[field] = values[0] if len(values) == 1 else "未维护"
         energies = list(dict.fromkeys(token for r in editions.values()
@@ -741,7 +741,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "tier": usable_attribute(master_record.get("产品档位")),
                 "energy": usable_attribute(master_record.get("能源类型")),
                 "node": usable_attribute(master_record.get("发布类型") or master_record.get("发布节点")),
-                "launch_period": usable_attribute(master_record.get("小订发布时段") or master_record.get("发布时段")),
+                "launch_period": usable_attribute(master_record.get("小订发布时段")),
                 "small_start_date": summary_start or (dates[0] if dates else ""),
                 "small_end_date": summary_end or (dates[-1] if dates else ""),
                 "days": max(int(_number(summary.get("小订天数"), len(daily))), len(daily), 1),
@@ -806,7 +806,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "tier": usable_attribute(master_record.get("产品档位")),
                 "energy": usable_attribute(master_record.get("能源类型")),
                 "node": usable_attribute(master_record.get("发布类型") or master_record.get("发布节点")),
-                "launch_period": usable_attribute(master_record.get("小订发布时段") or master_record.get("发布时段")),
+                "launch_period": usable_attribute(master_record.get("小订发布时段")),
                 "small_start_date": _iso(summary.get("小订开始日期")),
                 "small_end_date": _iso(summary.get("小订结束日期")),
                 "days": max(int(_number(summary.get("小订天数"), len(daily))), len(daily), 1),
@@ -1438,7 +1438,7 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "launch_date": _iso(record.get("发布日") or record.get("开始大定日期")),
         "node": usable_attribute(record.get("发布类型") or record.get("发布节点")),
         "launch_weekday": str(record.get("发布星期") or _weekday(record.get("发布日") or record.get("开始大定日期"))),
-        "launch_period": usable_attribute(record.get("首销发布时段") or record.get("发布时段")),
+        "launch_period": usable_attribute(record.get("首销发布时段")),
         "end_date": _iso(record.get("首销截止") or record.get("小转大结束日期")),
         "days": int(_number(record.get("首销期天数") or record.get("首销天数"), 0)),
         "gross": int(_number(_first_record_value(record, gross_key, "大定量"))),
@@ -1574,7 +1574,7 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
                 item["tier"] = str(master_record.get("产品档位") or "未维护")
                 item["energy"] = str(master_record.get("能源类型") or "未维护")
                 item["node"] = str(master_record.get("发布类型") or master_record.get("发布节点") or "未维护")
-                item["launch_period"] = str(master_record.get("首销发布时段") or master_record.get("发布时段") or "未维护")
+                item["launch_period"] = usable_attribute(master_record.get("首销发布时段"))
             for field, mapping in progress_maps.items():
                 # Different historical events/editions may map to one generation.
                 # Preserve their own named curves before considering an alias.
@@ -2674,8 +2674,8 @@ def _target_options(
             "small_date_source_label": "车型汇总维护" if (window or {}).get("small_start_date") else "车型汇总未维护",
             "steady_date_source_label": "由首销截止次日推导" if (window or {}).get("end_date") else ("由首销开始+天数推算" if _as_date(stage.get("end_date")) else "缺失"),
             "launch_weekday": reference["launch_weekday"] if reference else _weekday(launch_date),
-            "launch_period": usable_attribute(master_record.get("首销发布时段") or master_record.get("发布时段")) if master_record else usable_attribute(reference["launch_period"] if reference else None),
-            "small_period": usable_attribute(master_record.get("小订发布时段") or master_record.get("发布时段")) if master_record else "未维护",
+            "launch_period": usable_attribute(master_record.get("首销发布时段")) if master_record else usable_attribute(reference["launch_period"] if reference else None),
+            "small_period": usable_attribute(master_record.get("小订发布时段")) if master_record else "未维护",
             "days": stage["days"],
             "launch_days_maintained": bool(parsed_end or _number(maintained_days) > 0),
             "small": profile.get("total_small") or (window or {}).get("small") or (reference["small"] if reference else 0),

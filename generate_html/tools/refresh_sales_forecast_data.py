@@ -408,14 +408,14 @@ def build_mapping_workbook(path: Path, models: Iterable[str]) -> None:
     sheet.title = "车型基本信息"
     headers = [
         "历史传播名", "订单分析代际名", "品牌", "原始表简称/别名",
-        "产品档位", "能源类型", "发布类型", "发布时段",
+        "产品档位", "能源类型", "发布类型", "小订发布时段", "首销发布时段",
         "映射状态", "映射依据", "来源URL", "人工备注",
     ]
     sheet.append(headers)
     for model in models:
         sheet.append([
             model, "", brand_of(model), "",
-            "待维护", "待维护", "待维护", "待维护",
+            "待维护", "待维护", "待维护", "待维护", "待维护",
             "待人工确认", "待人工维护传播名—代际名映射", "", "",
         ])
     style_sheet(sheet)
@@ -425,7 +425,7 @@ def build_mapping_workbook(path: Path, models: Iterable[str]) -> None:
     notes.append(["用途", "连接历史文件中的传播名与订单分析中的代际名；刷新二次处理文件及网页匹配都会读取本文件。"])
     notes.append(["唯一键", "历史传播名必须唯一；多个历史传播名可以映射到同一个订单分析代际名。"])
     notes.append(["别名", "原始表简称/别名用竖线 | 分隔，用于匹配进度表里的简称。"])
-    notes.append(["车型属性", "产品档位、能源类型、发布类型、发布时段与映射维护在同一行；发布时段填写上午/下午/晚上，修改后重新运行刷新脚本即可生效。"])
+    notes.append(["车型属性", "产品档位、能源类型、发布类型、小订发布时段、首销发布时段与映射维护在同一行；两个时段独立填写上午/下午/晚上，留空为未维护，不互相借用，也不读取旧发布时段。修改后重新运行刷新脚本即可生效。"])
     notes.append(["重名处理", "发现重复历史传播名或同一简称命中多行时，脚本打印警告并拒绝静默覆盖。"])
     notes.append(["初始来源", "仅从原始文件提取历史传播名和品牌；代际映射及车型属性均需人工维护。"])
     style_sheet(notes)
@@ -494,7 +494,7 @@ def load_mapping(path: Path) -> tuple[dict[str, dict[str, Any]], dict[str, set[s
                     legacy_properties[normalize(property_model)] = property_record
             for history_key, record in mapping.items():
                 property_record = legacy_properties.get(history_key) or legacy_properties.get(normalize(record.get("订单分析代际名"))) or {}
-                for field in ("产品档位", "能源类型", "发布类型", "发布时段"):
+                for field in ("产品档位", "能源类型", "发布类型", "小订发布时段", "首销发布时段"):
                     if not str(record.get(field) or "").strip() and str(property_record.get(field) or "").strip():
                         record[field] = property_record[field]
         reverse: dict[str, list[str]] = defaultdict(list)
@@ -717,9 +717,8 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     timings = {}
     mapping, aliases = load_mapping(mapping_path)
     for record in mapping.values():
-        missing_attributes = [field for field in ("产品档位", "能源类型", "发布类型", "发布时段")
-                              if usable_attribute(record.get("首销发布时段") or record.get(field)
-                                  if field == "发布时段" else record.get(field)) == "未维护"]
+        missing_attributes = [field for field in ("产品档位", "能源类型", "发布类型", "首销发布时段")
+                              if usable_attribute(record.get(field)) == "未维护"]
         if missing_attributes:
             LOGGER.warning("[车型属性缺失] 代际=%s | 文件=%s | 缺失字段=%s | 处理=保留未维护标记，影响相应参考匹配；请补齐整理表基本信息",
                            record["历史传播名"], mapping_path.name, "、".join(missing_attributes))
@@ -793,7 +792,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         tier = usable_attribute(map_record.get("产品档位"))
         energy = usable_attribute(map_record.get("能源类型"))
         release_type = usable_attribute(map_record.get("发布类型"))
-        release_period = usable_attribute(map_record.get("首销发布时段") or map_record.get("发布时段"))
+        release_period = usable_attribute(map_record.get("首销发布时段"))
         total_small = as_number(record.get("总小订"))
         small_to_big = as_number(record.get("小订转大定量"))
         gross = as_number(record.get("大定量"))
@@ -860,7 +859,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     field_rows = [
         [
             "车型基本信息",
-            "传播名/代际名/品牌/别名/产品档位/能源类型/发布类型/发布时段",
+            "传播名/代际名/品牌/别名/产品档位/能源类型/发布类型/小订发布时段/首销发布时段",
             "统一读取车型基本信息.xlsx的“车型基本信息”Sheet；以历史传播名为唯一键，原始表简称/别名用于进度表匹配，映射和车型属性均取同一行",
             "车型基本信息.xlsx",
         ],
@@ -889,7 +888,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
             cell.alignment = _WRAPPED_ALIGNMENT
         field_sheet.row_dimensions[row[0].row].height = 34
     field_sheet.row_dimensions[2].height = 48
-    base_headers = ["传播名", "代际名", "映射状态", "品牌", "产品档位", "能源类型", "发布日", "发布类型", "首销截止", "首销天数", "总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "字段完整度", "口径一致性", "质量状态", "质量问题", "数据来源", "发布星期", "发布时段", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率"]
+    base_headers = ["传播名", "代际名", "映射状态", "品牌", "产品档位", "能源类型", "发布日", "发布类型", "首销截止", "首销天数", "总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "字段完整度", "口径一致性", "质量状态", "质量问题", "数据来源", "发布星期", "首销发布时段", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率"]
     write_rows(workbook, "预测基准总表", base_headers, base_rows, "ForecastBaseline", PERCENT_FIELDS)
 
     d12_headers = D12_HEADERS
