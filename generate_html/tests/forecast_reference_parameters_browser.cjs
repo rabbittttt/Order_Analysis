@@ -34,7 +34,7 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
    await selects.first().selectOption(valid.model);await selects.nth(1).selectOption(valid.model);
    console.log('PASS '+task+' real browser missing/valid weights and blanks');
   }
-  await page.locator('[data-forecast-tab="result"]').click();
+  await page.locator('[data-forecast-tab="evidence"]').click();
   for(const [field,value] of [['small','10000'],['conversion','50'],['direct','98'],['lock','75']]){
    await page.locator(`[data-forecast-input="${field}"]`).fill(value);
   }

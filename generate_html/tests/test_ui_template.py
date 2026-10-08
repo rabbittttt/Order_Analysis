@@ -519,7 +519,7 @@ assert.strictEqual(fmt(null),'');
         self.assertNotIn('class="forecast-lifecycle-evidence"', lifecycle)
         self.assertNotIn('class="forecast-lifecycle-kpis"', lifecycle)
         self.assertIn("renderForecastEvidenceGroup('终局预测参考'", lifecycle)
-        self.assertIn("renderForecastEvidenceGroup('逐日分配参考'", lifecycle)
+        self.assertIn("renderForecastEvidenceGroup('逐日分配与走势对照'", lifecycle)
         self.assertIn("renderForecastEvidenceGroup('趋势参考'", lifecycle)
         self.assertIn('renderForecastEvidenceGroup(group.title,group.note,cards,group.keys.length)', script)
         self.assertIn('<p class="forecast-steady-chart-note">首销全周期直接大定形状决定参考；历史车型提供进入平销后的相对承接关系。本车型平销实际逐步校准规模和趋势，不套历史绝对量。</p><div class="forecast-task-chart" data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence', lifecycle)
@@ -536,7 +536,7 @@ assert.strictEqual(fmt(null),'');
         self.assertIn("const lockValues=item=>", script)
         self.assertIn("const recentRatio=item=>", script)
         self.assertIn("全首销直接大定曲线规律", script)
-        self.assertIn("仅完整自然周，剔除日历影响", script)
+        self.assertIn("仅完整七天且锁单已收齐的平销周", script)
         self.assertIn(".forecast-lifecycle-reference-chart{grid-column:1/-1", css)
         self.assertIn(".forecast-lifecycle-line-scroll svg{height:auto;aspect-ratio:920/245}", css)
         self.assertIn("function renderForecastEvidenceLines", script)
@@ -595,11 +595,9 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         common = script.index('data-forecast-region="common"')
         scale = script.index('<section class="forecast-scale-check">')
         self.assertLess(scenarios, parameters)
-        self.assertLess(parameters, charts)
-        self.assertLess(common, parameters)
-        self.assertLess(common, scale)
-        self.assertLess(parameters, scale)
-        self.assertLess(scale, charts)
+        self.assertLess(charts, parameters)
+        self.assertLess(parameters, common)
+        self.assertLess(scale, parameters)
         self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))", css)
         self.assertIn(".forecast-result-main>.forecast-common-controls{grid-column:1/-1", css)
         self.assertIn(".forecast-decision-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px", css)
@@ -616,16 +614,18 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         small = script[script.index("function renderSmallOrderWorkspace"):script.index("function renderSteadyWorkspace")]
         steady = script[script.index("function renderSteadyWorkspace"):script.index("function renderForecastWorkspaceV2")]
-        launch = script[script.index("data-forecast-data-error"):script.index("data-forecast-pane=\"evidence\"")]
+        launch = script[script.index("data-forecast-data-error"):script.index("data-forecast-pane=\"score\"")]
         self.assertLess(small.index('data-small-error'), small.index('id="small-forecast-pane-result"'))
         self.assertLess(steady.index('data-steady-error'), steady.index('id="steady-forecast-pane-result"'))
         self.assertLess(steady.index('data-steady-chart'), steady.index('data-forecast-import-anchor="steady"'))
-        self.assertLess(steady.index("renderStageCommonControls('steady')"), steady.index('data-steady-chart'))
+        self.assertLess(steady.index('data-steady-chart'), steady.index("renderStageCommonControls('steady')"))
+        self.assertLess(small.index('data-small-chart'), small.index("renderStageCommonControls('small')"))
         self.assertLess(launch.index('data-forecast-data-error'), launch.index('id="forecast-pane-result"'))
         self.assertLess(launch.index('data-forecast-decision-chart="parameter"'), launch.index('data-forecast-import-anchor="launch"'))
-        self.assertLess(launch.index('data-forecast-region="common"'), launch.index('data-forecast-decision-chart="parameter"'))
+        self.assertLess(launch.index('data-forecast-region="curves"'), launch.index('data-forecast-region="parameters"'))
+        self.assertLess(launch.index('data-forecast-region="parameters"'), launch.index('data-forecast-region="common"'))
         self.assertLess(launch.index('data-forecast-allocation-note'), launch.index("renderBridgeControls('launch')"))
-        self.assertLess(launch.index("renderBridgeControls('launch')"), launch.index('<section class="forecast-scale-check">'))
+        self.assertLess(launch.index('<section class="forecast-scale-check">'), launch.index("renderBridgeControls('launch')"))
 
     def test_bridge_controls_use_a_compact_parameter_layout(self):
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
@@ -733,7 +733,7 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
             self.assertNotIn("交付/锁单", text)
             self.assertNotIn("delivery_rate", text)
         self.assertIn("item?.d1_valid===false", script)
-        self.assertIn('calculated_lock_rate = safe_div(lock, gross)', refresh)
+        self.assertIn('calculated_lock_rate = safe_div(record.get("首销期锁单"), record.get("大定量"))', refresh)
         self.assertNotIn('calculated_lock_rate = safe_div(lock, net)', refresh)
         self.assertNotIn('write_rows(workbook, "人工校准参数"', refresh)
         self.assertNotIn('record.get("参考锁单率")', module)
@@ -742,14 +742,14 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
         refresh = (ROOT / "tools" / "refresh_sales_forecast_data.py").read_text(encoding="utf-8")
-        parameter_block = script.split('forecast-parameter-controls', 1)[1].split('data-forecast-region="curves"', 1)[0]
+        parameter_block = script.split('forecast-parameter-controls', 1)[1].split('data-forecast-region="common"', 1)[0]
         self.assertNotIn('data-forecast-input="lock"', parameter_block)
         self.assertIn('class="forecast-common-lock">大定到锁单率', script)
         self.assertIn('首销期锁单 ÷ 总大定', script)
         self.assertIn('"首销期锁单", "大定到锁单率"', refresh)
         self.assertIn('.forecast-v2 .forecast-ref-grid{grid-template-columns:repeat(2,minmax(0,1fr))', css)
         self.assertIn('.forecast-common-controls{grid-column:1/-1', css)
-        self.assertLess(script.index('forecast-d1-card'), script.index('forecast-progress-controls'))
+        self.assertLess(script.index('forecast-progress-controls'), script.index('forecast-d1-card'))
 
     def test_forecast_short_panels_keep_natural_height_and_reference_charts_use_half_width(self):
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")

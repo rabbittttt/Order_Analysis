@@ -103,6 +103,8 @@ SUMMARY_HEADER_ALIASES = {
     "留存大定率": {"留存大定率", "首销期留存大定率", "净大定率", "首销期净大定率"},
     "首销期锁单": {"首销期锁单", "锁单量"},
     "锁单率": {"锁单率", "首销期锁单率"},
+    "留存大定到锁单率": {"留存大定到锁单率"},
+    "大定到锁单率": {"大定到锁单率"},
 }
 
 PROGRESS_SPECS = {
@@ -808,13 +810,13 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         raw_net_rate = record.get("留存大定率")
         net_rate = as_number(raw_net_rate) if raw_net_rate not in (None, "") else (safe_div(net, gross) or 0)
         lock = as_number(record.get("首销期锁单"))
-        calculated_lock_rate = safe_div(lock, gross)
-        lock_rate = calculated_lock_rate or 0
+        calculated_lock_rate = safe_div(record.get("首销期锁单"), record.get("大定量"))
+        lock_rate = calculated_lock_rate if calculated_lock_rate is not None else (as_number(record.get("大定到锁单率")) if record.get("大定到锁单率") not in (None, "") else None)
         if not any((net, lock)):
             LOGGER.debug("[初读整理表] 历史经营结果为空：%s；尚未合并其他订单来源，不要求提前填写终局", model)
         field_completeness, consistency, quality_issues = summary_quality(
             total_small, small_to_big, conversion, gross, direct, direct_share, cancel, cancel_rate,
-            net, net_rate, lock, lock_rate,
+            net, net_rate, lock, lock_rate or 0,
             tuple(record.get(field) not in (None, "") for field in (
                 "总小订", "小订转大定量", "小订转化率", "大定量", "直接大定量", "直接大定占比",
                 "小订后退定", "小订后退定占比", "首销期留存大定", "留存大定率", "首销期锁单", "锁单率",
@@ -832,7 +834,8 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
             field_completeness, consistency, quality_status, "；".join(quality_issues),
             "历史首销参考数量汇总；映射与车型属性来自车型基本信息.xlsx单表", weekday_name(launch_date),
             release_period, int(as_number(net)) if record.get("首销期留存大定") not in (None, "") else None, as_number(net_rate),
-            int(as_number(lock)) if record.get("首销期锁单") not in (None, "") else None, as_number(lock_rate),
+            int(as_number(lock)) if record.get("首销期锁单") not in (None, "") else None, lock_rate,
+            safe_div(record.get("首销期锁单"), record.get("首销期留存大定")) if record.get("首销期锁单") not in (None, "") and as_number(record.get("首销期留存大定")) > 0 else record.get("留存大定到锁单率"),
         ])
 
         small_curve = pad_curve(curve_for(model, raw_curves["small"], mapping, aliases, "小转大"), day_count)
@@ -889,7 +892,8 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         field_sheet.row_dimensions[row[0].row].height = 34
     field_sheet.row_dimensions[2].height = 48
     base_headers = ["传播名", "代际名", "映射状态", "品牌", "产品档位", "能源类型", "发布日", "发布类型", "首销截止", "首销天数", "总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "字段完整度", "口径一致性", "质量状态", "质量问题", "数据来源", "发布星期", "首销发布时段", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率"]
-    write_rows(workbook, "预测基准总表", base_headers, base_rows, "ForecastBaseline", PERCENT_FIELDS)
+    base_headers.append("留存大定到锁单率")
+    write_rows(workbook, "预测基准总表", base_headers, base_rows, "ForecastBaseline", PERCENT_FIELDS | {"留存大定到锁单率"})
 
     d12_headers = D12_HEADERS
     d12_rows = []
@@ -1411,8 +1415,11 @@ def normalize_public_names(book, data, emit):
             if not primary:
                 continue  # Formatting-only rows are not forecast identities.
             output.append([primary, secondary or None, *[values[i] if i < len(values) else None for i, _ in remaining]])
+        # Identity normalization must preserve formats on Dn progress columns.
+        percent_headers = {headers[cell.column - 1] for row in sheet.iter_rows(min_row=2, max_row=2)
+                           for cell in row if "%" in cell.number_format}
         emit(sheet.title, ["代际名", "二级代际名", *[h for _, h in remaining]], output,
-             {h for _, h in remaining if h in PERCENT_FIELDS or h.endswith("率") or "占比" in h})
+             {h for _, h in remaining if h in percent_headers or h in PERCENT_FIELDS or h.endswith("率") or "占比" in h})
 
 
 def compact_source_sheets(workbook):

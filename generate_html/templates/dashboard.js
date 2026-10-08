@@ -654,7 +654,7 @@
     const rows=cohorts.map(cohort=>[cohort.period,...cohort.stages.slice(1).map(stage=>stage.total_rate),cohort.order_to_lock_days,cohort.lock_to_delivery_days]);
     return `<div class="table-wrap"><table class="data-table"><thead><tr>${columns.map(column=>`<th>${esc(column)}</th>`).join("")}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map((value,index)=>index>0&&index<row.length-2?`<td class="heat-cell" style="background:rgba(39,133,232,${.05+Math.pow(Number(value),1.6)*.7})">${(Number(value)*100).toFixed(1)}%</td>`:`<td>${index>=row.length-2?fmt(value)+"天":esc(value)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   }
-  function renderRankCards(cards,kind){const directional=kind==='rise'||kind==='drop',directionalClass=directional?` rank-grid-${kind}`:'';return `<div class="rank-grid${directionalClass}">${Object.entries(cards||{}).map(([name,rows])=>{const maxRate=Math.max(...rows.map(row=>Math.abs(Number(row.rate)||0)),0);return `<article class="rank-card"><h3>${esc(name)} · TOP${rows.length}</h3><ol>${rows.map(row=>{const meta=[row.rate!=null?`${(Number(row.rate)*100).toFixed(1)}%`:"",row.amount!=null?`${fmt(row.amount)}元`:""].filter(Boolean).join(" · ");if(!directional)return `<li><b>${row.rank}</b><span>${esc(row.label)}${meta?`<small>${esc(meta)}</small>`:""}</span></li>`;const rate=Number(row.rate),rateLabel=row.rate!=null&&Number.isFinite(rate)?`${(rate*100).toFixed(1)}%`:'—',width=maxRate>0&&Number.isFinite(rate)?Math.min(Math.abs(rate)/maxRate*100,100):0,amount=row.amount!=null?`${fmt(row.amount)}元`:'';return `<li><b class="rank-index">${row.rank}</b><span class="rank-name">${esc(row.label)}${amount?`<small>${esc(amount)}</small>`:''}</span><div class="rank-bar" aria-hidden="true"><i style="width:${width.toFixed(1)}%"></i></div><strong class="rank-rate">${rateLabel}</strong></li>`}).join("")}</ol></article>`}).join("")}</div>`}
+  function renderRankCards(cards,kind){const directional=kind==='rise'||kind==='drop',directionalClass=directional?` rank-grid-${kind}`:'';return `<div class="rank-grid${directionalClass}">${Object.entries(cards||{}).map(([name,entry])=>{const rows=Array.isArray(entry)?entry:entry.rows||[];if(!rows.length)return `<article class="rank-card"><h3>${esc(name)} · 暂无上榜车型</h3><p class="empty">${esc(entry.empty_reason||"暂无可比排名")}</p></article>`;const maxRate=Math.max(...rows.map(row=>Math.abs(Number(row.rate)||0)),0);return `<article class="rank-card"><h3>${esc(name)} · TOP${rows.length}</h3><ol>${rows.map(row=>{const meta=[row.rate!=null?`${(Number(row.rate)*100).toFixed(1)}%`:"",row.amount!=null?`${fmt(row.amount)}元`:""].filter(Boolean).join(" · ");if(!directional)return `<li><b>${row.rank}</b><span>${esc(row.label)}${meta?`<small>${esc(meta)}</small>`:""}</span></li>`;const rate=Number(row.rate),rateLabel=row.rate!=null&&Number.isFinite(rate)?`${(rate*100).toFixed(1)}%`:'—',width=maxRate>0&&Number.isFinite(rate)?Math.min(Math.abs(rate)/maxRate*100,100):0,amount=row.amount!=null?`${fmt(row.amount)}元`:'';return `<li><b class="rank-index">${row.rank}</b><span class="rank-name">${esc(row.label)}${amount?`<small>${esc(amount)}</small>`:''}</span><div class="rank-bar" aria-hidden="true"><i style="width:${width.toFixed(1)}%"></i></div><strong class="rank-rate">${rateLabel}</strong></li>`}).join("")}</ol></article>`}).join("")}</div>`}
   function renderRights(data){return `<div class="rights"><strong>权益金额 ${fmt(data.amount)} 元</strong><p>${esc(data.text)}</p></div>`}
   function renderFeeBandStructure(data){
     const bands=data?.bands||[],rows=data?.rows||[],palette=["#1677FF","#00C2FF","#00B578","#FFB020","#FF4D6D","#7C3AED","#ED7D31","#70AD47","#4472C4"];
@@ -770,9 +770,12 @@
     const palette=['#D9485F','#00A6A6','#B7791F','#6B7280','#DB2777','#65A30D'];
     return [...card.querySelectorAll('[data-lifecycle-chart-ref]:checked:not(:disabled)')].map((input,index)=>{const item=history.find(item=>(item.event_id||item.model)===input.value),slot=selected.findIndex(row=>(row.item.event_id||row.item.model)===input.value),weight=slot>=0?selected[slot].weight:0;return item?{item,weight,label:`${slot>=0?(slot?'辅助':'主参考')+weight+'%':'对比'} · ${item.model}`,color:slot===0?'#FF8A00':slot===1?'#7C3AED':palette[index%palette.length]}:null}).filter(Boolean);
   }
-  function renderLifecycleReferenceScores(rows,scoreFor){
-    const body=rows.map(({item,weight},index)=>{const result=scoreFor(item);return `<tr><td>${index?'辅助参考':'主参考'}</td><td><b>${esc(item.model)}</b></td><td>${Math.round(result.score*100)}分</td><td>${result.parts.map(part=>`${esc(part.evidence)}：${Math.round(part.value*100)}%`).join('<br>')}</td><td>${weight}%</td></tr>`}).join('');
-    return `<table><thead><tr><th>角色</th><th>参考车型</th><th>匹配分</th><th>逐项对比</th><th>分配权重</th></tr></thead><tbody>${body||'<tr><td colspan="5">暂无已选参考</td></tr>'}</tbody></table>`;
+  function renderLifecycleReferenceScores(rows,scoreFor,currentName='当前预测对象'){
+    const labels={tier:'产品档位',energy:'能源类型',node:'发布类型',days:'小订窗口天数',size:'已知小订量级',release_hour:'发布时间',hour_slope:'小时增量斜率',hour_progress:'前几小时累计占比',lock:'首销期大定到锁单率',launch_shape:'全首销直接大定曲线',steady_shape:'平销实际趋势'};
+    const scored=rows.map(row=>({...row,result:scoreFor(row.item)})),main=scored[0],aux=scored[1],partOf=(result,key)=>result?.parts?.find(part=>part.key===key),display=part=>{const evidence=String(part?.evidence||'数据不足'),pieces=evidence.split('↔');return pieces.length>1?{current:pieces.shift().trim()||'数据不足',reference:pieces.join('↔').trim()||'数据不足'}:{current:'当前数据',reference:evidence}};
+    const parts=[...new Map(scored.flatMap(row=>row.result?.parts||[]).map(part=>[part.key,part])).values()],score=(part)=>part&&Number.isFinite(Number(part.value))?`${Math.round(Number(part.value)*100)}分`:'—',name=(item,fallback)=>item?.model||fallback,total=(row,prefix,kind)=>`<span class="${kind}">${prefix} ${row&&Number.isFinite(Number(row.result?.score))&&row.result.score>=0?`${Math.round(row.result.score*100)}分`:'—'}</span>`;
+    const body=parts.map(part=>{const mainPart=partOf(main?.result,part.key),auxPart=partOf(aux?.result,part.key),mainView=display(mainPart),auxView=display(auxPart),currentView=display(mainPart||auxPart);return `<tr><td><b>${esc(labels[part.key]||part.label||part.key)}</b></td><td>${esc(currentView.current)}</td><td>${esc(mainView.reference)}</td><td>${esc(auxView.reference)}</td><td><div class="forecast-ref-row-scores"><span class="primary">主 ${score(mainPart)}</span><span class="auxiliary">辅 ${score(auxPart)}</span></div></td></tr>`}).join('');
+    return `<table><thead><tr><th>参与打分参数</th><th>当前 · ${esc(currentName)}</th><th>主参考 · ${esc(name(main?.item,'未选择'))}</th><th>辅助参考 · ${esc(name(aux?.item,'未选择'))}</th><th>单项打分</th></tr></thead><tbody>${body||'<tr><td colspan="5">暂无已选参考</td></tr>'}</tbody><tfoot><tr><td><b>综合得分</b></td><td>—</td><td>${esc(name(main?.item,'未选择'))}</td><td>${esc(name(aux?.item,'未选择'))}</td><td><div class="forecast-ref-row-scores">${total(main,'主','primary')}${total(aux,'辅','auxiliary')}</div></td></tr></tfoot></table>`;
   }
   function refreshLifecycleRecommendationCharts(workspace,root){
     workspace.querySelectorAll('[data-lifecycle-reference]').forEach(card=>{
@@ -812,23 +815,25 @@
       .replace('<div class="forecast-ref-comparison" data-lifecycle-ref-reason></div></details>', '<div class="forecast-ref-comparison" data-lifecycle-ref-reason></div><div class="forecast-reference-context" data-small-evidence></div></details>');
     const hourly=renderLifecycleReferenceCard('small','hourly','D1 小订分时预测','按发布时间、分时斜率和累计占比选参考；不比较D1绝对量',history,'data-small-hourly-ref','data-small-hourly-weight','data-small-hourly-reference-chart');
     const daily=renderLifecycleReferenceCard('small','daily','小订到天基础曲线','分配未来逐日小订；历史日历影响先剔除，再应用目标日期系数',history,'data-small-daily-ref','data-small-daily-weight','data-small-daily-reference-chart');
+    const slope=renderLifecycleReferenceCard('small','slope','每日斜率（仅展示）','剔除日历影响后的日量环比；独立主辅选择，不参与预测计算',history,'data-small-slope-ref','data-small-slope-weight','data-small-slope-reference-chart');
     return `<div class="forecast-lifecycle-workspace forecast-small-order" data-small-order-workspace>
       <div class="forecast-data-error" data-small-error role="alert" aria-live="assertive" hidden></div>
       <section id="small-forecast-pane-result" aria-labelledby="forecast-tab-result" class="forecast-lifecycle-subpane${state.forecastView==='result'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-result">
         <div class="forecast-result-shell"><div class="forecast-result-main">
           <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${renderLifecycleConclusion('small','小订预测结论','已发生数量与未来预测分开显示',[
             {key:'total',label:'预计最终总小订',unit:'单'},{key:'actual',label:'当前已发生',unit:'单'},{key:'d1',label:'D1小订终值',unit:'单'}])}</div></section>
-          <aside class="forecast-controls-rail" data-forecast-region="controls" aria-label="预测参数">${renderStageCommonControls('small')}
-          <section class="forecast-parameter-rail forecast-lifecycle-parameters forecast-result-section" data-forecast-region="parameters"><div class="forecast-rail-head"><div><small>当前对象驱动</small><h4>预测参数</h4></div><span>修改后实时重算</span></div><div class="forecast-input-grid"><label>线索量<input type="number" min="0" data-small-input="leads" placeholder="未维护"></label><label>互联网热度<input type="number" min="0" step="0.1" data-small-input="heat" placeholder="未维护"></label></div><p class="forecast-progress-source" data-small-source>正在检查小订窗口和历史曲线。</p></section>
-          </aside>
           <section class="forecast-decision-card forecast-result-section" data-forecast-region="curves"><div class="forecast-pane-head"><div><small>真实值冻结，未来按参考曲线分配</small><h4>小订逐日实际与预测</h4></div></div><div data-small-chart></div></section>
           <div data-forecast-import-anchor="small" data-forecast-region="import"></div>
         </div></div>
       </section>
       <section id="small-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="small-evidence">
+        <aside class="forecast-evidence-controls" data-forecast-region="controls" aria-label="预测参数">
+          <section class="forecast-parameter-rail forecast-lifecycle-parameters forecast-result-section" data-forecast-region="parameters"><div class="forecast-rail-head"><div><small>当前对象驱动</small><h4>预测参数</h4></div><span>修改后实时重算</span></div><div class="forecast-input-grid"><label>线索量<input type="number" min="0" data-small-input="leads" placeholder="未维护"></label><label>互联网热度<input type="number" min="0" step="0.1" data-small-input="heat" placeholder="未维护"></label></div><p class="forecast-progress-source" data-small-source>正在检查小订窗口和历史曲线。</p></section>
+          ${renderStageCommonControls('small')}
+        </aside>
         <div class="forecast-evidence-groups">
           ${renderForecastEvidenceGroup('终局预测参考','累计完成度用于日进度反推；D1分时用于首日滚动预测',progress+hourly,2)}
-          ${renderForecastEvidenceGroup('逐日分配参考','只分配未来剩余量，不改写已发生销量',daily,1)}
+          ${renderForecastEvidenceGroup('逐日分配与走势对照','到天曲线参与分配，斜率仅作展示',daily+slope,2)}
         </div>
         <details class="forecast-method"><summary>查看小订预测逻辑与回退规则</summary><ol>${(data.small_order_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>
       </section>
@@ -847,12 +852,12 @@
           <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${renderLifecycleConclusion('steady','平销预测结论','本车型实际校准规模，历史参考提供相对趋势',[
             {key:'total',label:'预测区间锁单（含已实现）',unit:'单'},{key:'daily',label:'近期真实日均锁单',unit:'单／天'},
             {key:'change',label:'未来日均较近期实际',unit:'%'},{key:'basis',label:'当前预测依据'}])}</div></section>
-          <aside class="forecast-controls-rail" data-forecast-region="controls" aria-label="预测参数">${renderStageCommonControls('steady')}</aside>
           <section class="forecast-decision-card forecast-result-section" data-forecast-region="curves"><div class="forecast-pane-head"><div><small>交车锁单口径：按天预测、按周汇总，已结束日冻结</small><h4>平销交车锁单by周</h4></div></div><p class="forecast-progress-source" data-steady-source>正在读取《锁单选配比例分析》的平销期交车锁单。</p><div data-steady-chart></div></section>
           <div data-forecast-import-anchor="steady" data-forecast-region="import"></div>
         </div></div>
       </section>
       <section id="steady-forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-lifecycle-subpane${state.forecastView==='evidence'?' active':''}" role="tabpanel" data-lifecycle-subpane="steady-evidence">
+        <aside class="forecast-evidence-controls" data-forecast-region="controls" aria-label="预测参数">${renderStageCommonControls('steady')}</aside>
         <div class="forecast-evidence-groups">${renderForecastEvidenceGroup('趋势参考','比较首销全周期直接大定规律和进入平销后的相对承接，不套用历史绝对量',reference,1)}</div>
         <details class="forecast-method"><summary>查看平销预测逻辑与取数规则</summary><ol>${(data.steady_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>
       </section>
@@ -914,28 +919,7 @@
         <div class="forecast-result-shell">
           <main class="forecast-result-main">
             <section class="forecast-result-section" data-forecast-region="summary"><div class="forecast-scenarios">${scenario('progress','方法一 · 同期完成率反推','真实累计量 ÷ 参考传播名同期完成率')}${scenario('parameter','方法二 · 转化参数测算','总小订 × 转化率，并按直接大定占比换算')}</div><p class="forecast-progress-source">首销结论为总大定（小转大＋直接大定，未扣大定退订）；锁单单独展示。累计小转大率＝累计小转大÷总小订；真实累计与当日滚动估算分开显示。</p></section>
-            <aside class="forecast-controls-rail" data-forecast-region="controls" aria-label="预测参数">
-             <section class="forecast-common-controls forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>首日锚点、锁单换算与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div><div class="forecast-common-grid">
-               <div class="forecast-d1-card" data-forecast-d1-card><div class="forecast-block-head"><div><small>首日锚点</small><h4 data-forecast-d1-title>D1大定</h4></div><span data-forecast-d1-stage>判定中</span></div><label data-forecast-d1-input-wrap>D1预测大定<input data-forecast-input="d1Gross" type="number" min="0" placeholder="系统自动"><small>单</small></label><div class="forecast-d1-value"><strong data-forecast-d1-value>—</strong><em>单</em><details class="forecast-d1-details"><summary>来源与状态</summary><small data-forecast-d1-note></small></details></div><div class="forecast-d1-components"><span>小转大 <b data-forecast-d1-small>—</b></span><span>直接大定 <b data-forecast-d1-direct>—</b></span></div></div>
-               <label class="forecast-common-lock">大定到锁单率<span>首销期锁单 ÷ 总大定</span><span class="forecast-common-lock-input"><input data-forecast-input="lock" type="number" min="0" max="100" step="0.1" value="${(target.lock_rate*100).toFixed(1)}"><small>%</small></span><em>用于两种方法的首销期锁单测算</em></label>
-             </div><p data-forecast-allocation-note></p>${renderBridgeControls('launch')}</section>
-            <section class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters">
-              <div class="forecast-rail-head"><div><small>人工确认与共同调整</small><h4>预测参数</h4></div><span>修改后实时重算</span></div>
-              <div class="forecast-result-grid forecast-control-grid">
-                <div class="forecast-assumptions forecast-progress-controls"><div class="forecast-block-head"><div><small>方法一人工确认区</small><h4>同期完成率参数</h4></div><button data-forecast-apply-progress>采用参考完成率</button></div><div class="forecast-progress-actuals"><span>已结束日真实小转大 <b data-forecast-progress-actual-small>—</b></span><span>已结束日真实直接大定 <b data-forecast-progress-actual-direct>—</b></span><span data-forecast-progress-intraday></span></div><div class="forecast-input-grid">
-                  <label>参考车型同期小转大完成率<input data-forecast-input="progressSmallCompletion" type="number" min="0.1" max="100" step="0.1" placeholder="等待参考"><small>%</small></label>
-                  <label>参考车型同期直接大定完成率<input data-forecast-input="progressDirectCompletion" type="number" min="0.1" max="100" step="0.1" placeholder="等待参考"><small>%</small></label>
-                </div><p class="forecast-progress-source" data-forecast-progress-source>当前车型只提供真实累计量；完成率来自主辅历史参考车型，可以人工覆盖。</p></div>
-                <div class="forecast-assumptions forecast-parameter-controls"><div class="forecast-block-head"><div><small>方法二人工确认区</small><h4>转化参数</h4></div><button data-forecast-apply>采用参考均值</button></div><div class="forecast-input-grid">
-                  <label>总小订<input data-forecast-input="small" type="number" min="0" value="${target.total_small}"><small>份</small></label>
-                  <label>小订转化率<input data-forecast-input="conversion" type="number" min="0" max="100" step="0.1" value="${(target.conversion*100).toFixed(1)}"><small>%</small></label>
-                  <label>直接大定占比<input data-forecast-input="direct" type="number" min="0" max="99.9" step="0.1" value="${(target.direct_share*100).toFixed(1)}"><small>%</small></label>
-                </div></div>
-               </div>
-               <div class="forecast-suggestion" data-forecast-suggestion></div>
-            </section>
             <section class="forecast-scale-check"><div class="forecast-pane-head"><div><small>不参与公式，只检查预测是否偏离可比传播名区间</small><h4>总体量级合理性校验</h4></div></div><div data-forecast-scale-check></div></section>
-            </aside>
             <div class="forecast-decision-grid forecast-result-section" data-forecast-region="curves">
               <section class="forecast-decision-card progress"><div class="forecast-pane-head"><div><small>方法一：已发生进度决定终局，未来只分配剩余量</small><h4>同期完成率法 · 到天拆解</h4></div><span>每个未来Dn基础权重 × 日期调整系数</span></div><div data-forecast-decision-chart="progress"></div><p class="forecast-monitor-status" data-forecast-monitor-status></p><details class="forecast-weekly"><summary>查看方法一by周预测汇总</summary><div data-forecast-weekly="progress"></div></details></section>
               <section class="forecast-decision-card parameter"><div class="forecast-pane-head"><div><small>方法二：总小订、转化率和直接大定占比决定终局</small><h4>转化参数法 · 到天拆解</h4></div><span>与方法一独立展示，不合并、不平均</span></div><div data-forecast-decision-chart="parameter"></div><details class="forecast-weekly"><summary>查看方法二by周预测汇总</summary><div data-forecast-weekly="parameter"></div></details></section>
@@ -945,7 +929,30 @@
         </div>
         <details class="forecast-method forecast-source-method"><summary>当前第几天与数据来源如何判断</summary><ol>${(data.source_rules||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>
       </section>
-      <section id="forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-pane${activeForecastView==='evidence'?' active':''}" role="tabpanel" data-forecast-pane="evidence"><div class="forecast-evidence-groups">${evidenceGroups}</div><details class="forecast-method"><summary>查看完整预测逻辑（7步）</summary><ol>${(data.method||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details></section>
+      <section id="forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-pane${activeForecastView==='evidence'?' active':''}" role="tabpanel" data-forecast-pane="evidence">
+        <aside class="forecast-evidence-controls" data-forecast-region="controls" aria-label="预测参数">
+          <section class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters">
+            <div class="forecast-rail-head"><div><small>人工确认与共同调整</small><h4>预测参数</h4></div><span>修改后实时重算</span></div>
+            <div class="forecast-result-grid forecast-control-grid">
+              <div class="forecast-assumptions forecast-progress-controls"><div class="forecast-block-head"><div><small>方法一人工确认区</small><h4>同期完成率参数</h4></div><button data-forecast-apply-progress>采用参考完成率</button></div><div class="forecast-progress-actuals"><span>已结束日真实小转大 <b data-forecast-progress-actual-small>—</b></span><span>已结束日真实直接大定 <b data-forecast-progress-actual-direct>—</b></span><span data-forecast-progress-intraday></span></div><div class="forecast-input-grid">
+                <label>参考车型同期小转大完成率<input data-forecast-input="progressSmallCompletion" type="number" min="0.1" max="100" step="0.1" placeholder="等待参考"><small>%</small></label>
+                <label>参考车型同期直接大定完成率<input data-forecast-input="progressDirectCompletion" type="number" min="0.1" max="100" step="0.1" placeholder="等待参考"><small>%</small></label>
+              </div><p class="forecast-progress-source" data-forecast-progress-source>当前车型只提供真实累计量；完成率来自主辅历史参考车型，可以人工覆盖。</p></div>
+              <div class="forecast-assumptions forecast-parameter-controls"><div class="forecast-block-head"><div><small>方法二人工确认区</small><h4>转化参数</h4></div><button data-forecast-apply>采用参考均值</button></div><div class="forecast-input-grid">
+                <label>总小订<input data-forecast-input="small" type="number" min="0" value="${target.total_small}"><small>份</small></label>
+                <label>小订转化率<input data-forecast-input="conversion" type="number" min="0" max="100" step="0.1" value="${(target.conversion*100).toFixed(1)}"><small>%</small></label>
+                <label>直接大定占比<input data-forecast-input="direct" type="number" min="0" max="99.9" step="0.1" value="${(target.direct_share*100).toFixed(1)}"><small>%</small></label>
+              </div></div>
+            </div>
+            <div class="forecast-suggestion" data-forecast-suggestion></div>
+          </section>
+          <section class="forecast-common-controls forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>首日锚点、锁单换算与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div><div class="forecast-common-grid">
+            <div class="forecast-d1-card" data-forecast-d1-card><div class="forecast-block-head"><div><small>首日锚点</small><h4 data-forecast-d1-title>D1大定</h4></div><span data-forecast-d1-stage>判定中</span></div><label data-forecast-d1-input-wrap>D1预测大定<input data-forecast-input="d1Gross" type="number" min="0" placeholder="系统自动"><small>单</small></label><div class="forecast-d1-value"><strong data-forecast-d1-value>—</strong><em>单</em><details class="forecast-d1-details"><summary>来源与状态</summary><small data-forecast-d1-note></small></details></div><div class="forecast-d1-components"><span>小转大 <b data-forecast-d1-small>—</b></span><span>直接大定 <b data-forecast-d1-direct>—</b></span></div></div>
+            <label class="forecast-common-lock">大定到锁单率<span>首销期锁单 ÷ 总大定</span><span class="forecast-common-lock-input"><input data-forecast-input="lock" type="number" min="0" max="100" step="0.1" value="${(target.lock_rate*100).toFixed(1)}"><small>%</small></span><em>用于两种方法的首销期锁单测算</em></label>
+          </div><p data-forecast-allocation-note></p>${renderBridgeControls('launch')}</section>
+        </aside>
+        <div class="forecast-evidence-groups">${evidenceGroups}</div><details class="forecast-method"><summary>查看完整预测逻辑（7步）</summary><ol>${(data.method||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>
+      </section>
       <section id="forecast-pane-score" aria-labelledby="forecast-tab-score" class="forecast-pane${activeForecastView==='score'?' active':''}" role="tabpanel" data-forecast-pane="score"><div data-forecast-score-dashboard></div></section>
       </section>
       <section class="forecast-stage-pane${activeForecastStage==='steady'?' active':''}" role="tabpanel" data-forecast-stage-pane="steady">${steadyWorkspace}</section>
@@ -985,14 +992,15 @@
     const scoreResult=(item,target,current)=>smallReferenceScore(item,target,current,minimumEvidence);
     const attributeScore=(item,target,current)=>scoreResult(item,target,current).score;
     const hourlyContext=()=>{const target=targetState(),hours=(findActual(target.name)?.small_hourly_days||[]).find(row=>row.date===target.smallStartDate)?.hours||[],positive=hours.filter(row=>row.orders>0),startHour=({'上午':9,'下午':14,'晚上':19,'夜间':20}[target.smallPeriod]??(positive.length?Math.min(...positive.map(row=>row.hour)):-1));return {hours,startHour};};
-    const ranked=(task='progress')=>{const target=targetState(),current=targetItem();return history.filter(item=>!sameModel(item.generation||item.model,target.name)&&Number(item.total)>0&&item.total_complete!==false&&(task!=='hourly'||window.ForecastMath.smallHourlyStart(item)>=0)).map(item=>({item,...(task==='hourly'?window.ForecastMath.smallHourlyReferenceScore(item,hourlyContext()):scoreResult(item,target,current))})).filter(row=>row.parts.length).sort((a,b)=>b.score-a.score)};
+    const ranked=(task='progress')=>{const target=targetState(),current=targetItem();return history.filter(item=>!sameModel(item.generation||item.model,target.name)&&window.ForecastMath.smallReferenceAvailable(item,task)).map(item=>({item,...(task==='hourly'?window.ForecastMath.smallHourlyReferenceScore(item,hourlyContext()):scoreResult(item,target,current))})).filter(row=>row.parts.length).sort((a,b)=>b.score-a.score)};
     const selects=[...workspace.querySelectorAll('[data-small-ref]')],weights=[...workspace.querySelectorAll('[data-small-weight]')];
     const groups={progress:{selects,weights},daily:{selects:[...workspace.querySelectorAll('[data-small-daily-ref]')],weights:[...workspace.querySelectorAll('[data-small-daily-weight]')]},hourly:{selects:[...workspace.querySelectorAll('[data-small-hourly-ref]')],weights:[...workspace.querySelectorAll('[data-small-hourly-weight]')]}};
     const referenceDailyShape=(item,index,days)=>{const orders=window.ForecastMath.adaptSmallDailyOrders(item,days),factors=context.factors('small'),factor=i=>factors[context.calendarType(item.small_start_date||item.dates?.[0]||'',i).type]||1,first=orders[0]/factor(0);return first>0?orders[index]/factor(index)/first:NaN;};
+    groups.slope={selects:[...workspace.querySelectorAll('[data-small-slope-ref]')],weights:[...workspace.querySelectorAll('[data-small-slope-weight]')]};
     const itemKey=item=>item.event_id||item.model;
     const stageEligible=(item,stage)=>stage.key==='d1'?(Number(item.d1_share)>0&&(item.small_hourly_curve||[]).some(Number)):stage.key==='active'?((item.small_progress||[]).some(Number)||(item.standard_progress||[]).some(Number)):true;
-    const initializeReferences=()=>{const target=targetState();Object.entries(groups).forEach(([task,group])=>{const rows=ranked(task).filter(row=>row.eligible&&(task==='hourly'||(task==='daily'?referenceDailyShape(row.item,0,target.smallDays)>0:(stageEligible(row.item,{key:'active'})&&rebasedForecastCompletionCurve(row.item,(row.item.small_progress||[]).some(Number)?'small_progress':'standard_progress',target.smallDays).some(Number.isFinite)))));group.selects.forEach((select,index)=>{[...select.options].forEach(option=>option.disabled=!!option.value&&(sameModel(option.dataset.model||option.textContent,target.name)||lifecycleUnavailable(task,history.find(item=>itemKey(item)===option.value)||{})));if(!select.value)select.value=rows[index]?itemKey(rows[index].item):'';});});};
-    const selectedRefs=(task='progress')=>{const group=groups[task]?.selects.length?groups[task]:groups.progress;return group.selects.map((select,index)=>({item:history.find(candidate=>itemKey(candidate)===select.value),weight:Math.max(Number(group.weights[index]?.value||0),0)})).filter(row=>row.item&&row.item.total_complete!==false&&row.weight>0);};
+    const initializeReferences=()=>{const target=targetState();Object.entries(groups).forEach(([task,group])=>{const rows=ranked(task).filter(row=>row.eligible&&(task==='hourly'||task==='slope'||(task==='daily'?referenceDailyShape(row.item,0,target.smallDays)>0:(stageEligible(row.item,{key:'active'})&&rebasedForecastCompletionCurve(row.item,(row.item.small_progress||[]).some(Number)?'small_progress':'standard_progress',target.smallDays).some(Number.isFinite)))));group.selects.forEach((select,index)=>{[...select.options].forEach(option=>option.disabled=!!option.value&&(sameModel(option.dataset.model||option.textContent,target.name)||lifecycleUnavailable(task,history.find(item=>itemKey(item)===option.value)||{})));if(!select.value)select.value=rows[index]?itemKey(rows[index].item):'';});});};
+    const selectedRefs=(task='progress')=>{const group=groups[task]?.selects.length?groups[task]:groups.progress;return group.selects.map((select,index)=>({item:history.find(candidate=>itemKey(candidate)===select.value),weight:Math.max(Number(group.weights[index]?.value||0),0)})).filter(row=>row.item&&window.ForecastMath.smallReferenceAvailable(row.item,task)&&row.weight>0);};
     const weightedValue=(getter,fallback=NaN,task='progress')=>window.ForecastMath.weightedObserved(selectedRefs(task).map(row=>({value:getter(row.item),weight:row.weight})),fallback);
     const stageFor=target=>window.ForecastMath.smallStage(target,today());
     const referenceCompletion=(day,days)=>weightedValue(item=>{const field=(item.small_progress||[]).some(Number)?'small_progress':'standard_progress';return rebasedForecastCompletion(item,field,day,days).value});
@@ -1017,6 +1025,16 @@
         dailyNode.innerHTML=renderLifecycleLineChart({series:dailySeries,labels,unit:'percent',title:'小订每日数量相对D1（到天基础曲线）',note:'主辅基础曲线决定未来逐日形状；先剔除历史日期系数，再按当前节假日、周末、工作日系数分配，日历影响只应用一次。',ariaLabel:'小订到天基础曲线'});
       }
       const hourlyNode=workspace.querySelector('[data-small-hourly-reference-chart]');
+      const slopeNode=workspace.querySelector('[data-small-slope-reference-chart]');
+      if(slopeNode){
+        const slopeOf=(values,start)=>window.ForecastMath.dailySlope(values.map((value,index)=>{const day=context.calendarType(start,index).date;return day<today()&&Number.isFinite(value)?value/(context.factors('small')[context.calendarType(start,index).type]||1):null;}));
+        const series=lifecycleChartReferences(workspace.querySelector('[data-lifecycle-reference="small-slope"]'),history,selectedRefs('slope')).map(({item,label,color})=>({label,color,role:'reference',values:slopeOf(item.daily_orders||[],item.small_start_date)}));
+        const rows=forecast.rows||[],normalized=rows.map((row,index)=>Number.isFinite(row.orders)?row.orders/(context.factors('small')[context.calendarType(target.smallStartDate,index).type]||1):null),values=window.ForecastMath.dailySlope(normalized);
+        series.unshift({label:target.name+' · 真实斜率',color:'#1677FF',role:'actual',values:values.map((v,i)=>rows[i]?.actual?v:null)});
+        if(!forecast.error)series.push({label:target.name+' · 预测斜率',color:'#00A878',role:'forecast',dashed:true,values:values.map((v,i)=>rows[i]?.actual?null:v)});
+        const count=Math.max(days,...series.map(row=>row.values.length));
+        slopeNode.innerHTML=renderLifecycleLineChart({series,slope:true,labels:Array.from({length:count},(_,i)=>'D'+(i+1)),title:'每日斜率 · 较前一天变化率（仅展示）',note:'斜率＝剔除日历影响后的当天日量÷前一天日量－1。D1、前一天为0或数据缺失时留空。进行中参考仅展示已结束真实日；此处主辅与权重仅控制对照，不参与总量或逐日分配。'});
+      }
       if(hourlyNode){
         const actual=findActual(target.name),bucket=(actual?.small_hourly_days||[]).find(row=>row.date===target.smallStartDate),hourlySeries=[],ongoing=stage.key==='d1',d1Row=(forecast.actualRows||[]).find(row=>row.date===target.smallStartDate),terminal=ongoing&&!forecast.error?Number(forecast.d1):today()>target.smallStartDate?d1Row?.orders:NaN;
         const sampled=(bucket?.hours||[]).filter(row=>Number.isInteger(row.hour)&&row.hour>=0&&row.hour<24&&Number.isFinite(row.orders)&&row.orders>=0),lastHour=sampled.length?Math.max(...sampled.map(row=>row.hour)):-1,firstHour=sampled.filter(row=>row.orders>0).reduce((start,row)=>Math.min(start,row.hour),24);
@@ -1027,7 +1045,7 @@
         const note=sampled.length?`当前已采集至${lastHour}时。已发生${fmt(forecast.hourly?.observed??sampled.reduce((sum,row)=>sum+row.orders,0))}单，后续小时预测${forecast.hourly?fmt(forecast.hourly.remaining):'—'}单；按已发生累计与最近3小时增量拟合历史曲线，全天量等于真实累计加未来预测。各参考从首个有效小订小时绘制（作为发布时间参考）。`:'当前车型D1分时数据缺失，仅展示可用历史参考；不使用整日数据冒充分时。';
         hourlyNode.innerHTML=renderLifecycleLineChart({series:hourlySeries.map(row=>({...row,values:row.values.slice(first)})),labels:hours,hourly:true,unit:'percent',title:'D1 小订分时累计进度',note,ariaLabel:target.name+'小订D1分时累计与主辅参考对比',empty:note});
       }
-      workspace.querySelectorAll('[data-lifecycle-reference]').forEach(card=>{const task=card.dataset.lifecycleReference.split('-').at(-1),rows=selectedRefs(task);card.querySelector('[data-lifecycle-ref-reason]').innerHTML=renderLifecycleReferenceScores(rows,item=>task==='hourly'?window.ForecastMath.smallHourlyReferenceScore(item,hourlyContext()):scoreResult(item,target,targetItem()));card._refreshLifecycleControls?.();});
+      workspace.querySelectorAll('[data-lifecycle-reference]').forEach(card=>{const task=card.dataset.lifecycleReference.split('-').at(-1),rows=selectedRefs(task);card.querySelector('[data-lifecycle-ref-reason]').innerHTML=renderLifecycleReferenceScores(rows,item=>task==='hourly'?window.ForecastMath.smallHourlyReferenceScore(item,hourlyContext()):scoreResult(item,target,targetItem()),target.name);card._refreshLifecycleControls?.();});
 
 
 
@@ -1092,28 +1110,22 @@
       {key:'node',label:'发布类型',weight:.05,rule:'完全一致100%；不一致62%。'},
       {key:'lock',label:'首销期大定到锁单率',weight:.1,rule:'1 − |当前锁单率 − 历史锁单率|，结果限制在0～100%。'},
       {key:'launch_shape',label:'全首销直接大定曲线',weight:.55,rule:'全周期按相对进度适配，仅比较当前已有真实段；日历还原后比较归一化形状，不比较绝对量。'},
-      {key:'steady_shape',label:'平销实际趋势',weight:.2,rule:'相同早期平销窗口的日历还原曲线，各自归一后比较。'},
+      {key:'steady_shape',label:'平销实际趋势',weight:.2,rule:'以首销开始日为起点，每7天一周，仅比较双方完整的同龄周，剔除日历影响并归一，不比较绝对量。'},
     ];
     const directFeature=(item,target=null)=>{
       const launch=target?targetLaunch(target):launchHistory.find(row=>sameModel(row.generation||row.model,item.generation||item.model));
       const settings=context.factors('launch'),normal=(value,start,index)=>Number(value)/(settings[context.calendarType(start,index).type]||1);
       const currentRows=target?(context.findStageActual(target.name,context.todayIso()>target.endDate?'ended':'active')?.days||[]):[];
       const curve=target?window.ForecastMath.launchDirectObservations({rows:currentRows,launchDate:target.launchDate,endDate:target.endDate,days:target.days,today:context.todayIso(),factor:(_,index)=>settings[context.calendarType(target.launchDate,index).type]||1}):observedDailyPrefix(launch?.daily_direct||[]).map((value,index)=>normal(value,launch?.launch_date,index));
-      const weeks=(item?.weeks||[]).filter(row=>row.end_date<context.todayIso()),steady=weeks.slice(-4).map(row=>Number(row.lock)/Array.from({length:7},(_,i)=>context.factors('steady')[context.calendarType(row.start_date,i).type]||1).reduce((a,b)=>a+b,0));
-      return {lock_rate:launch?.lock_rate,launch_days:target?.days||launch?.days,direct_curve:curve,steady_curve:steady,launch};
+      const releaseWeeks=window.ForecastMath.releaseWeeks({rows:item?.daily||[],launchDate:target?.launchDate||launch?.launch_date,today:context.todayIso(),factor:day=>context.factors('steady')[context.calendarType(day,0).type]||1});
+      return {lock_rate:launch?.lock_rate,launch_days:target?.days||launch?.days,direct_curve:curve,release_weeks:releaseWeeks,launch};
     };
     const scoreResult=(item,target)=>{
       const current=targetSteady(target),left=directFeature(current,target),right=directFeature(item);
-      const index=(date,start)=>Math.floor((Date.parse(date)-Date.parse(start))/604800000);
-      const currentWeeks=(current?.weeks||[]).filter(row=>row.end_date<context.todayIso()).slice(-4),referenceWeeks=new Map((item.weeks||[]).filter(row=>row.end_date<context.todayIso()).map(row=>[index(row.start_date,item.steady_start_date),row]));
-      right.steady_curve=currentWeeks.map(row=>{
-        const ref=referenceWeeks.get(index(row.start_date,target.steadyStartDate));
-        return ref?Number(ref.lock)/Array.from({length:7},(_,i)=>context.factors('steady')[context.calendarType(ref.start_date,i).type]||1).reduce((a,b)=>a+b,0):NaN;
-      });
       return steadyReferenceScore({...item,...right},target,left,minimumEvidence);
     };
     const score=(item,target)=>scoreResult(item,target).score;
-    const ranked=()=>{const target=targetState();return history.filter(item=>!sameModel(item.generation||item.model,target.name)&&item.weeks?.length).map(item=>({item,...scoreResult(item,target)})).filter(row=>row.parts.length).sort((a,b)=>b.score-a.score)};
+    const ranked=()=>{const target=targetState();return history.filter(item=>!sameModel(item.generation||item.model,target.name)&&directFeature(item).release_weeks.length).map(item=>({item,...scoreResult(item,target)})).filter(row=>row.parts.length).sort((a,b)=>b.score-a.score)};
     const selects=[...workspace.querySelectorAll('[data-steady-ref]')],weights=[...workspace.querySelectorAll('[data-steady-weight]')];
     const itemKey=item=>item.event_id||item.model;
     const initializeReferences=()=>{const target=targetState(),rows=ranked().filter(row=>row.eligible);selects.forEach((select,index)=>{[...select.options].forEach(option=>option.disabled=!!option.value&&sameModel(option.dataset.model||option.textContent,target.name));if(!select.value)select.value=rows[index]?itemKey(rows[index].item):''})};
@@ -1132,10 +1144,14 @@
       chartRefs.forEach(({item,label,color})=>series.push({label,values:normalize(directFeature(item).direct_curve),color,role:'reference'}));
       const count=Math.max(...series.map(row=>row.values.length),1);
       workspace.querySelector('[data-steady-reference-chart]').innerHTML=renderLifecycleLineChart({series,labels:Array.from({length:count},(_,i)=>'D'+(i+1)),title:'全首销直接大定曲线规律',note:'各车型先剔除日历影响，再以首个正数日归一；实际历史不改写。评分按周期适配后比较形状，不比较绝对销量。'});
-      const transitionSeries=chartRefs.map(({item,label,color})=>({label,values:normalize(directFeature(item).steady_curve),color,role:'reference'}));
-      if(currentFeature.steady_curve.length)transitionSeries.unshift({label:target.name+' · 平销实际',values:normalize(currentFeature.steady_curve),color:'#1677FF',role:'actual'});
-      workspace.querySelector('[data-steady-evidence]').innerHTML=renderLifecycleLineChart({series:transitionSeries,labels:Array.from({length:Math.max(...transitionSeries.map(row=>row.values.length),1)},(_,i)=>'近期完整周'+(i+1)),title:'近期平销趋势（窗口首个正数周＝100%）',note:'仅完整自然周，剔除日历影响，展示各自最近4周；评分另按相同平销进度对齐。无有效完整周时留空。'});
-      workspace.querySelectorAll('[data-lifecycle-reference]').forEach(card=>{card.querySelector('[data-lifecycle-ref-reason]').innerHTML=renderLifecycleReferenceScores(selected,item=>scoreResult(item,target));card._refreshLifecycleControls?.();});
+      const ageSeries=chartRefs.map(({item,label,color})=>({label,color,role:'reference',weeks:directFeature(item).release_weeks}));
+      ageSeries.unshift({label:target.name+' · 平销实际',color:'#1677FF',role:'actual',weeks:currentFeature.release_weeks});
+      const ages=[...new Set(ageSeries.flatMap(row=>row.weeks.map(week=>week.week)))].sort((a,b)=>a-b);
+      const firstAge=ages[0]||1,lastAge=ages.at(-1)||firstAge,ageAxis=Array.from({length:lastAge-firstAge+1},(_,i)=>firstAge+i);
+      const commonAnchor=ages.find(age=>ageSeries.filter(row=>row.weeks.length).every(row=>row.weeks.some(week=>week.week===age&&week.level>0)));
+      const transitionSeries=ageSeries.map(({weeks,...series})=>{const base=weeks.find(row=>row.week===commonAnchor)?.level;return {...series,values:ageAxis.map(age=>{const value=weeks.find(row=>row.week===age)?.level;return base>0&&Number.isFinite(value)?value/base:null;})};});
+      workspace.querySelector('[data-steady-evidence]').innerHTML=renderLifecycleLineChart({series:transitionSeries,labels:ageAxis.map(age=>'发布W'+age),title:'发布后同龄周平销趋势',note:'以首销开始为D1，W1为D1–D7，W2为D8–D14。仅完整七天且锁单已收齐的平销周，剔除日历影响；共同首个正数同龄周＝100%。缺失或未结束周留空，不截取各车最近4周。',empty:'所选车型暂无共同的正数同龄完整周，不能归一比较。'});
+      workspace.querySelectorAll('[data-lifecycle-reference]').forEach(card=>{card.querySelector('[data-lifecycle-ref-reason]').innerHTML=renderLifecycleReferenceScores(selected,item=>scoreResult(item,target),target.name);card._refreshLifecycleControls?.();});
       workspace.querySelector('[data-steady-score]').innerHTML=renderLifecycleScorePage({eyebrow:'平销趋势独立评分',title:'全首销直接大定与平销承接参考',description:'以全首销直接大定归一化形状为主，结合已发生平销趋势；无首销形状证据不自动推荐。',rules:steadyScoreRules,rows:ranked().slice(0,10),selected:selects.map(select=>select.value),empty:'暂无有效趋势参考',minimumEvidence,weighted:true});
     };
     const update=()=>{
@@ -1171,22 +1187,20 @@
         const feature=directFeature(item),curve=feature.direct_curve;
         if(curve.length!==Number(feature.launch_days)||!curve.every(v=>Number.isFinite(v)&&v>=0)||!(feature.lock_rate>0))return NaN;
         const directMean=curve.reduce((a,b)=>a+b,0)/curve.length;
-        const start=target.steadyStartDate,relativeWeek=Math.max(0,Math.floor((Date.parse(first)-Date.parse(start))/604800000));
-        const historicalWeeks=(item.weeks||[]).filter(row=>row.start_date&&row.end_date<today),aligned=historicalWeeks.filter(row=>{
-          const refStart=item.steady_start_date||dateAt(feature.launch?.launch_date,Number(feature.launch_days));
-          const index=Math.floor((Date.parse(row.start_date)-Date.parse(refStart))/604800000);
-          return index>=relativeWeek&&index<relativeWeek+4;
-        });
+        const relativeWeek=Math.floor((Date.parse(first)-Date.parse(target.launchDate))/604800000)+1;
+        const aligned=feature.release_weeks.filter(row=>row.week>=relativeWeek&&row.week<relativeWeek+4);
         if(!aligned.length||!(directMean>0))return NaN;
         const rates=aligned.map(row=>{
-          const gross=Number.isFinite(row.gross)?row.gross:Number(row.lock)/feature.lock_rate;
-          return gross/weekFactor(row)/directMean;
+          const level=Number.isFinite(row.gross_level)?row.gross_level:row.level/feature.lock_rate;
+          return level/directMean;
         }).filter(Number.isFinite);
         return rates.length?rates.reduce((a,b)=>a+b,0)/rates.length:NaN;
       });
       const referenceRatio=weighted(item=>{
-        const relative=Math.max(0,Math.floor((Date.parse(first)-Date.parse(target.steadyStartDate))/604800000));
-        return normalRatio({...item,weeks:(item.weeks||[]).filter(row=>{const index=Math.floor((Date.parse(row.start_date)-Date.parse(item.steady_start_date))/604800000);return index>=relative&&index<relative+4;})});
+        const relative=Math.floor((Date.parse(first)-Date.parse(target.launchDate))/604800000)+1;
+        const rows=directFeature(item).release_weeks.filter(row=>row.week>=relative&&row.week<relative+4);
+        const ratios=rows.slice(1).map((row,i)=>row.week===rows[i].week+1&&rows[i].level>0?row.level/rows[i].level:NaN).filter(Number.isFinite);
+        return ratios.length?ratios.reduce((a,b)=>a+b,0)/ratios.length:NaN;
       }),ownBase=ownDaily.available?ownDaily.level:ownLevel;
       const ownTrend=ownDaily.available?ownDaily.ratio:ownRatio;
       const predictedLevel=launchBasis.available?launchBasis.level*(Number.isFinite(transfer)?transfer:1):NaN;
@@ -1848,7 +1862,7 @@
     return renderForecastQuantityChart(rows,{valueKey,labelKey,metric:valueKey==='lock'?'周交车锁单':'当日小订'});
   }
   function renderForecastEvidenceLines({series,labels,ariaLabel,title='',note='',unit='rate',slope=false,hourly=false,extra='',lifecycle=false,table=false,rangeMax=null,ratePrecision=null,empty='暂无可比较曲线'}){
-    const usable=series.filter(item=>(item.values||[]).some(Number.isFinite));if(!usable.length||!labels.length)return `<div class="empty-image">${esc(empty)}</div>`;
+    const usable=series.filter(item=>(item.values||[]).some(Number.isFinite));if(!usable.length||!labels.length)return `${title||note?`<div class="forecast-task-chart-title"><strong>${esc(title)}</strong><span>${esc(note)}</span></div>`:''}<div class="empty-image">${esc(empty)}</div>`;
     const maxPoints=Math.max(labels.length,...usable.map(item=>item.values.length),1),W=920,H=245,left=48,right=20,top=30,bottom=42,plotW=W-left-right,plotH=H-top-bottom,finiteValues=usable.flatMap(item=>item.values.filter(Number.isFinite)),rawMax=Math.max(...finiteValues,1),yMax=Number.isFinite(rangeMax)&&rangeMax>0?rangeMax:unit==='rate'?Math.max(rawMax,1):rawMax*1.12,yMin=slope?Math.min(...finiteValues,0):0;
     const x=index=>left+(maxPoints===1?0:index/(maxPoints-1))*plotW,y=value=>top+plotH*(1-Math.min(Math.max((value-yMin)/(yMax-yMin),0),1)),format=value=>unit==='rate'?`${(value*100).toFixed(ratePrecision??(value<.1?1:0))}%`:Math.round(value).toLocaleString('zh-CN')+(lifecycle?'单':'');
     const grid=[0,.25,.5,.75,1].map(rate=>{const gy=top+plotH*(1-rate);return `<line x1="${left}" y1="${gy}" x2="${W-right}" y2="${gy}" stroke="#E8F0F7"/><text x="${left-8}" y="${gy+4}" text-anchor="end" font-size="9" fill="#7890A6">${format(yMin+(yMax-yMin)*rate)}</text>`}).join('');
@@ -1864,8 +1878,8 @@
     const valuesTable=table?`<details class="forecast-ref-score-details"><summary>查看图表数值</summary><div class="forecast-score-table"><table><thead><tr><th scope="col">车型／曲线</th>${labels.map(label=>`<th scope="col">${esc(label)}</th>`).join('')}</tr></thead><tbody>${usable.map(curve=>`<tr><th scope="row">${esc(curve.name)}</th>${labels.map((_,index)=>`<td>${Number.isFinite(curve.values[index])?format(curve.values[index]):'—'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`:'';
     return `${title||note?`<div class="forecast-task-chart-title"><strong>${esc(title)}</strong><span>${esc(note)}</span></div>`:''}<div class="forecast-svg-scroll forecast-evidence-line-scroll${lifecycle?' forecast-lifecycle-line-scroll':''}"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(ariaLabel)}">${grid}${lines}${ticks}</svg></div><p class="forecast-chart-readout" data-chart-readout role="status" aria-live="polite">横向滚动查看完整曲线；键盘 Tab 进入，← → 查看数值，Tab 离开。</p><div class="legend forecast-task-legend${lifecycle?' forecast-lifecycle-line-legend':''}">${legend}</div>${extra}${valuesTable}`;
   }
-  function renderLifecycleLineChart({series,labels,ariaLabel,unit='percent',hourly=false,title='',note='',empty='暂无可比较曲线'}){
-    return renderForecastEvidenceLines({series:series.map(item=>({...item,name:item.label,role:item.role||'reference',core:true,dash:item.dashed?'7 5':''})),labels,ariaLabel,unit:unit==='percent'?'rate':'number',hourly,title,note,lifecycle:true,table:true,empty});
+  function renderLifecycleLineChart({series,labels,ariaLabel,unit='percent',hourly=false,slope=false,title='',note='',empty='暂无可比较曲线'}){
+    return renderForecastEvidenceLines({series:series.map(item=>({...item,name:item.label,role:item.role||'reference',core:true,dash:item.dashed?'7 5':''})),labels,ariaLabel,unit:unit==='percent'?'rate':'number',hourly,slope,title,note,lifecycle:true,table:true,empty});
   }
   function renderLifecycleScorePage({eyebrow,title,description,rules,rows,selected,empty,minimumEvidence=3,weighted=false}){
     const scoreBar=(score,label)=>`<div class="forecast-score-bar" role="progressbar" aria-label="${esc(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(score*100)}"><i style="width:${Math.max(0,Math.min(score,1))*100}%"></i><b>${Math.round(score*100)}分</b></div>`;

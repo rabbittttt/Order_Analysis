@@ -61,7 +61,7 @@ class ResolvedSummaryTests(TestCase):
                 '总大定当日数量': {'历史车': [20, 40]},
                 '退订当日数量': {'历史车': [2, None]},
             }
-        book = self.make(customize)
+        book = test_public_forecast_tables.PublicForecastTablesTests().make_public(customize=customize, as_of=date(2026, 1, 5))
         metric = table_records(book, D12_SHEET)[0]
         self.assertEqual((metric['D1小转大'], metric['D2小转大'], metric['D1+D2小转大']), (10, 8, 18))
         self.assertEqual((metric['D1大定'], metric['D2大定']), (30, 40))

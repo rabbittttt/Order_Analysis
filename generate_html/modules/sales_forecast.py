@@ -1439,7 +1439,7 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "node": usable_attribute(record.get("发布类型") or record.get("发布节点")),
         "launch_weekday": str(record.get("发布星期") or _weekday(record.get("发布日") or record.get("开始大定日期"))),
         "launch_period": usable_attribute(record.get("首销发布时段")),
-        "end_date": _iso(record.get("首销截止") or record.get("小转大结束日期")),
+        "end_date": _iso(record.get("首销结束日期") or record.get("首销截止") or record.get("小转大结束日期")),
         "days": int(_number(record.get("首销期天数") or record.get("首销天数"), 0)),
         "gross": int(_number(_first_record_value(record, gross_key, "大定量"))),
         "net": int(_number(_first_record_value(record, "首销期留存大定", "首销期净大定"))),
@@ -2616,7 +2616,7 @@ def _target_options(
         )
         launch_date = (window or {}).get("launch_date") or _iso(_first_record_value(master_record or {}, "首销开始", "开始大定日期", "发布日")) or profile.get("launch_date") or (reference["launch_date"] if reference else "")
         maintained_days = (window or {}).get("days") or _first_record_value(master_record or {}, "首销天数", "首销期天数") or (reference["days"] if reference else 0)
-        end_date = (window or {}).get("end_date") or _iso(_first_record_value(master_record or {}, "首销结束", "首销截止", "小转大结束日期")) or (reference.get("end_date") if reference else None)
+        end_date = (window or {}).get("end_date") or _iso(_first_record_value(master_record or {}, "首销结束日期", "首销结束", "首销截止", "小转大结束日期")) or (reference.get("end_date") if reference else None)
         _validate_stage_window(profile["model"], start=launch_date, end=end_date, kind="首销窗口")
         _validate_stage_window(profile["model"], start=(window or {}).get("small_start_date"), end=(window or {}).get("small_end_date"), kind="小订窗口")
         parsed_start, parsed_end = _as_date(launch_date), _as_date(end_date)

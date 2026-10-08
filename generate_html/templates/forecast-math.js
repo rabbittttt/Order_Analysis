@@ -254,6 +254,12 @@
     return (item.small_hourly_curve || []).findIndex(value => Number.isFinite(value) && value > 0);
   }
 
+  function smallReferenceAvailable(item={},task='progress') {
+    if(task==='hourly')return smallHourlyStart(item)>=0&&smallHourlyCurve(item).some(Number.isFinite);
+    if(task==='slope')return dailySlope(item.daily_orders||[]).some(Number.isFinite);
+    return item.total_complete!==false&&Number(item.total)>0;
+  }
+
   function smallHourlyCurve(item = {}, targetStart = smallHourlyStart(item)) {
     const start = smallHourlyStart(item), source = item.small_hourly_curve || [];
     if (start < 0 || targetStart < 0 || targetStart > 23) return [];
@@ -393,6 +399,31 @@
     return {small_hourly_curve:item.hourly_curve||[],small_start_hour:item.launch_start_hour};
   }
 
+  // Release age uses complete seven-day bins, not each model's latest weeks.
+  // Missing or unfinished days invalidate that bin; zero remains a real value.
+  function releaseWeeks({rows=[],launchDate,today,factor=()=>1}={}) {
+    const start=Date.parse(`${launchDate}T00:00:00Z`),now=Date.parse(`${today}T00:00:00Z`);
+    if(!Number.isFinite(start)||!Number.isFinite(now)||now<=start)return [];
+    const days=new Map();
+    for(const row of rows)days.set(row.date,days.has(row.date)?null:row);
+    const weeks=[];
+    for(let index=0;index<Math.floor((now-start)/604800000);index++){
+      const dates=Array.from({length:7},(_,i)=>new Date(start+(index*7+i)*86400000).toISOString().slice(0,10));
+      const values=dates.map(day=>days.get(day)),factors=dates.map(day=>Number(factor(day)));
+      if(!values.every(row=>row&&row.complete!==false&&Number.isFinite(observedQuantity(row.lock)))||!factors.every(v=>Number.isFinite(v)&&v>0))continue;
+      const sum=field=>values.every(row=>Number.isFinite(observedQuantity(row[field])))?values.reduce((n,row)=>n+observedQuantity(row[field]),0):null;
+      const denominator=factors.reduce((a,b)=>a+b,0),lock=sum('lock'),gross=sum('gross');
+      weeks.push({week:index+1,start_date:dates[0],end_date:dates[6],lock,gross,level:lock/denominator,gross_level:gross===null?null:gross/denominator});
+    }
+    return weeks;
+  }
+
+  function alignedReleaseCurves(current=[],reference=[]) {
+    const lookup=new Map(reference.map(row=>[row.week,row.level]));
+    const pairs=current.filter(row=>Number.isFinite(row.level)&&Number.isFinite(lookup.get(row.week)));
+    return {weeks:pairs.map(row=>row.week),current:pairs.map(row=>row.level),reference:pairs.map(row=>lookup.get(row.week))};
+  }
+
   function steadyReferenceScore(item = {}, target = {}, current = {}, minimumEvidence = 3) {
     const parts = [];
     const add = (key, value, evidence) => parts.push({ key, value, evidence });
@@ -414,7 +445,8 @@
     const adapted=source.length&&(!item.launch_days||source.length===Number(item.launch_days))?stretchCompletion(source.reduce((out,v)=>{out.push((out.at(-1)||0)+v);return out;},[]),horizon):[];
     const reference=adapted.map((v,i)=>v-(i?adapted[i-1]:0)).slice(0,(current.direct_curve||[]).length);
     add('launch_shape',normalizedShapeSimilarity(current.direct_curve||[],reference),'全首销已观测段直接大定归一化形状；不比较绝对量');
-    add('steady_shape',normalizedShapeSimilarity(current.steady_curve||[],(item.steady_curve||[]).slice(0,(current.steady_curve||[]).length)),'相同平销进度窗口的日历还原趋势');
+    const aligned=alignedReleaseCurves(current.release_weeks||[],item.release_weeks||[]);
+    add('steady_shape',normalizedShapeSimilarity(aligned.current,aligned.reference),'发布后同龄完整周的日历还原趋势；缺失周不补0');
     const result=scoredEvidence(parts,minimumEvidence),weights={tier:.05,energy:.05,node:.05,lock:.1,launch_shape:.55,steady_shape:.2};
     result.parts=result.parts.map(part=>({...part,weight:weights[part.key]}));
     const total=result.parts.reduce((sum,part)=>sum+part.weight,0);
@@ -663,9 +695,12 @@
     adaptSmallDailyOrders,
     smallReferenceScore,
     smallHourlyStart,
+    smallReferenceAvailable,
     smallHourlyCurve,
     smallHourlyReferenceScore,
     smallHourlyForecast,
     steadyReferenceScore,
+    releaseWeeks,
+    alignedReleaseCurves,
   };
 });

@@ -117,6 +117,21 @@ def _drop_rankings(
     return _change_rankings(model_series, period, previous_period, "drop")
 
 
+def _rise_rankings_with_empty(model_series, period, previous_period):
+    rankings = _rise_rankings(model_series, period, previous_period)
+    for metric in ("留存大定", "交车锁单"):
+        if metric in rankings:
+            continue
+        aliases = ("留存大定", "净大定") if metric == "留存大定" else (metric,)
+        comparable = False
+        for series in model_series.values():
+            current = _metric_value(series[metric].get(period, {}).get("metrics", {}), *aliases)
+            previous = _metric_value(series[metric].get(previous_period, {}).get("metrics", {}), *aliases)
+            comparable |= isinstance(current, (int, float)) and isinstance(previous, (int, float)) and previous > 0
+        rankings[metric] = {"rows": [], "empty_reason": "本期暂无环比上涨车型" if comparable else "暂无可比数据：需要本期实绩及大于0的上期基数"}
+    return rankings
+
+
 def _rise_rankings(
     model_series: dict[str, dict[str, dict]],
     period: str,
@@ -517,7 +532,7 @@ class OverviewModule:
                         ),
                         None,
                     )
-                    rise_rankings = _rise_rankings(model_series, period, previous_period)
+                    rise_rankings = _rise_rankings_with_empty(model_series, period, previous_period)
                     drop_rankings = _drop_rankings(model_series, period, previous_period)
                     if drop_rankings:
                         pages[period]["sections"].insert(2, section(
@@ -533,7 +548,7 @@ class OverviewModule:
                             "rise_rank_cards",
                             "车型留存大定与交车锁单涨幅排行",
                             rise_rankings,
-                            f"较上一{ {'day': '日', 'week': '周', 'month': '月'}[grain] } · 仅展示环比上升车型",
+                            f"较上一{ {'day': '日', 'week': '周', 'month': '月'}[grain] } · 仅展示环比上升车型；本期未结束时，以当前累计对比上一完整周期，非同进度比较",
                             "full",
                             gd["lock_source"],
                         ))

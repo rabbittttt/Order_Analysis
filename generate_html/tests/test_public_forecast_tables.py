@@ -245,14 +245,15 @@ class PublicForecastTablesTests(TestCase):
         for name in (SMALL_CURVE_SHEET, SMALL_DAILY_SHEET):
             headers = [c.value for c in book[name][1]]
             self.assertEqual(headers[0], '传播名')
-            self.assertTrue(all(h.startswith('D') and h[1:].isdigit() for h in headers[1:]))
+            self.assertEqual(headers[1], '小订阶段')
+            self.assertTrue(all(h.startswith('D') and h[1:].isdigit() for h in headers[2:]))
         counts = table_records(book, SMALL_DAILY_SHEET)[0]
         curve = table_records(book, SMALL_CURVE_SHEET)[0]
         self.assertEqual((counts['D1'], counts['D2']), (0, 10))
         self.assertEqual((curve['D1'], curve['D2']), (0, .1))
-        self.assertEqual(book[SMALL_CURVE_SHEET].cell(2, 2).number_format,
+        self.assertEqual(book[SMALL_CURVE_SHEET].cell(2, 3).number_format,
                          book['直接大定累计完成度'].cell(2, 2).number_format)
-        self.assertEqual(book[SMALL_DAILY_SHEET].cell(2, 2).number_format,
+        self.assertEqual(book[SMALL_DAILY_SHEET].cell(2, 3).number_format,
                          book['直接大定当日数量'].cell(2, 2).number_format)
         book.close()
 
@@ -274,7 +275,7 @@ class PublicForecastTablesTests(TestCase):
                       '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考'}
         for sheet in book:
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
-        self.assertEqual(book[MASTER_SHEET].max_column, 29 + len(SMALL_REFERENCE_FIELDS))
+        self.assertEqual(book[MASTER_SHEET].max_column, 31 + len(SMALL_REFERENCE_FIELDS))
         self.assertIn('小订发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn('首销发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn("有小订", [c.value for c in book[MASTER_SHEET][1]])

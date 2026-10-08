@@ -2978,6 +2978,9 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .forecast-scale-check>[data-forecast-scale-check]{display:grid;grid-template-columns:minmax(290px,.8fr) minmax(0,1.7fr);gap:10px;align-items:stretch}.forecast-scale-check>[data-forecast-scale-check]>.forecast-scale-summary{margin-top:0}.forecast-scale-check>[data-forecast-scale-check]>details{grid-column:1/-1}
 .forecast-source-method{margin-top:12px}
 .forecast-evidence-groups{display:grid;gap:14px}
+.forecast-workspace.forecast-v2 .forecast-evidence-controls{display:grid;gap:10px;min-width:0}
+.forecast-workspace.forecast-studio .forecast-evidence-controls .forecast-control-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+@media(max-width:900px){.forecast-workspace.forecast-studio .forecast-evidence-controls .forecast-control-grid{grid-template-columns:1fr}}
 
 /* 销量预测生命周期：一级阶段由左侧二级目录切换 */
 .forecast-lifecycle-subtabs button:focus-visible{outline:3px solid rgba(11,99,209,.28);outline-offset:2px}
