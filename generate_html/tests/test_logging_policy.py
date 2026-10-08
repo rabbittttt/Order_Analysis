@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from openpyxl import Workbook
 
-from core.excel import WorkbookItem, WorkbookStore, _merge_matrix, _merge_partitioned
+from core.excel import (WorkbookItem, WorkbookStore, _merge_matrix, _merge_partitioned, _merge_records,
+                        compact_diagnostic_ranges, _coordinate_ranges, reset_conflict_diagnostics)
 import main
 
 
@@ -66,14 +67,16 @@ class LoggingPolicyTests(TestCase):
         self.assertIn('涉及80处差异', logs.output[0])
         self.assertNotIn('多文件数值冲突', logs.output[0])
 
-    def test_full_overlapping_boundary_still_prints_every_real_difference(self):
+    def test_full_overlapping_boundary_groups_all_real_differences(self):
         span = (date(2025, 12, 29), date(2026, 1, 4))
         matches = [self.matrix(['26WK01'], [[.4]]*8, filename='SKU_A.xlsx', span=span),
                    self.matrix(['26WK01'], [[.8]]*8, filename='SKU_B.xlsx', span=span)]
         with self.assertLogs('core.excel', level='WARNING') as logs:
             result = _merge_matrix(matches, 2, 1)
-        self.assertEqual(len(logs.records), 8)
-        self.assertIn('TOP8', logs.output[-1])
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn('冲突8项', logs.output[0])
+        self.assertIn('TOP1～TOP8', logs.output[0])
+        self.assertIn('B3:B10', logs.output[0])
         self.assertEqual(result.cell(10, 2).value, .4)
 
     def test_float_tail_is_ignored_but_real_difference_and_zero_are_not(self):
@@ -81,7 +84,8 @@ class LoggingPolicyTests(TestCase):
                    self.matrix(['26WK02'], [[.3], [.300001], [.2]], filename='SKU_B.xlsx')]
         with self.assertLogs('core.excel', level='WARNING') as logs:
             result = _merge_matrix(matches, 2, 1)
-        self.assertEqual(len(logs.records), 2)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn('冲突2项', logs.output[0])
         self.assertTrue(all('TOP1' not in line for line in logs.output))
         self.assertEqual(result.cell(3, 2).value, .1 + .2)
         self.assertEqual(result.cell(5, 2).value, 0)
@@ -112,11 +116,105 @@ class LoggingPolicyTests(TestCase):
             store.items.append(WorkbookItem(Path(f'大定选配比例{i}.xlsx'), book))
         with self.assertLogs('core.excel', level='WARNING') as logs:
             result = store.find_chart_data('大定选配比例', '问界', 'day')[2]
-        self.assertEqual(len(logs.records), 10)
-        self.assertTrue(any('2026-01-05' in line and '单元格=G4' in line for line in logs.output))
-        self.assertTrue(any('2026-01-05' in line and '单元格=G3' in line for line in logs.output))
+        self.assertEqual(len(logs.records), 2)
+        self.assertTrue(all('冲突5项' in line and '2026-01-01～2026-01-05' in line for line in logs.output))
+        self.assertTrue(any('单元格=C4:G4' in line for line in logs.output))
+        self.assertTrue(any('单元格=C3:G3' in line for line in logs.output))
         self.assertEqual(result['totals'], [100]*5)
         self.assertFalse(any(key.startswith('_log_') for key in result))
+
+    def test_many_duplicate_records_group_by_metric_without_losing_dates(self):
+        matches = []
+        for title, amount in [('车型 _日度退订', 35), ('车型_日度退订', 2)]:
+            book = Workbook(); self.addCleanup(book.close)
+            sheet = book.active; sheet.title = title
+            sheet.append(['取消日期', '当日小订退', '累计小订退'])
+            for day in range(1, 29):
+                sheet.append([date(2026, 7, day), amount, amount*day])
+            matches.append((WorkbookItem(Path('小订退订分析.xlsx'), book), sheet))
+        with self.assertLogs('core.excel', level='WARNING') as logs:
+            result = _merge_records(matches, ({'取消日期'},))
+        self.assertEqual(len(logs.records), 2)
+        self.assertTrue(all('冲突28项' in line and '2026-07-01～2026-07-28' in line for line in logs.output))
+        self.assertTrue(any('单元格=B2:B29' in line for line in logs.output))
+        self.assertEqual(result.cell(2, 2).value, 35)
+
+    def test_same_key_equal_or_complementary_fields_do_not_warn(self):
+        matches = []
+        for value, extra in [(0, None), (0, 7)]:
+            book = Workbook(); self.addCleanup(book.close)
+            sheet = book.active; sheet.title = '车_日度退订'
+            sheet.append(['日期', '数量', '补充数量'])
+            sheet.append([date(2026, 7, 1), value, extra])
+            matches.append((WorkbookItem(Path('小订退订分析.xlsx'), book), sheet))
+        with patch('core.excel.LOGGER.warning') as warning:
+            result = _merge_records(matches, ({'日期'},))
+        warning.assert_not_called()
+        self.assertEqual([result.cell(2, c).value for c in (2, 3)], [0, 7])
+
+    def test_large_daily_conflicts_are_bounded_by_metrics_not_cells(self):
+        from datetime import timedelta
+        matches = []
+        for title, value in [('车 _日度退订', 35), ('车_日度退订', 2)]:
+            book = Workbook(); self.addCleanup(book.close)
+            sheet = book.active; sheet.title = title
+            sheet.append(['日期', *[f'指标{i}' for i in range(13)]])
+            for index in range(1420):
+                sheet.append([date(2022, 1, 1)+timedelta(days=index), *([value]*13)])
+            matches.append((WorkbookItem(Path('小订退订分析.xlsx'), book), sheet))
+        with self.assertLogs('core.excel', level='WARNING') as logs:
+            result = _merge_records(matches, ({'日期'},))
+        self.assertEqual(len(logs.records), 13)  # 18,460 cell differences, all 13 metrics visible.
+        self.assertTrue(all('冲突1420项' in line for line in logs.output))
+        self.assertEqual(result._merge_conflict_count, 18460)
+        self.assertEqual(result.cell(1421, 14).value, 35)
+        self.assertLess(sum(len(line) for line in logs.output), 10000)
+
+    def test_run_dedup_preserves_new_values_and_resets_between_runs(self):
+        matches = [self.matrix(['26WK02'], [[.4]], filename='SKU_A.xlsx'),
+                   self.matrix(['26WK02'], [[.8]], filename='SKU_B.xlsx')]
+        reset_conflict_diagnostics()
+        self.addCleanup(reset_conflict_diagnostics, False)
+        with self.assertLogs('core.excel', level='WARNING') as logs:
+            _merge_matrix(matches, 2, 1)
+            _merge_matrix(matches, 2, 1)
+            matches[1][1].cell(3, 2).value = .9
+            _merge_matrix(matches, 2, 1)
+            reset_conflict_diagnostics()
+            _merge_matrix(matches, 2, 1)
+        self.assertEqual(len(logs.records), 3)
+
+    def test_ranges_preserve_gaps_and_rectangles_have_no_missing_cells(self):
+        self.assertEqual(compact_diagnostic_ranges(['D1', 'D2', 'D4', 'D5', 'D8']), 'D1～D2、D4～D5、D8')
+        self.assertEqual(compact_diagnostic_ranges(f'D{i}' for i in range(1, 187)), 'D1～D186')
+        self.assertEqual(compact_diagnostic_ranges(['26/07/27', '26/07/28', '26/07/30']), '2026-07-27～2026-07-28、2026-07-30')
+        self.assertEqual(compact_diagnostic_ranges(['26WK52', '26WK53', '27WK01']), '26WK52～27WK01')
+        self.assertEqual(_coordinate_ranges({'B2', 'C2', 'D2'}), 'B2:D2')
+        self.assertEqual(_coordinate_ranges({'B2', 'B3', 'C2', 'C3'}), 'B2:C3')
+        self.assertEqual(_coordinate_ranges({'B2', 'B3', 'C2'}), 'C2、B2:B3')
+
+    def test_filter_dedups_refresh_and_parent_but_not_other_issues_or_errors(self):
+        diagnostic_filter = main.DuplicateDiagnosticFilter()
+        def record(message, level=logging.WARNING):
+            return logging.LogRecord('test', level, '', 0, message, (), None)
+        first = record('[销量预测刷新] [冲突] A文件 B2=3 / C文件 B2=5')
+        # Shared filter on three handlers must accept the same first record for all.
+        self.assertEqual([diagnostic_filter.filter(first) for _ in range(3)], [True]*3)
+        self.assertFalse(diagnostic_filter.filter(record('[冲突] A文件 B2=3 / C文件 B2=5')))
+        self.assertTrue(diagnostic_filter.filter(record('[冲突] A文件 B2=3 / C文件 B2=6')))
+        self.assertTrue(diagnostic_filter.filter(record('[冲突] D文件 B2=3 / C文件 B2=5')))
+        self.assertTrue(diagnostic_filter.filter(record('读取失败', logging.ERROR)))
+        self.assertTrue(diagnostic_filter.filter(record('读取失败', logging.ERROR)))
+
+    def test_known_extension_warnings_are_info_and_context_line_is_not_printed(self):
+        with self.assertLogs('order_analysis', level='INFO') as logs:
+            level = main.relay_refresh_line('C:/lib/openpyxl/worksheet/_reader.py:329: UserWarning: Unknown extension is not supported and will be removed')
+            level = main.relay_refresh_line('  warn(msg)', level)
+            level = main.relay_refresh_line('C:/lib/openpyxl/worksheet/_reader.py:329: UserWarning: Conditional Formatting extension is not supported and will be removed', level)
+            level = main.relay_refresh_line('  warn(msg)', level)
+            main.relay_refresh_line('C:/lib/other.py:1: UserWarning: 数据类型未知', level)
+        self.assertEqual([r.levelno for r in logs.records], [20, 20, 30])
+        self.assertTrue(all('warn(msg)' not in line for line in logs.output))
 
     def test_relay_preserves_severity_duplicates_and_one_traceback_issue(self):
         collector = main.DiagnosticCollector()

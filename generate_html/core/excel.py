@@ -27,6 +27,41 @@ from openpyxl.utils.cell import get_column_letter, coordinate_to_tuple
 GRAIN_MAP = {"时": "hour", "天": "day", "周": "week", "月": "month"}
 GRAIN_LABELS = {value: key for key, value in GRAIN_MAP.items()}
 LOGGER = logging.getLogger(__name__)
+_CONFLICT_CHECKS = None
+
+
+def reset_conflict_diagnostics(enabled=True):
+    """Scope physical-cell diagnostic deduplication to one generation run."""
+    global _CONFLICT_CHECKS
+    _CONFLICT_CHECKS = set() if enabled else None
+
+
+def compact_diagnostic_ranges(labels):
+    """Render all consecutive dates/day numbers/ranks without hiding gaps."""
+    groups, other = {}, []
+    for value in sorted(set(map(str, labels))):
+        if match := re.fullmatch(r"(\d{2}|\d{4})[/-](\d{1,2})[/-](\d{1,2})", value):
+            try:
+                year, month, day = map(int, match.groups())
+                parsed = date(year + 2000 if year < 100 else year, month, day)
+                number = parsed.toordinal()
+            except ValueError:
+                other.append(value)
+                continue
+            groups.setdefault("date", {})[number] = parsed.isoformat()
+        elif week := _week_period(value):
+            groups.setdefault("week", {})[week[1].toordinal() // 7] = week[0]
+        elif match := re.fullmatch(r"(D|TOP)(\d+)", value, re.I):
+            groups.setdefault(match[1].upper(), {})[int(match[2])] = value
+        else:
+            other.append(value)
+    result = []
+    for values in groups.values():
+        for _, run in groupby(enumerate(sorted(values)), lambda pair: pair[1] - pair[0]):
+            numbers = [number for _, number in run]
+            first, last = values[numbers[0]], values[numbers[-1]]
+            result.append(first if first == last else f"{first}～{last}")
+    return "、".join(result + sorted(other, key=_period_sort))
 
 
 def clean_text(value: Any) -> str:
@@ -582,11 +617,16 @@ def _coordinate_ranges(coordinates):
             columns.setdefault(col, []).append(row)
         else:
             other.append(coordinate)
-    result = []
+    intervals = {}
     for col, rows in sorted(columns.items()):
         for _, group in groupby(enumerate(sorted(set(rows))), lambda item: item[1] - item[0]):
             run = [row for _, row in group]
-            first, last = f"{get_column_letter(col)}{run[0]}", f"{get_column_letter(col)}{run[-1]}"
+            intervals.setdefault((run[0], run[-1]), []).append(col)
+    result = []
+    for (start, end), cols in sorted(intervals.items()):
+        for _, group in groupby(enumerate(cols), lambda item: item[1] - item[0]):
+            run = [col for _, col in group]
+            first, last = f"{get_column_letter(run[0])}{start}", f"{get_column_letter(run[-1])}{end}"
             result.append(first if first == last else f"{first}:{last}")
     return "、".join(result + other)
 
@@ -597,6 +637,7 @@ class _OverlapDiagnostics:
     def __init__(self, coverage):
         self.coverage = coverage
         self.notes = {}
+        self.conflicts = {}
 
     def conflict(self, previous, current, rows, columns, *, nonadditive=False):
         if _diagnostic_equal(previous[0], current[0]):
@@ -631,10 +672,36 @@ class _OverlapDiagnostics:
             ranges = "；".join(f"{value[3]}:{span[0]}~{span[1]}" if span else f"{value[3]}:未识别"
                               for value, span in zip((previous, current), spans))
             example += f" | 文件日期范围={ranges} | 未累加说明={reason}"
-        _warn_conflict(example, kind)
+        physical = tuple((value[3], *_cell_location(value), repr(value[0])) for value in (previous, current))
+        identity = physical, tuple(rows), tuple(columns)
+        if _CONFLICT_CHECKS is not None:
+            if identity in _CONFLICT_CHECKS:
+                return kind, example
+            _CONFLICT_CHECKS.add(identity)
+        # TOP ranks share one metric; keep all affected ranks in the range, not
+        # one warning per SKU row. Other business dimensions remain independent.
+        metric = tuple(re.sub(r"^TOP\d+$", "TOP排名", str(label), flags=re.I) for label in rows)
+        titles = tuple(_cell_location(value)[0] for value in (previous, current))
+        key = kind, previous[3], current[3], titles, metric
+        note = self.conflicts.setdefault(key, {"keys": set(), "periods": set(), "rows": set(),
+                                               "cells": {}, "example": example})
+        note["keys"].add(identity)
+        note["periods"].add("/".join(map(str, columns)))
+        note["rows"].add("/".join(map(str, rows)))
+        for value in (previous, current):
+            title, coordinate = _cell_location(value)
+            note["cells"].setdefault((value[3], title), set()).add(coordinate)
         return kind, example
 
     def flush(self):
+        for (kind, _, _, _, metric), note in self.conflicts.items():
+            locations = "；".join(f"{file} / Sheet={sheet} / 单元格={_coordinate_ranges(cells)}"
+                                  for (file, sheet), cells in note["cells"].items())
+            label = "多文件数值冲突" if kind == "跨文件冲突" else "同文件重复键冲突"
+            LOGGER.warning("[%s] 指标=%s | 冲突%d项 | 全部周期=%s | 全部业务行=%s | 全部位置=%s | 首处数值=%s | 处理=保留原文件顺序中首个非空值，不累加",
+                           label, "/".join(metric), len(note["keys"]), compact_diagnostic_ranges(note["periods"]),
+                           compact_diagnostic_ranges(note["rows"]), locations, note["example"])
+        self.conflicts.clear()
         for (reason, period, first, second, _), note in self.notes.items():
             locations = "；".join(f"{file} / Sheet={sheet} / 单元格={_coordinate_ranges(cells)}"
                                   for (file, sheet), cells in note["cells"].items())
@@ -856,11 +923,6 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     target._merge_conflict_kinds = conflict_kinds
     target._boundary_week_merges = list(boundary_reports.values())
     return target
-
-
-def _warn_conflict(example, kind):
-    label = "多文件数值冲突" if kind == "跨文件冲突" else "同文件重复键冲突"
-    LOGGER.warning("[%s] %s | 处理=保留原文件顺序中首个非空值，不累加", label, example)
 
 
 def _conflict_location(previous, current, key):
@@ -1225,7 +1287,7 @@ class WorkbookStore:
         _log_boundary_weeks(f"类别={keyword}", boundary_reports)
         if conflict_count:
             label = "多文件数值冲突" if conflict_kinds["跨文件冲突"] else "同文件重复键冲突"
-            LOGGER.info("[%s汇总] 类别=%s | %d个Sheet共%d项（同文件重复键%d项，跨文件冲突%d项） | 每项冲突已逐条打印WARNING | 示例=%s",
+            LOGGER.debug("[%s汇总] 类别=%s | %d个Sheet共%d项（同文件重复键%d项，跨文件冲突%d项） | 冲突按来源Sheet和指标合并打印 | 示例=%s",
                            label, keyword, conflict_sheets, conflict_count, conflict_kinds["同文件重复键"],
                            conflict_kinds["跨文件冲突"], "；".join(conflict_examples))
         return result

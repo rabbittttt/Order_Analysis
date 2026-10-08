@@ -891,6 +891,7 @@ def summary_scope(path, workbook=None):
             if stored not in workbook.sheetnames or (filename, original) in seen:
                 raise ValueError(f"汇总目录重复或缺少Sheet：{filename}/{original}")
             seen.add((filename, original))
+            workbook[stored]._log_origin = (original, 0, 0)
             view = SheetView(workbook[stored], original)
             if kind == "订单":
                 groups.setdefault(filename, []).append(view)

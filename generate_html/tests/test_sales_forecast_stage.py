@@ -390,7 +390,7 @@ class SalesForecastStageTests(unittest.TestCase):
             workbook.save(path)
             workbook.close()
             with patch("modules.sales_forecast._read_model_mapping", return_value={}), patch("modules.sales_forecast._read_model_master", return_value={}):
-                with self.assertLogs("modules.sales_forecast", level="WARNING") as logs:
+                with self.assertLogs("modules.sales_forecast", level="INFO") as logs:
                     _, rows = _read_small_order_history(path)
         self.assertEqual(rows[0]["daily_orders"], [50, 30, 20])
         self.assertEqual(rows[0]["total"], 100)

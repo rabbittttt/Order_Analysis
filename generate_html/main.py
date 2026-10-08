@@ -20,7 +20,7 @@ from core.components import add_kpi_comparisons
 from core.china_calendar import PUBLISHED_YEARS
 from core.config import load_config
 from core.discovery import discover_subjects, set_capabilities
-from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook
+from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook, reset_conflict_diagnostics
 from core.forecast_summary import SUMMARY_NAME, visible_target_names
 from core.renderer import b64gzip, render_dashboard
 from core.validation import validate_manifest
@@ -34,6 +34,30 @@ AUTO_OPEN_HTML = True
 LOGGER = logging.getLogger("order_analysis")
 BUILD_DIAGNOSTICS: list[str] = []
 DIAGNOSTIC_COUNTS = {"WARNING": 0, "ERROR": 0}
+
+
+class DuplicateDiagnosticFilter(logging.Filter):
+    """Emit the same issue once across refresh and build, never hide new issues."""
+
+    def __init__(self):
+        super().__init__()
+        self.seen = set()
+
+    def filter(self, record):
+        cached = getattr(record, "_diagnostic_filter_result", None)
+        if cached and cached[0] is self:
+            return cached[1]
+        message = record.getMessage()
+        eligible = ((record.levelno == logging.WARNING and not getattr(record, "diagnostic_continuation", False))
+                    or "[Excel格式兼容]" in message)
+        result = True
+        if eligible:
+            message = re.sub(r"^\[销量预测刷新\]\s*", "", message)
+            key = record.levelno, message
+            result = key not in self.seen
+            self.seen.add(key)
+        record._diagnostic_filter_result = self, result
+        return result
 
 
 class DiagnosticCollector(logging.Handler):
@@ -64,8 +88,16 @@ def relay_refresh_line(line: str, previous_level: int = logging.INFO) -> int:
     elif text.startswith("Traceback (most recent call last)"):
         level, continuation = logging.ERROR, previous_level >= logging.ERROR
     elif re.search(r":\s*\w*Warning:", text):
+        if ("openpyxl" in text and any(text.endswith(message) for message in (
+                "UserWarning: Unknown extension is not supported and will be removed",
+                "UserWarning: Conditional Formatting extension is not supported and will be removed"))):
+            extension = "条件格式扩展" if "Conditional Formatting" in text else "扩展格式"
+            LOGGER.info("[销量预测刷新] [Excel格式兼容] openpyxl不支持%s；通常不影响销量数值读取，重新保存时该扩展可能丢失，不表示原始文件已被删除或改写", extension)
+            return logging.INFO
         level = logging.WARNING
     else:
+        if previous_level == logging.INFO and text.strip() == "warn(msg)":
+            return previous_level  # Source-code context for the compatibility notice, not another issue.
         level = previous_level if previous_level >= logging.WARNING else logging.INFO
         continuation = previous_level >= logging.WARNING
     LOGGER.log(level, "[销量预测刷新] %s", text, extra={"diagnostic_continuation": continuation})
@@ -154,7 +186,11 @@ def configure_runtime(output_dir: Path, debug: bool = False) -> Path:
     file_handler.setFormatter(logging.Formatter(fmt, datefmt="%H:%M:%S"))
     BUILD_DIAGNOSTICS.clear()
     DIAGNOSTIC_COUNTS.update(WARNING=0, ERROR=0)
+    reset_conflict_diagnostics()
     diagnostic_handler = DiagnosticCollector()
+    duplicate_filter = DuplicateDiagnosticFilter()
+    for handler in (console, file_handler, diagnostic_handler):
+        handler.addFilter(duplicate_filter)
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
         handlers=[console, file_handler, diagnostic_handler],
@@ -396,7 +432,7 @@ def build(
             legacy_warning_file.unlink()
         manifest_seconds = perf_counter() - stage_started
         if warnings:
-            LOGGER.info("诊断完成：WARNING %d条，ERROR %d条；不同诊断记录%d条；全部问题已写入本次日志（重复发生照常打印）",
+            LOGGER.info("诊断完成：WARNING %d条，ERROR %d条；问题记录%d条；相同问题不重复打印，冲突按完整范围合并",
                         DIAGNOSTIC_COUNTS["WARNING"], DIAGNOSTIC_COUNTS["ERROR"], len(warnings))
         else:
             LOGGER.info("校验完成：没有发现警告")

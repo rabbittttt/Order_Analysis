@@ -92,11 +92,11 @@ class ForecastDiagnosticsTests(TestCase):
         with self.assertLogs('core.excel', level='INFO') as logs:
             item = store.find('小订退订分析')
         self.assertEqual(item.workbook.worksheets[0].cell(3, 2).value, 35)
-        self.assertIn('跨文件冲突1项', '\n'.join(logs.output))
+        self.assertIn('冲突1项', '\n'.join(logs.output))
         self.assertIn('Sheet=V800_日度退订 / 单元格=B3', logs.output[0])
         store.close()
 
-    def test_every_conflicting_cell_is_warning_not_three_examples(self):
+    def test_conflicting_cells_are_grouped_with_full_range_not_three_examples(self):
         books = [Workbook(), Workbook()]
         for book in books:
             book.remove(book.active)
@@ -108,8 +108,10 @@ class ForecastDiagnosticsTests(TestCase):
         store.items = [WorkbookItem(Path(f'小订退订分析{i}.xlsx'), b) for i, b in enumerate(books)]
         with self.assertLogs('core.excel', level='WARNING') as logs:
             merged = store.find('小订退订分析').workbook.worksheets[0]
-        self.assertEqual(len(logs.records), 9)
-        self.assertIn('单元格=B11', logs.output[-1])
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn('冲突9项', logs.output[0])
+        self.assertIn('2026-07-27～2026-08-04', logs.output[0])
+        self.assertIn('单元格=B3:B11', logs.output[0])
         self.assertEqual(merged.cell(11, 2).value, 35)
         store.close()
 

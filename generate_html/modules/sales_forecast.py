@@ -13,7 +13,7 @@ from openpyxl.utils.datetime import from_excel
 
 from core.china_calendar import calendar_payload
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation, FORECAST_SOURCE_PATH
-from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type
+from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type, compact_diagnostic_ranges
 from core.models import Dashboard, SourceRef, Subject
 from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, input_path, open_input, summary_scope, table_records
 
@@ -654,7 +654,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                     continue
             else:
                 total = daily_sum
-                LOGGER.warning(
+                LOGGER.info(
                     "[销量预测字段校验] 传播名=%s | Sheet=%s | 行=%d | 未提供合计列 | "
                     "处理=使用全部日期列求和%d，不把最后一个日期误作合计",
                     label, sheet.title, row_number, total,
@@ -2830,8 +2830,8 @@ def _profile_issues(
             )
             invalid_details.append({"date": expected_date, "fields": ["gross", "small_to_big", "direct"]})
     if missing_days:
-        labels = "、".join(f"D{day}" for day in missing_days[:12])
-        suffix = f"等{len(missing_days)}天" if len(missing_days) > 12 else ""
+        labels = compact_diagnostic_ranges(f"D{day}" for day in missing_days)
+        suffix = f"（共{len(missing_days)}天）" if len(missing_days) > 1 else ""
         add("COMPLETED_DAYS_MISSING", f"已结束日期缺少真实数据：{labels}{suffix}",
             dates=[(start + timedelta(days=day - 1)).isoformat() for day in missing_days], fields=["gross"])
     if invalid_days:

@@ -29,7 +29,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
 
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
-from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook
+from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook, compact_diagnostic_ranges, reset_conflict_diagnostics
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
@@ -574,7 +574,7 @@ def extract_quantity_table(
         raise InputFormatError(f"{sheet.title}第{header_row}行存在重复天数列：{','.join(f'D{n}' for n in duplicates)}")
     missing_days = [number for number in range(1, day_count + 1) if number not in day_columns]
     if missing_days:
-        LOGGER.warning("%s缺少%s列，对应日期将在二次处理表留空", sheet.title, "、".join(f"D{n}" for n in missing_days))
+        LOGGER.warning("%s缺少%s列，对应日期将在二次处理表留空", sheet.title, compact_diagnostic_ranges(f"D{n}" for n in missing_days))
     result: dict[str, list[Any]] = {}
     blank_rows = 0
     for row_number, values in enumerate(sheet.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
@@ -1332,7 +1332,7 @@ def audit_final_forecast(workbook, today, data=None):
                     if not valid(value):
                         missing.append(index+1)
                 if missing:
-                    labels = '、'.join(f'D{i}' for i in missing)
+                    labels = compact_diagnostic_ranges(f'D{i}' for i in missing)
                     messages.append(f"[销量预测条件不足] 预测对象={model} | 阶段=小订 | 原因=已结束日小订数量缺失或无效：{labels}（共{len(missing)}天） | 影响=小订预测条件受限，其他阶段独立检查；请核对原始来源")
                 elif small_end < today and values and valid(master.get("总小订")) and abs(sum(values)-master["总小订"]) > 1:
                     messages.append(f"[销量预测口径差异] 代际={model} | 范围={small_start}~{small_end} | 最终总小订={master['总小订']}，多来源逐日合计={sum(values)} | 处理=保留既有优先级，请核对原始来源的统计口径")
@@ -1582,6 +1582,7 @@ def resolve_mapping_path(requested: Path) -> Path:
 
 
 def main() -> int:
+    reset_conflict_diagnostics()
     args = parse_args()
     logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="[%(levelname)s] %(message)s", stream=sys.stdout)
     try:
