@@ -75,6 +75,7 @@ class GenericModule:
 
     def build(self, store: WorkbookStore, subject: Subject) -> Dashboard | None:
         routine, unmatched, sources = [], [], []
+        diagnostics = {}
         for item in store.items:
             recognized_type = next((label for keyword, label in KNOWN_FILES if keyword in item.path.name), None)
             for sheet in item.workbook.worksheets:
@@ -104,11 +105,8 @@ class GenericModule:
                         f"{row_count}行 × {col_count}列", numeric, status,
                     ])
                     if status.startswith("需核查："):
-                        LOGGER.warning(
-                            "[数据诊断] 主体=%s | 识别模块=%s | 文件=%s | Sheet=%s | 状态=%s | 规模=%d行×%d列 | 数值单元格=%d | 处理=保留在导入分析中等待修正",
-                            subject.name, recognized_type, item.path.name, sheet.title,
-                            status.removeprefix("需核查："), row_count, col_count, numeric,
-                        )
+                        key = recognized_type, item.path.name, status.removeprefix("需核查："), row_count, col_count, numeric
+                        diagnostics.setdefault(key, []).append(sheet.title)
                     continue
                 preview, numeric_cells = _preview(sheet)
                 LOGGER.warning(
@@ -120,6 +118,11 @@ class GenericModule:
                     "cols": sheet.max_column, "numeric": numeric_cells, "table": preview,
                     "source": source,
                 })
+        for (module, file, status, rows, cols, numeric), sheets in diagnostics.items():
+            LOGGER.warning(
+                "[数据诊断] 主体=%s | 识别模块=%s | 文件=%s | Sheet=%s | 状态=%s | 规模=%d行×%d列 | 数值单元格=%d | 涉及%d个Sheet | 处理=保留在导入分析中等待修正",
+                subject.name, module, file, "、".join(sheets), status, rows, cols, numeric, len(sheets),
+            )
         if not routine and not unmatched:
             return None
 

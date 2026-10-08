@@ -39,7 +39,7 @@ def reset_conflict_diagnostics(enabled=True):
 def compact_diagnostic_ranges(labels):
     """Render all consecutive dates/day numbers/ranks without hiding gaps."""
     groups, other = {}, []
-    for value in sorted(set(map(str, labels))):
+    for value in sorted({str(label).strip('/') for label in labels if str(label).strip('/')}):
         if match := re.fullmatch(r"(\d{2}|\d{4})[/-](\d{1,2})[/-](\d{1,2})", value):
             try:
                 year, month, day = map(int, match.groups())
@@ -610,11 +610,13 @@ def _cell_location(value):
 
 
 def _coordinate_ranges(coordinates):
-    columns, other = {}, []
+    columns, other, omitted = {}, [], {}
     for coordinate in sorted(coordinates):
         if re.fullmatch(r"[A-Z]+[1-9]\d*", coordinate):
             row, col = coordinate_to_tuple(coordinate)
             columns.setdefault(col, []).append(row)
+        elif match := re.fullmatch(r"省略日期(\d{4}-\d{2}-\d{2})，行(\d+)", coordinate):
+            omitted.setdefault(int(match[2]), set()).add(match[1])
         else:
             other.append(coordinate)
     intervals = {}
@@ -628,7 +630,33 @@ def _coordinate_ranges(coordinates):
             run = [col for _, col in group]
             first, last = f"{get_column_letter(run[0])}{start}", f"{get_column_letter(run[-1])}{end}"
             result.append(first if first == last else f"{first}:{last}")
+    for row, days in sorted(omitted.items()):
+        result.append(f"省略日期按0：{compact_diagnostic_ranges(days)}（行{row}）")
     return "、".join(result + other)
+
+
+def _diagnostic_location(coordinates):
+    """Use a search area for heavily fragmented cells, never claim a solid conflict rectangle."""
+    rendered = _coordinate_ranges(coordinates)
+    if len(rendered) <= 240:
+        return f"单元格={rendered}"
+    cells, omitted, other = [], {}, []
+    for coordinate in coordinates:
+        if re.fullmatch(r"[A-Z]+[1-9]\d*", coordinate):
+            cells.append(coordinate_to_tuple(coordinate))
+        elif match := re.fullmatch(r"省略日期(\d{4}-\d{2}-\d{2})，行(\d+)", coordinate):
+            omitted.setdefault(match[1], set()).add(int(match[2]))
+        else:
+            other.append(coordinate)
+    parts = []
+    if cells:
+        rows, cols = zip(*cells)
+        parts.append(f"单元格定位区间={get_column_letter(min(cols))}{min(rows)}:{get_column_letter(max(cols))}{max(rows)}（{len(cells)}处，区间含非冲突单元格）")
+    if omitted:
+        rows = set().union(*omitted.values())
+        count = sum(map(len, omitted.values()))
+        parts.append(f"省略日期按0={compact_diagnostic_ranges(omitted)}（行定位区间{min(rows)}～{max(rows)}，{count}处，非逐格明细）")
+    return "、".join(parts + sorted(other))
 
 
 class _OverlapDiagnostics:
@@ -639,7 +667,7 @@ class _OverlapDiagnostics:
         self.notes = {}
         self.conflicts = {}
 
-    def conflict(self, previous, current, rows, columns, *, nonadditive=False):
+    def conflict(self, previous, current, rows, columns, *, nonadditive=False, metric=None):
         if _diagnostic_equal(previous[0], current[0]):
             return None
         cross_file = previous[3] != current[3]
@@ -657,9 +685,10 @@ class _OverlapDiagnostics:
                 reason, level = "缺少文件实际日期范围，无法确认边界周是否分段；请核对来源范围，不能据文件名判断", logging.WARNING
         if reason:
             titles = tuple(_cell_location(value)[0] for value in (previous, current))
-            key = (reason, period or "文件汇总", previous[3], current[3], titles)
-            note = self.notes.setdefault(key, {"level": level, "count": 0, "cells": {}})
-            note["count"] += 1
+            key = (reason, previous[3], current[3], titles)
+            note = self.notes.setdefault(key, {"level": level, "keys": set(), "periods": set(), "cells": {}})
+            note["keys"].add(tuple((value[3], *_cell_location(value), repr(value[0])) for value in (previous, current)))
+            note["periods"].add(period or "文件汇总")
             for value in (previous, current):
                 title, coordinate = _cell_location(value)
                 note["cells"].setdefault((value[3], title), set()).add(coordinate)
@@ -680,14 +709,17 @@ class _OverlapDiagnostics:
             _CONFLICT_CHECKS.add(identity)
         # TOP ranks share one metric; keep all affected ranks in the range, not
         # one warning per SKU row. Other business dimensions remain independent.
-        metric = tuple(re.sub(r"^TOP\d+$", "TOP排名", str(label), flags=re.I) for label in rows)
+        metric = metric or tuple(re.sub(r"^TOP\d+$", "TOP排名", str(label), flags=re.I) for label in rows)
         titles = tuple(_cell_location(value)[0] for value in (previous, current))
         key = kind, previous[3], current[3], titles, metric
         note = self.conflicts.setdefault(key, {"keys": set(), "periods": set(), "rows": set(),
-                                               "cells": {}, "example": example})
+                                               "cells": {}, "sample": (previous, current),
+                                               "boundary": set()})
         note["keys"].add(identity)
         note["periods"].add("/".join(map(str, columns)))
         note["rows"].add("/".join(map(str, rows)))
+        if week and week[3]:
+            note["boundary"].add(reason)
         for value in (previous, current):
             title, coordinate = _cell_location(value)
             note["cells"].setdefault((value[3], title), set()).add(coordinate)
@@ -695,26 +727,35 @@ class _OverlapDiagnostics:
 
     def flush(self):
         for (kind, _, _, _, metric), note in self.conflicts.items():
-            locations = "；".join(f"{file} / Sheet={sheet} / 单元格={_coordinate_ranges(cells)}"
+            locations = "；".join(f"{file} / Sheet={sheet} / {_diagnostic_location(cells)}"
                                   for (file, sheet), cells in note["cells"].items())
             label = "多文件数值冲突" if kind == "跨文件冲突" else "同文件重复键冲突"
-            LOGGER.warning("[%s] 指标=%s | 冲突%d项 | 全部周期=%s | 全部业务行=%s | 全部位置=%s | 首处数值=%s | 处理=保留原文件顺序中首个非空值，不累加",
+            rows = (compact_diagnostic_ranges(note["rows"]) if all(re.fullmatch(r"TOP\d+", row, re.I) for row in note["rows"])
+                    else f"{len(note['rows'])}个业务行")
+            sample = " / ".join(f"单元格={_cell_location(value)[1]}: {value[0]}" for value in note["sample"])
+            boundary = ""
+            if note["boundary"]:
+                spans = "；".join(f"{file}:{span[0]}~{span[1]}" if (span := self.coverage.get(file)) else f"{file}:未识别"
+                                  for file in dict.fromkeys(value[3] for value in note["sample"]))
+                boundary = f" | 文件日期范围={spans} | 未累加说明={'；'.join(sorted(note['boundary']))}"
+            LOGGER.warning("[%s] 指标=%s | 冲突%d项 | 全部周期=%s | 涉及业务行=%s | 定位=%s | 首处数值=%s%s | 处理=保留原文件顺序中首个非空值，不累加",
                            label, "/".join(metric), len(note["keys"]), compact_diagnostic_ranges(note["periods"]),
-                           compact_diagnostic_ranges(note["rows"]), locations, note["example"])
+                           rows, locations, sample, boundary)
         self.conflicts.clear()
-        for (reason, period, first, second, _), note in self.notes.items():
-            locations = "；".join(f"{file} / Sheet={sheet} / 单元格={_coordinate_ranges(cells)}"
+        for (reason, first, second, _), note in self.notes.items():
+            locations = "；".join(f"{file} / Sheet={sheet} / {_diagnostic_location(cells)}"
                                   for (file, sheet), cells in note["cells"].items())
             spans = "；".join(f"{file}:{span[0]}~{span[1]}" if (span := self.coverage.get(file)) else f"{file}:未识别"
                               for file in (first, second))
             label = "统计范围待核对" if note["level"] == logging.WARNING else "统计口径说明"
-            LOGGER.log(note["level"], "[%s] 周期=%s | 原因=%s | 涉及%d处差异 | 全部位置=%s | 文件日期范围=%s | 处理=保留原优先值，不强行合并",
-                       label, period, reason, note["count"], locations, spans)
+            LOGGER.log(note["level"], "[%s] 周期=%s | 原因=%s | 涉及%d处差异 | 定位=%s | 文件日期范围=%s | 处理=保留原优先值，不强行合并",
+                       label, compact_diagnostic_ranges(note["periods"]), reason, len(note["keys"]), locations, spans)
         self.notes.clear()
 
 
 def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward_headers=(), time_row=None,
-                  column_group_row=None, sparse_headers=(), quantity_columns=False):
+                  column_group_row=None, sparse_headers=(), quantity_columns=False,
+                  diagnostics=None, diagnostic_metric=None):
     """Union an identified table by business labels; first nonblank value wins.
 
     Boundary-week quantities may add distinct yearly/half-year pieces. Summary
@@ -727,8 +768,12 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
-    diagnostics = _OverlapDiagnostics(coverage)
+    owns_diagnostics = diagnostics is None
+    diagnostics = diagnostics if diagnostics is not None else _OverlapDiagnostics(coverage)
     sku = all("SKU" in item.path.name for item, _ in matches)
+    if sku and diagnostic_metric is None:
+        diagnostic_metric = (clean_text(matches[0][1].cell(1, 1).value) or "SKU数据",)
+    mix = header_rows == 1 and key_columns == 3 and all("选配比例" in item.path.name for item, _ in matches)
     mix_days = set()
     if header_rows == 1 and key_columns == 3:
         for item, sheet in matches:
@@ -835,6 +880,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                             ratio_conflicts.append((key, previous, current))
                         else:
                             issue = diagnostics.conflict(previous, current, row_key, col_key,
+                                metric=diagnostic_metric or (row_key[:2] if mix else None),
                                 nonadditive=sku and (not quantity_columns or '%' in cell.number_format
                                     or any(re.fullmatch(r'TOP\d+', label, re.I) for label in row_key)))
                             if issue:
@@ -879,14 +925,16 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
             resolved_ratios.add((row_key, col_key))
     for key, previous, current in ratio_conflicts:
         if key not in resolved_ratios:
-            issue = diagnostics.conflict(previous, current, key[0], key[1], nonadditive=True)
+            issue = diagnostics.conflict(previous, current, key[0], key[1], nonadditive=True,
+                                         metric=diagnostic_metric or (key[0][:2] if mix else None))
             if issue:
                 kind, example = issue
                 conflict_count += 1
                 conflict_kinds[kind] += 1
                 if len(conflicts) < 3:
                     conflicts.append(example)
-    diagnostics.flush()
+    if owns_diagnostics:
+        diagnostics.flush()
     book = Workbook()
     target = book.active
     target.title = matches[0][1].title
@@ -1121,21 +1169,24 @@ def _merge_partitioned(matches, *, horizontal):
     conflict_count, conflict_examples = 0, []
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_reports = []
+    diagnostics = _OverlapDiagnostics({item.path.name: _source_date_range(item) for item, _ in matches})
     for title, parts in groups.items():
         if horizontal:
             first = parts[0][1]
             period_column = next((col for col in range(2, first.max_column + 1)
                                   if re.match(r"^(?:20)?\d{2}(?:WK|[-/.])", clean_text(first.cell(2, col).value), re.I)), None)
             if period_column is None:
+                diagnostics.flush()
                 return None
             merged = _merge_matrix(parts, 2, period_column - 1,
-                                   quantity_columns=title in {"累计锁单", "锁单数量", "订单数量"})
+                                   quantity_columns=title in {"累计锁单", "锁单数量", "订单数量"},
+                                   diagnostics=diagnostics, diagnostic_metric=(title,))
             conflict_count += merged._merge_conflict_count
             conflict_examples.extend(merged._merge_conflict_examples[:max(0, 3 - len(conflict_examples))])
             _copy_cells(merged, target, col_offset=offset)
             offset += merged.max_column + 1
         else:
-            merged = _merge_matrix(parts, 2, 1)
+            merged = _merge_matrix(parts, 2, 1, diagnostics=diagnostics, diagnostic_metric=(title,))
             conflict_count += merged._merge_conflict_count
             conflict_examples.extend(merged._merge_conflict_examples[:max(0, 3 - len(conflict_examples))])
             _copy_cells(merged, target, row_offset=offset)
@@ -1148,6 +1199,7 @@ def _merge_partitioned(matches, *, horizontal):
     target._merge_conflict_examples = conflict_examples
     target._merge_conflict_kinds = conflict_kinds
     target._boundary_week_merges = boundary_reports
+    diagnostics.flush()
     return target
 
 def merge_source_sheets(matches):
@@ -1533,7 +1585,8 @@ class WorkbookStore:
         for name, period, previous, current in rate_conflicts:
             accepted_sources = {source for source, _ in boundary_parts.get((period, "总量"), [])}
             if (name, period) not in resolved_rates or not {previous[3], current[3]} <= accepted_sources:
-                diagnostics.conflict(previous, current, (matches[0][2]["subject"], name, "图表占比"), (period,), nonadditive=True)
+                diagnostics.conflict(previous, current, (matches[0][2]["subject"], name, "图表占比"), (period,),
+                                     nonadditive=True, metric=(matches[0][2]["subject"], "图表占比"))
         diagnostics.flush()
         if boundary_reports and log_key not in self._boundary_chart_logs:
             _log_boundary_weeks(f"图表主体={matches[0][2]['subject']}", list(boundary_reports.values()))

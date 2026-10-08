@@ -7,7 +7,10 @@ from unittest.mock import MagicMock, patch
 from openpyxl import Workbook
 
 from core.excel import (WorkbookItem, WorkbookStore, _merge_matrix, _merge_partitioned, _merge_records,
-                        compact_diagnostic_ranges, _coordinate_ranges, reset_conflict_diagnostics)
+                        compact_diagnostic_ranges, _coordinate_ranges, _diagnostic_location, reset_conflict_diagnostics)
+from core.models import Subject
+from core.validation import validate_manifest
+from modules.generic import GenericModule
 import main
 
 
@@ -169,6 +172,116 @@ class LoggingPolicyTests(TestCase):
         self.assertEqual(result._merge_conflict_count, 18460)
         self.assertEqual(result.cell(1421, 14).value, 35)
         self.assertLess(sum(len(line) for line in logs.output), 10000)
+
+    def test_order_mix_groups_classifications_without_merging_quantity_and_share(self):
+        matches = []
+        for file, quantity, share in [('小订选配比例A.xlsx', 100, .1), ('小订选配比例B.xlsx', 200, .2)]:
+            book = Workbook(); self.addCleanup(book.close)
+            sheet = book.active; sheet.title = '车by天'
+            sheet.append(['指标', '类型', '分类', '2026-07-01', '2026-07-02'])
+            for index in range(120):
+                sheet.append(['动力', '数量', f'分类{index}', quantity, quantity])
+                sheet.append(['动力', '占比', f'分类{index}', share, share])
+            matches.append((WorkbookItem(Path(file), book), sheet))
+        with self.assertLogs('core.excel', level='WARNING') as logs:
+            result = _merge_matrix(matches, 1, 3, forward_rows=(1, 2))
+        self.assertEqual(len(logs.records), 2)
+        self.assertTrue(all('冲突240项' in line and '120个业务行' in line for line in logs.output))
+        self.assertTrue(any('指标=动力/数量' in line for line in logs.output))
+        self.assertTrue(any('指标=动力/占比' in line for line in logs.output))
+        self.assertEqual([result.cell(r, 4).value for r in (2, 3)], [100, .1])
+        self.assertLess(sum(map(len, logs.output)), 1500)
+
+    def sku_blocks(self, filename, value, *, same_file_duplicate=False, period='26WK02'):
+        book = Workbook(); self.addCleanup(book.close)
+        sheet = book.active; sheet.title = '车型_SKU'
+        periods = period if isinstance(period, list) else [period]
+        for column, block in [(1, '订单数量'), (5, '累计占比'), (9, '组合占比')]:
+            sheet.cell(1, column, block)
+            sheet.cell(2, column, 'SKU')
+            for offset, label in enumerate(periods, 1):
+                sheet.cell(2, column+offset, label)
+            for index in range(80):
+                sheet.cell(index+3, column, f'570{index:05d}')
+                for offset in range(1, len(periods)+1):
+                    sheet.cell(index+3, column+offset, value)
+                if same_file_duplicate:
+                    sheet.cell(index+83, column, f'570{index:05d}')
+                    for offset in range(1, len(periods)+1):
+                        sheet.cell(index+83, column+offset, value+1)
+        item = WorkbookItem(Path(filename), book); item._boundary_date_range = None
+        return item, sheet
+
+    def test_sku_same_file_duplicates_group_by_business_block_not_sku_code(self):
+        match = self.sku_blocks('SKU历史.xlsx', 0, same_file_duplicate=True)
+        with self.assertLogs('core.excel', level='WARNING') as logs:
+            result = _merge_partitioned([match], horizontal=True)
+        self.assertEqual(len(logs.records), 3)
+        self.assertTrue(all('冲突80项' in line for line in logs.output))
+        self.assertEqual({r.getMessage().split('指标=')[1].split(' |')[0] for r in logs.records}, {'订单数量', '累计占比', '组合占比'})
+        self.assertNotIn('57000000', '\n'.join(logs.output))
+        self.assertEqual(result.cell(3, 2).value, 0)
+        self.assertEqual(result._merge_conflict_count, 240)
+
+    def test_unknown_boundary_scope_is_shared_across_sku_blocks_and_periods(self):
+        matches = [self.sku_blocks('SKU_A.xlsx', .1, period=['26WK01', '26WK27']),
+                   self.sku_blocks('SKU_B.xlsx', .2, period=['26WK01', '26WK27'])]
+        with self.assertLogs('core.excel', level='WARNING') as logs:
+            result = _merge_partitioned(matches, horizontal=True)
+        scope = [line for line in logs.output if '统计范围待核对' in line]
+        self.assertEqual(len(scope), 1)  # Two ratio blocks share the same missing range evidence.
+        self.assertIn('涉及320处差异', scope[0])
+        self.assertIn('周期=26WK01、26WK27', scope[0])
+        self.assertTrue(any('指标=订单数量' in line for line in logs.output))
+        self.assertEqual(result.cell(3, 2).value, .1)
+
+    def test_omitted_zero_dates_and_fragmented_coordinates_have_short_search_ranges(self):
+        from datetime import timedelta
+        cells = {f'省略日期{date(2026, 1, 1)+timedelta(days=i)}，行2' for i in range(100)}
+        self.assertEqual(_coordinate_ranges(cells), '省略日期按0：2026-01-01～2026-04-10（行2）')
+        self.assertEqual(compact_diagnostic_ranges(['/23WK23', '/23WK24', '/23WK26', '/总计占比']), '23WK23～23WK24、23WK26、总计占比')
+        fragmented = {f'B{r}' for r in range(1, 400, 2)}
+        rendered = _diagnostic_location(fragmented)
+        self.assertIn('B1:B399', rendered)
+        self.assertIn('200处', rendered)
+        self.assertIn('区间含非冲突单元格', rendered)
+        self.assertLess(len(rendered), 100)
+
+    def test_empty_grains_group_but_different_subjects_and_shapes_stay_separate(self):
+        book = Workbook(); self.addCleanup(book.close)
+        for grain in ['天', '周', '月']:
+            sheet = book.create_sheet('车型by'+grain); sheet.cell(1, 1, '车型')
+        sheet = book.create_sheet('车型 by天'); sheet.append(['车型', '备注'])
+        sheet = book.create_sheet('其他车型by天'); sheet.cell(1, 1, '其他车型')
+        store = WorkbookStore(Path('.')); store.items = [WorkbookItem(Path('大定选配比例.xlsx'), book)]
+        subject = Subject('generation_test', '车型', 'generation')
+        with self.assertLogs('modules.generic', level='WARNING') as logs:
+            result = GenericModule().build(store, subject)
+        empty = [line for line in logs.output if '无数值数据' in line and '1行×1列' in line]
+        self.assertEqual(len(empty), 1)
+        self.assertIn('涉及3个Sheet', empty[0])
+        self.assertTrue(all('车型by'+grain in empty[0] for grain in ['天', '周', '月']))
+        self.assertEqual(len(logs.records), 2)
+        self.assertTrue(any('1行×2列' in line for line in logs.output))
+        self.assertNotIn('其他车型', '\n'.join(logs.output))
+        self.assertIsNotNone(result)
+
+    def test_source_validation_lists_real_names_and_keeps_all_affected_subjects(self):
+        subjects = [{'id': 'generation_hash1', 'name': '车型A'}, {'id': 'generation_hash2', 'name': '车型B'}]
+        boards = {s['id']+'|cancellation': {'subject_id': s['id'], 'module_id': 'cancellation',
+                  'sources': [], 'views': {'day': {'pages': {'全部阶段': {'sections': [{'title': '退订趋势'}]}}}}}
+                  for s in subjects}
+        warnings = validate_manifest({'subjects': subjects, 'dashboards': boards})
+        self.assertEqual(len(warnings), 1)
+        self.assertIn('主体=车型A、车型B', warnings[0])
+        self.assertIn('缺file、sheet', warnings[0])
+        self.assertNotIn('generation_hash', warnings[0])
+        self.assertIn('来源追溯受限', warnings[0])
+        boards['generation_hash2|cancellation']['views']['day']['pages']['全部阶段']['sections'][0]['source'] = {'file': '原始.xlsx'}
+        warnings = validate_manifest({'subjects': subjects, 'dashboards': boards,
+                                     'config': {'module_labels': {'cancellation': '小订节奏'}}})
+        self.assertEqual(len(warnings), 2)  # Different missing fields are different causes.
+        self.assertTrue(all('模块=小订节奏' in message for message in warnings))
 
     def test_run_dedup_preserves_new_values_and_resets_between_runs(self):
         matches = [self.matrix(['26WK02'], [[.4]], filename='SKU_A.xlsx'),
