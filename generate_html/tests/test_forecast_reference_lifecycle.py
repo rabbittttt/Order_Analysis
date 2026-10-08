@@ -10,6 +10,48 @@ from modules.overview import _rise_rankings_with_empty
 
 
 class SummaryLifecycleTests(TestCase):
+    def test_ongoing_completed_quantities_fill_every_available_day_not_only_d1(self):
+        def customize(data):
+            data['small_order_history'] = []
+            data['targets'][0].update(small_end_date='2026-01-07')
+            data['actuals'][0]['small_daily_days'] = [
+                {'date': f'2026-01-{i:02d}', 'orders': value}
+                for i, value in enumerate([20, 0, 12, 9, 999], 1)]
+            data['reference_daily'] = {
+                '小转大当日数量': {'历史车': [10, 8, 999]},
+                '直接大定当日数量': {'历史车': [20, 32, 999]},
+                '总大定当日数量': {'历史车': [30, 40, 1998]},
+            }
+        book = test_public_forecast_tables.PublicForecastTablesTests().make_public(
+            customize=customize, as_of=date(2026, 1, 5))
+        small = table_records(book, SMALL_DAILY_SHEET)[0]
+        self.assertEqual([small[f'D{i}'] for i in range(1, 6)], [20, 0, 12, 9, None])
+        for title, expected in [('小转大当日数量', [10, 8, None]),
+                                ('直接大定当日数量', [20, 32, None])]:
+            row = table_records(book, title)[0]
+            self.assertEqual([row[f'D{i}'] for i in range(1, 4)], expected)
+        metric = table_records(book, D12_SHEET)[0]
+        self.assertEqual((metric['D1小转大'], metric['D2小转大'], metric['D1+D2小转大']), (10, 8, 18))
+        self.assertIsNone(metric['D1小转大/总小转大'])
+        book.close()
+
+    def test_explicit_small_publication_synonym_does_not_borrow_launch_period(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from openpyxl import Workbook
+        from core.model_identity import stage_records
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / 'source.xlsx'
+            book = Workbook()
+            book.active.append(['代际名', '小订发布时间', '首销发布时段', '发布时段'])
+            book.active.append(['测试A', '下午', '晚上', '上午'])
+            book.active.append(['测试B', None, '晚上', '上午'])
+            book.save(path)
+            book.close()
+            rows = stage_records(path)
+            self.assertEqual(rows[0]['小订发布时段'], '下午')
+            self.assertIsNone(rows[1]['小订发布时段'])
+
     def test_rise_rankings_distinguish_empty_from_no_comparable_base(self):
         series = {'测试车': {metric: {'上期': {'metrics': {metric:100}}, '本期': {'metrics': {metric:50}}}
                         for metric in ('留存大定', '交车锁单')}}

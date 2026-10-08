@@ -51,7 +51,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
        const source=pane.locator('.forecast-d1-details');await source.locator('summary').click();
        check('D1来源详情可展开',await source.locator('[data-forecast-d1-note]').isVisible());await source.locator('summary').click();
       }
-      if(stage==='small')check('线索与热度同排且短输入不过宽',await pane.locator('[data-small-input]').evaluateAll(nodes=>nodes.length===2&&Math.abs(nodes[0].getBoundingClientRect().top-nodes[1].getBoundingClientRect().top)<2&&nodes.every(node=>node.getBoundingClientRect().width<=240)));
+      if(stage==='small')check('线索与热度参数已停用',await pane.locator('[data-small-input]').count()===0);
       const table=pane.locator('.forecast-result-values').first();await table.locator('summary').click();
       check(stage+'数值表可展开且有记录',await table.locator('tbody tr').count()>0);await table.locator('summary').click();
      }

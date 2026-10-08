@@ -55,7 +55,7 @@ TASKS = [
 ]
 
 SMALL_ORDER_TASKS = [
-    ("small_total", "小订最终总量", "按产品属性、小订窗口、线索量和互联网热度选择小订总量参考"),
+    ("small_total", "小订最终总量", "按产品属性与小订窗口选择小订总量参考"),
     ("small_hourly", "小订D1分时", "按发布时间、真实小时新增与累计占比的形状匹配，已发生加未来小时估算"),
     ("small_progress", "小订累计进度", "按当前已发生小订累计量与历史同期完成率反推最终总量"),
 ]
@@ -748,8 +748,6 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "total": final_total,
                 "total_complete": total_complete,
                 "total_source": "车型汇总" if (summary_total or 0) > 0 else "小订by天合计" if total_complete else "小订by天已填累计（非终值）",
-                "leads": _number(_first_record_value(summary, "线索量", "累计线索量", "线索数")),
-                "heat": _number(_first_record_value(summary, "互联网热度", "热度指数", "网络热度")),
                 "daily_orders": daily,
                 "dates": dates,
                 "small_progress": cumulative,
@@ -812,8 +810,6 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "days": max(int(_number(summary.get("小订天数"), len(daily))), len(daily), 1),
                 "total": total,
                 "total_source": "车型汇总",
-                "leads": _number(_first_record_value(summary, "线索量", "累计线索量", "线索数")),
-                "heat": _number(_first_record_value(summary, "互联网热度", "热度指数", "网络热度")),
                 "daily_orders": daily,
                 "dates": dates,
                 "small_progress": [],
@@ -3152,7 +3148,7 @@ class SalesForecastModule:
                 "日期类型按国务院办公厅年度节假日安排自动判断；周末调休上班日按工作日处理，不读取人工维护的节假日日期字段。",
             ],
             "small_order_rules": [
-                "小订D1未到：优先使用线索量、互联网热度与产品/发布属性测算最终总小订；驱动字段未维护时仅输出可比车型量级并标低置信度。",
+                "小订D1未到：按产品/发布属性与小订窗口选择参考，以主辅历史总量加权估计量级；尚无本车型实绩，标低置信度。",
                 "小订D1当天：分时参考按发布时间、已发生小时的增量斜率与累计占比匹配，不比较参考车型D1绝对量；真实累计加上后续小时预测得到D1终值，再按累计参考曲线的D1占比推算小订总量。",
                 "小订D1已过：已发生累计小订除以主辅参考车型同Dn累计完成率反推最终总量；已结束日期冻结真实值。",
                 "未来小订使用独立主辅到天基础曲线，以前一完整真实日为衔接基准；先剔除历史日历影响，再应用目标日历系数并渐进分配差额。累计进度、到天基础、D1分时分别选择主辅及权重；额外图表对比车型只用于展示。",

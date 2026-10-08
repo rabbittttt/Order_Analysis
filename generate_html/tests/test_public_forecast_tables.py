@@ -262,9 +262,12 @@ class PublicForecastTablesTests(TestCase):
             data['small_order_history'][0].update(leads=500, heat=25)
         book = self.make_public(customize=customize)
         master = table_records(book, MASTER_SHEET)[0]
-        self.assertEqual((master['线索数'], master['热度']), (500, 25))
+        self.assertNotIn('线索数', master)
+        self.assertNotIn('热度', master)
         item = read_public_forecast(book, [])[2][0]
-        self.assertEqual((item['leads'], item['heat'], item['total']), (500, 25, 100))
+        self.assertNotIn('leads', item)
+        self.assertNotIn('heat', item)
+        self.assertEqual(item['total'], 100)
         self.assertEqual(item['daily_orders'], [0, 10])
         book.close()
 

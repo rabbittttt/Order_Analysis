@@ -53,6 +53,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
     check('无小订车型方法一可预测',result.scenarios.progress.available&&result.scenarios.progress.gross>180);
     check('无小订车型方法二使用D1直接大定基准',result.scenarios.parameter.available&&Math.abs(result.scenarios.parameter.gross-1000)<1);
     check('无小订不伪造小转大',result.rows.every(row=>row.small_to_big===0));
+    await page.locator('[data-forecast-tab="evidence"]').click();
     check('无小订相关输入不参与界面',!(await page.locator('[data-forecast-input="small"]').isVisible()));
     const completion=page.locator('[data-forecast-input="progressDirectCompletion"]');
     await completion.fill('120');await completion.dispatchEvent('change');
@@ -73,6 +74,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
     check('缺总小订只限制方法二',!result.scenarios.parameter.available&&notice.includes('方法二')&&!notice.includes('方法一：'));
     check('无总小订的小转大率保持未知',result.rows.every(row=>row.small_conversion===null));
     check('无总小订的转化率KPI不显示伪造0',await page.locator('[data-forecast-value="progress-conversion"]').innerText()==='—');
+    await page.locator('[data-forecast-tab="evidence"]').click();
     const completion=page.locator('[data-forecast-input="progressSmallCompletion"]');
     await completion.fill('120');await completion.dispatchEvent('change');
     await page.waitForFunction(()=>!document.querySelector('.forecast-workspace')._forecastComparison.scenarios.progress.available);

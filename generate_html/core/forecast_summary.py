@@ -108,7 +108,7 @@ D12_SHEET = "首销D1D2预测指标"
 LEGACY_D12_SHEET = "D1_D2预测指标"
 LEGACY_SMALL_CURVE_SHEET = "小订参考曲线"
 SMALL_TOTAL_SHEET = "小订来源总量"
-SMALL_REFERENCE_FIELDS = ("线索数", "热度", "小订总量来源", "小订参考来源", "小订参考总量有效")
+SMALL_REFERENCE_FIELDS = ("小订总量来源", "小订参考来源", "小订参考总量有效")
 D12_HEADERS = [
     "传播名", "代际名", "映射状态", "产品档位", "首销天数", "总小转大", "总直接大定", "总大定", "总小订",
     "D1小转大", "D1小转大/总小转大", "D2小转大", "D2小转大/总小转大",
@@ -246,7 +246,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         curve = item.get("standard_progress", [])
         small_records.append([item["model"], item.get("generation"), date_cell(item.get("small_start_date")),
             date_cell(item.get("small_end_date")), item.get("days"), item.get("total") if item.get("total_complete") or item.get("daily_actual") is False else None,
-            item.get("total_source"), item.get("leads"), item.get("heat"), item.get("source_model") or item["model"],
+            item.get("total_source"), item.get("source_model") or item["model"],
             history_file, item.get("source_sheet"), date_cell(next(iter(item.get("dates") or []), None)),
             *curve, *([None] * (max_curve-len(curve)))])
     for item in data.get("steady_history", []):
@@ -293,12 +293,12 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
          "大定来源", "留存大定来源", "锁单来源", *[stage + field for stage in ("首销", "平销") for field in ("大定", "留存大定", "交车锁单")]],
          resolved_weekly_rows(weekly))
     emit(SMALL_CURVE_SHEET, ["历史传播名", "订单分析代际名", "小订开始", "小订结束", "小订天数", "总小订", "总量来源",
-         "线索数", "热度", "原始名称", "来源文件", "来源Sheet", "首条数据日期", *[f"D{i+1}" for i in range(max_curve)]],
+         "原始名称", "来源文件", "来源Sheet", "首条数据日期", *[f"D{i+1}" for i in range(max_curve)]],
          small_records, {f"D{i+1}" for i in range(max_curve)})
     guide = [
         ["口径", "数量与空值", "单位：单；0是已知无销量，空白是未知。未来日期不视为真实完成日。", None, None],
         ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。分时累计只放by时。", None, None],
-        ["口径", "参考曲线", "小订累计完成度、小订当日数量按小订窗口排列D1、D2；真实日量取by天，完成度除以有效总小订。标准参考只保留完成度，不作为真实日量；线索、热度及参考来源见车型基本信息。", None, None],
+        ["口径", "参考曲线", "小订累计完成度、小订当日数量按小订窗口排列D1、D2；已结束日期真实日量逐日填入，完成度除以有效最终总小订。进行中车型终值未知时完成度留空，不清空已有真实日量；参考来源见车型基本信息。", None, None],
         ["口径", "退订", "逐日和累计小订退订优先小订退订分析，缺失时回退小订及首销数据整理；真实0有效，日量不从缺少前一日基数的累计值猜算。", None, None],
         ["口径", "小订", "小订选配比例分析by天 → 小订退订分析分时汇总 → 历史小订by天", None, None],
         ["口径", "首销前", "小订退订分析 → 整理表", None, None],
@@ -597,8 +597,7 @@ def refresh_reference_tables(book, data, emit, daily, today):
         # unknown/future actual quantities blank in the daily table.
         if master.get("总小订") is None and isinstance(total, (int, float)) and total > 0:
             master["总小订"] = total
-        master.update({"线索数": row.get("线索数"), "热度": row.get("热度"),
-            "小订总量来源": row.get("总量来源"),
+        master.update({"小订总量来源": row.get("总量来源"),
             "小订参考来源": source_text({"file": row.get("来源文件"), "sheet": row.get("来源Sheet")}),
             "小订参考总量有效": isinstance(total, (int, float)) and total > 0})
         status = "未开始" if start and start > today.isoformat() else "进行中" if end and end >= today.isoformat() else "已结束" if end else "时间未维护"
@@ -805,7 +804,7 @@ def read_public_forecast(book, history, today=None):
             "energy": attrs.get("能源类型") or "未维护", "node": attrs.get("发布类型") or attrs.get("发布节点") or "未维护",
             "launch_period": row.get("小订发布时段") or attrs.get("小订发布时段") or "未维护", "small_start_date": start, "small_end_date": end,
             "days": row.get("小订天数") or ((date.fromisoformat(end)-date.fromisoformat(start)).days+1 if start and end else max(len(daily), 1)), "total": total, "total_complete": complete,
-            "total_source": row.get("总量来源"), "leads": row.get("线索数") or 0, "heat": row.get("热度") or 0,
+            "total_source": row.get("总量来源"),
             "daily_orders": daily, "dates": dates, "small_progress": cumulative, "standard_progress": curve,
             "d1_share": (daily[0] or 0) / max(total, 1) if daily and complete else 0,
             "small_hourly_curve": [], "daily_actual": actual, "source_sheet": row.get("来源Sheet"),

@@ -71,6 +71,9 @@ def _stage_records(path, stamp, size):
         records = []
         for values in rows:
             record = dict(zip(headers, values))
+            # Explicit small-order synonym only; never borrow a launch period.
+            if "小订发布时段" not in headers and "小订发布时间" in headers:
+                record["小订发布时段"] = record.get("小订发布时间")
             primary = str(record.get("代际名") or "").strip()
             if not primary:
                 continue
