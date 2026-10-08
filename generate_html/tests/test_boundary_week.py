@@ -331,7 +331,7 @@ class BoundaryWeekTests(unittest.TestCase):
         with self.assertLogs("core.excel", level="WARNING") as logs:
             store.find_chart_data("锁单选配比例", MODEL, "week")
             store.find_chart_data("锁单选配比例", MODEL, "week")
-        chart_logs = [line for line in logs.output if "多文件图表冲突" in line]
+        chart_logs = [line for line in logs.output if "图表总量" in line]
         self.assertEqual(len(chart_logs), 1)
         self.assertIn("2025-01-01~2026-01-04", chart_logs[0])
         self.assertIn("未在边界日衔接", chart_logs[0])

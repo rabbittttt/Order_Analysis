@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles.numbers import is_date_format
+from openpyxl.utils.cell import get_column_letter, coordinate_to_tuple
 
 
 GRAIN_MAP = {"时": "hour", "天": "day", "周": "week", "月": "month"}
@@ -543,6 +544,102 @@ def _period_sort(value, *, keep_aggregate_order=False):
                              for part in re.split(r"(\d+)", text)))
 
 
+def _aggregate_period(labels):
+    return any(re.fullmatch(r"(?:总计|合计|汇总|累计)(?:占比|比例|数量)?|近\d+(?:天|日|周|月)", clean_text(v))
+               for v in labels)
+
+
+def _diagnostic_equal(a, b):
+    # Logging tolerance only: never round or replace the underlying selected value.
+    if a == b:
+        return True
+    return (all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in (a, b))
+            and math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-12))
+
+
+def _cell_location(value):
+    cell = value[4] if len(value) > 4 else None
+    parent = getattr(cell, "parent", None)
+    original = getattr(parent, "_log_origin", None)
+    if original:
+        title, row_offset, col_offset = original
+        return title, f"{get_column_letter(cell.column + col_offset)}{cell.row + row_offset}"
+    return (getattr(parent, "title", getattr(cell, "sheet_title", "位置未记录")),
+            getattr(cell, "coordinate", ""))
+
+
+def _coordinate_ranges(coordinates):
+    columns, other = {}, []
+    for coordinate in sorted(coordinates):
+        if re.fullmatch(r"[A-Z]+[1-9]\d*", coordinate):
+            row, col = coordinate_to_tuple(coordinate)
+            columns.setdefault(col, []).append(row)
+        else:
+            other.append(coordinate)
+    result = []
+    for col, rows in sorted(columns.items()):
+        for _, group in groupby(enumerate(sorted(set(rows))), lambda item: item[1] - item[0]):
+            run = [row for _, row in group]
+            first, last = f"{get_column_letter(col)}{run[0]}", f"{get_column_letter(col)}{run[-1]}"
+            result.append(first if first == last else f"{first}:{last}")
+    return "、".join(result + other)
+
+
+class _OverlapDiagnostics:
+    """Compare only compatible scopes; report unresolved scope once with every affected cell."""
+
+    def __init__(self, coverage):
+        self.coverage = coverage
+        self.notes = {}
+
+    def conflict(self, previous, current, rows, columns, *, nonadditive=False):
+        if _diagnostic_equal(previous[0], current[0]):
+            return None
+        cross_file = previous[3] != current[3]
+        period = next((value for value in columns if _week_period(value)), "")
+        week = _week_period(period)
+        reason, level = "", logging.INFO
+        if cross_file and _aggregate_period(columns):
+            reason = "文件汇总列没有共同统计范围，不作为同周期数值冲突"
+        elif cross_file and nonadditive and week and week[3]:
+            spans = [self.coverage.get(previous[3]), self.coverage.get(current[3])]
+            sides = [_boundary_side(span, week) for span in spans]
+            if set(sides) == {"left", "right"}:
+                reason = "已确认边界周前后分段；比例或排名不能直接累加，当前保留来源值不代表合并全周指标"
+            elif any(span is None for span in spans):
+                reason, level = "缺少文件实际日期范围，无法确认边界周是否分段；请核对来源范围，不能据文件名判断", logging.WARNING
+        if reason:
+            titles = tuple(_cell_location(value)[0] for value in (previous, current))
+            key = (reason, period or "文件汇总", previous[3], current[3], titles)
+            note = self.notes.setdefault(key, {"level": level, "count": 0, "cells": {}})
+            note["count"] += 1
+            for value in (previous, current):
+                title, coordinate = _cell_location(value)
+                note["cells"].setdefault((value[3], title), set()).add(coordinate)
+            return None
+        kind, example = _conflict_location(previous, current, f"{'/'.join(map(str, rows))} @ {'/'.join(map(str, columns))}")
+        if week and week[3]:
+            spans = [self.coverage.get(value[3]) for value in (previous, current)]
+            reason = ("缺少完整逐日日期范围" if any(span is None for span in spans)
+                      else "未在边界日衔接（范围跨界、重叠或缺口），或存在额外来源")
+            ranges = "；".join(f"{value[3]}:{span[0]}~{span[1]}" if span else f"{value[3]}:未识别"
+                              for value, span in zip((previous, current), spans))
+            example += f" | 文件日期范围={ranges} | 未累加说明={reason}"
+        _warn_conflict(example, kind)
+        return kind, example
+
+    def flush(self):
+        for (reason, period, first, second, _), note in self.notes.items():
+            locations = "；".join(f"{file} / Sheet={sheet} / 单元格={_coordinate_ranges(cells)}"
+                                  for (file, sheet), cells in note["cells"].items())
+            spans = "；".join(f"{file}:{span[0]}~{span[1]}" if (span := self.coverage.get(file)) else f"{file}:未识别"
+                              for file in (first, second))
+            label = "统计范围待核对" if note["level"] == logging.WARNING else "统计口径说明"
+            LOGGER.log(note["level"], "[%s] 周期=%s | 原因=%s | 涉及%d处差异 | 全部位置=%s | 文件日期范围=%s | 处理=保留原优先值，不强行合并",
+                       label, period, reason, note["count"], locations, spans)
+        self.notes.clear()
+
+
 def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward_headers=(), time_row=None,
                   column_group_row=None, sparse_headers=(), quantity_columns=False):
     """Union an identified table by business labels; first nonblank value wins.
@@ -557,6 +654,8 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
+    diagnostics = _OverlapDiagnostics(coverage)
+    sku = all("SKU" in item.path.name for item, _ in matches)
     mix_days = set()
     if header_rows == 1 and key_columns == 3:
         for item, sheet in matches:
@@ -655,15 +754,18 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                     if merged is not None:
                         values[key] = merged
                     elif previous[0] != cell.value:
-                        kind, example = _conflict_location(previous, current, f"{'/'.join(row_key)} @ {'/'.join(col_key)}")
                         if key in ratio_sources:
-                            ratio_conflicts.append((key, example, kind))
+                            ratio_conflicts.append((key, previous, current))
                         else:
-                            conflict_count += 1
-                            conflict_kinds[kind] += 1
-                            _warn_conflict(example, kind)
-                            if len(conflicts) < 3:
-                                conflicts.append(example)
+                            issue = diagnostics.conflict(previous, current, row_key, col_key,
+                                nonadditive=sku and (not quantity_columns or '%' in cell.number_format
+                                    or any(re.fullmatch(r'TOP\d+', label, re.I) for label in row_key)))
+                            if issue:
+                                kind, example = issue
+                                conflict_count += 1
+                                conflict_kinds[kind] += 1
+                                if len(conflicts) < 3:
+                                    conflicts.append(example)
     # Counts are additive; percentages are not. Rebuild dimension shares from
     # merged category counts, or weight source shares by the primary order count.
     primary = next((metric for marker, metric in (("锁单", "交车锁单"), ("小订", "小订"), ("大定", "大定"))
@@ -698,13 +800,16 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
             old = values[(row_key, col_key)]
             values[(row_key, col_key)] = (ratio, old[1], "n", old[3], *old[4:])
             resolved_ratios.add((row_key, col_key))
-    for key, example, kind in ratio_conflicts:
+    for key, previous, current in ratio_conflicts:
         if key not in resolved_ratios:
-            conflict_count += 1
-            conflict_kinds[kind] += 1
-            _warn_conflict(example, kind)
-            if len(conflicts) < 3:
-                conflicts.append(example)
+            issue = diagnostics.conflict(previous, current, key[0], key[1], nonadditive=True)
+            if issue:
+                kind, example = issue
+                conflict_count += 1
+                conflict_kinds[kind] += 1
+                if len(conflicts) < 3:
+                    conflicts.append(example)
+    diagnostics.flush()
     book = Workbook()
     target = book.active
     target.title = matches[0][1].title
@@ -753,9 +858,10 @@ def _conflict_location(previous, current, key):
     kind = "同文件重复键" if previous[3] == current[3] else "跨文件冲突"
     def point(value):
         cell = value[4] if len(value) > 4 else None
-        title = cell.parent.title if cell is not None and hasattr(cell, "parent") else getattr(cell, "sheet_title", "位置未记录")
-        coordinate = getattr(cell, "coordinate", "")
-        return f"{value[3]} / Sheet={title} / 单元格={coordinate}: {value[0]}"
+        title, coordinate = _cell_location(value)
+        raw = getattr(cell, "value", value[0])
+        rendered = str(value[0]) if raw == value[0] else f"{raw}（当前合并值={value[0]}）"
+        return f"{value[3]} / Sheet={title} / 单元格={coordinate}: {rendered}"
     example = f"[{kind}] {key}: {point(previous)} / {point(current)}"
     LOGGER.debug("[数值重叠定位] %s", example)
     return kind, example
@@ -770,6 +876,7 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_parts, boundary_reports = {}, {}
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
+    diagnostics = _OverlapDiagnostics(coverage)
     for item, sheet in matches:
         header_row = None
         for row in range(1, min(sheet.max_row, 15) + 1):
@@ -829,12 +936,14 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
                     if merged is not None:
                         record[field] = merged
                     elif previous[0] != value:
-                        conflict_count += 1
-                        kind, example = _conflict_location(previous, current, f"{'/'.join(row_key)} @ {'/'.join(field)}")
-                        conflict_kinds[kind] += 1
-                        _warn_conflict(example, kind)
-                        if len(conflicts) < 3:
-                            conflicts.append(example)
+                        issue = diagnostics.conflict(previous, current, field, row_key)
+                        if issue:
+                            kind, example = issue
+                            conflict_count += 1
+                            conflict_kinds[kind] += 1
+                            if len(conflicts) < 3:
+                                conflicts.append(example)
+    diagnostics.flush()
     target = Workbook().active
     target.title = matches[0][1].title
     if first_header > 1:
@@ -881,6 +990,7 @@ def _merge_option_fee(matches):
         part = Workbook().active
         part.title = sheet.title
         _copy_cells(sheet, part, row_start=period_row)
+        part._log_origin = (sheet.title, period_row - 1, 0)
         parts.append((item, part))
     merged = _merge_matrix(parts, 2, 2, forward_rows=(1,), forward_headers=(1,),
                            column_group_row=1, sparse_headers=(1,))
@@ -925,8 +1035,10 @@ def _merge_partitioned(matches, *, horizontal):
             part.title = sheet.title
             if horizontal:
                 _copy_cells(sheet, part, col_start=start, col_end=end - 1)
+                part._log_origin = (sheet.title, 0, start - 1)
             else:
                 _copy_cells(sheet, part, row_start=start, row_end=end - 1)
+                part._log_origin = (sheet.title, start - 1, 0)
             groups.setdefault(title, []).append((item, part))
     if not groups:
         return None
@@ -1282,19 +1394,27 @@ class WorkbookStore:
         return (exact[0], exact[1], [exact[2]]) if exact else None
 
     def _merge_chart_data(self, matches):
+        public = {key: value for key, value in matches[0][2].items() if not key.startswith("_log_")}
         if len(matches) == 1:
             data = matches[0][2]
-            return {**data, "totals": [0 if value is None else value for value in data["totals"]],
+            return {**public, "totals": [0 if value is None else value for value in data["totals"]],
                     "series": [{**entry, "values": [0 if value is None else value for value in entry["values"]]}
                                for entry in data["series"]]}
         periods, series, totals = set(), {}, {}
-        conflicts = 0
-        samples = []
-        reasons = {}
         boundary_parts, boundary_reports, observations, total_sources = {}, {}, {}, {}
         coverage = {item.path.name: _source_date_range(item) for item, _, _ in matches}
+        diagnostics = _OverlapDiagnostics(coverage)
+        total_points, series_points = {}, {}
+        log_key = tuple((str(item.path), sheet.title, data["subject"], data.get("headline", "")) for item, sheet, data in matches)
+        emit = log_key not in self._chart_conflict_logs
         rate_conflicts, resolved_rates = [], set()
         for item, sheet, data in matches:
+            def point(value, index, name):
+                source_row = data.get("_log_rows", {}).get(name)
+                source_cols = data.get("_log_columns", [])
+                coordinate = f"{get_column_letter(source_cols[index])}{source_row}" if source_row and index < len(source_cols) else "位置未记录"
+                cell = SimpleNamespace(value=value, sheet_title=sheet.title, coordinate=coordinate)
+                return (value, "", "n", item.path.name, cell)
             for index, raw_period in enumerate(data["periods"]):
                 period = _source_key(raw_period)
                 periods.add(period)
@@ -1307,38 +1427,26 @@ class WorkbookStore:
                 if value is not None and period not in totals:
                     totals[period] = value
                     total_sources[period] = item.path.name
+                    total_points[period] = point(value, index, "总计")
                 elif value is not None:
                     merged = _add_boundary_week((totals[period], "", "n", total_sources[period]),
                                                 (value, "", "n", item.path.name), (period, "总量"), period,
                                                 boundary_parts, boundary_reports, coverage)
                     if merged is not None:
                         totals[period] = merged[0]
-                    elif totals[period] != value:
-                        conflicts += 1
-                        if len(samples) < 3 and period not in samples:
-                            samples.append(period)
-                            week = _week_period(period)
-                            pair = [coverage.get(total_sources[period]), coverage.get(item.path.name)]
-                            if boundary:
-                                sides = [_boundary_side(span, week) for span in pair]
-                                reasons[period] = ("缺少完整逐日日期范围" if any(span is None for span in pair) else
-                                                   "未在边界日衔接（范围跨界、重叠或缺口）" if None in sides or sides[0] == sides[1] else
-                                                   "数量无效或额外文件不重复追加")
-                            else:
-                                reasons[period] = "普通周期按原优先级取值"
+                    elif totals[period] != value and emit:
+                        previous = (totals[period], *total_points[period][1:])
+                        diagnostics.conflict(previous, point(value, index, "总计"), (data["subject"], "图表总量"), (period,))
                 for entry in data["series"]:
                     values = series.setdefault(entry["name"], {})
                     value = entry["values"][index]
                     if value is not None and period not in values:
                         values[period] = value
+                        series_points[(entry["name"], period)] = point(value, index, entry["name"])
                     elif value is not None and values[period] != value:
-                        if boundary:
-                            rate_conflicts.append((entry["name"], period))
-                        else:
-                            conflicts += 1
-                            if len(samples) < 3 and period not in samples:
-                                samples.append(period)
-                                reasons[period] = "普通周期占比按原优先级取值"
+                        if emit:
+                            rate_conflicts.append((entry["name"], period, series_points[(entry["name"], period)],
+                                                   point(value, index, entry["name"])))
         for (period, _), weights in boundary_parts.items():
             denominator = sum(weight for _, weight in weights)
             if len(weights) < 2 or denominator <= 0:
@@ -1350,27 +1458,17 @@ class WorkbookStore:
                     continue
                 series.setdefault(name, {})[period] = sum(rate * weight for rate, weight in pieces if weight > 0) / denominator
                 resolved_rates.add((name, period))
-        for name, period in rate_conflicts:
-            if (name, period) not in resolved_rates:
-                conflicts += 1
-                if len(samples) < 3 and period not in samples:
-                    samples.append(period)
-                    reasons[period] = "占比缺少可靠的合并分母或来源占比"
-        log_key = tuple((str(item.path), sheet.title, data["subject"], data.get("headline", "")) for item, sheet, data in matches)
+        for name, period, previous, current in rate_conflicts:
+            accepted_sources = {source for source, _ in boundary_parts.get((period, "总量"), [])}
+            if (name, period) not in resolved_rates or not {previous[3], current[3]} <= accepted_sources:
+                diagnostics.conflict(previous, current, (matches[0][2]["subject"], name, "图表占比"), (period,), nonadditive=True)
+        diagnostics.flush()
         if boundary_reports and log_key not in self._boundary_chart_logs:
             _log_boundary_weeks(f"图表主体={matches[0][2]['subject']}", list(boundary_reports.values()))
             self._boundary_chart_logs.add(log_key)
         order = sorted(periods, key=_period_sort)
-        if conflicts and log_key not in self._chart_conflict_logs:
-            ranges = [f"{source}:{span[0]}~{span[1]}" if span else f"{source}:未识别"
-                      for source, span in list(coverage.items())[:6]]
-            if len(coverage) > 6:
-                ranges.append(f"等共{len(coverage)}个文件")
-            LOGGER.warning("[多文件图表冲突] 主体=%s | 共%d项 | 冲突位置保留首个值，不重复累加 | 周期示例=%s | 文件日期范围=%s | 未累加说明=%s",
-                           matches[0][2]["subject"], conflicts, "、".join(samples), "、".join(ranges),
-                           "；".join(f"{period}:{reasons[period]}" for period in samples))
-            self._chart_conflict_logs.add(log_key)
-        return {**matches[0][2], "periods": order,
+        self._chart_conflict_logs.add(log_key)
+        return {**public, "periods": order,
                 "totals": [totals.get(period, 0) for period in order],
                 "series": [{"name": name, "values": [values.get(period, 0) for period in order]}
                            for name, values in series.items()],
@@ -1394,6 +1492,7 @@ class WorkbookStore:
         if not columns:
             return None
         series = []
+        log_rows = {}
         # Missing cells must remain missing until cross-file fallback finishes.
         totals = [None] * len(columns)
         for data_row in range(header_row + 1, sheet.max_row + 1):
@@ -1406,12 +1505,14 @@ class WorkbookStore:
                     break
                 continue
             if label == "总计":
+                log_rows[label] = data_row
                 totals = [cell_number(sheet.cell(data_row, col))
                           if sheet.cell(data_row, col).value not in (None, "") else None for col in columns]
                 break
             values = [cell_number(sheet.cell(data_row, col), rate=True)
                       if sheet.cell(data_row, col).value not in (None, "") else None for col in columns]
             series.append({"name": label, "values": values})
+            log_rows[label] = data_row
         if not series:
             return None
         block_subject = clean_text(sheet.cell(row, 1).value)
@@ -1423,6 +1524,8 @@ class WorkbookStore:
             "series": series,
             "totals": totals,
             "image_key": image_key,
+            "_log_rows": log_rows,
+            "_log_columns": columns,
         }
 
     def _extract_chart_image(self, item: WorkbookItem, sheet: Any, subject_row: int, target: str) -> str | None:

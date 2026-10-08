@@ -323,7 +323,9 @@ class MultiSourceTests(unittest.TestCase):
             chart = store.find_chart_data("大定选配比例", MODEL, "day")[2]
         self.assertEqual(chart["totals"], [0])
         self.assertEqual(chart["series"][0]["values"], [0])
-        self.assertEqual(len(logs.output), 1)
+        self.assertEqual(len(logs.output), 2)
+        self.assertTrue(any("单元格=C4" in line for line in logs.output))
+        self.assertTrue(any("单元格=C3" in line for line in logs.output))
 
     def test_chart_all_blank_keeps_existing_display_contract(self):
         for books in ([self.chart_book(None, None)], [self.chart_book(None, None), self.chart_book(None, None)]):

@@ -716,16 +716,13 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     started = perf_counter()
     timings = {}
     mapping, aliases = load_mapping(mapping_path)
-    missing_attributes = [
-        record["历史传播名"]
-        for record in mapping.values()
-        if not all(usable_attribute(record.get(field)) != "未维护" for field in ("产品档位", "能源类型", "发布类型", "发布时段"))
-    ]
-    if missing_attributes:
-        LOGGER.warning(
-            "%s 的“车型基本信息”Sheet有%d行车型属性未填完整，将对缺失字段使用默认值：%s",
-            mapping_path.name, len(missing_attributes), "、".join(missing_attributes),
-        )
+    for record in mapping.values():
+        missing_attributes = [field for field in ("产品档位", "能源类型", "发布类型", "发布时段")
+                              if usable_attribute(record.get("首销发布时段") or record.get(field)
+                                  if field == "发布时段" else record.get(field)) == "未维护"]
+        if missing_attributes:
+            LOGGER.warning("[车型属性缺失] 代际=%s | 文件=%s | 缺失字段=%s | 处理=保留未维护标记，影响相应参考匹配；请补齐整理表基本信息",
+                           record["历史传播名"], mapping_path.name, "、".join(missing_attributes))
     source_workbook = load_workbook(source, read_only=True, data_only=True)
     try:
         header_index = workbook_header_index(source_workbook)
@@ -761,7 +758,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         if key not in source_keys and normalize(record.get("订单分析代际名")) not in source_keys
     ]
     if extra_mappings:
-        LOGGER.warning("映射文件中有%d个传播名未出现在当前原始汇总：%s", len(extra_mappings), "、".join(extra_mappings))
+        LOGGER.info("[来源说明] 基本信息中%d个代际未出现在当前整理表汇总，可由其他订单来源提供数据：%s", len(extra_mappings), "、".join(extra_mappings))
 
     summary_identity_keys: set[str] = set()
     for model in models:
@@ -1538,7 +1535,7 @@ def resolve_source_path(requested: Path) -> Path:
     preferred = [path for path in candidates if "数据整理" in path.name and "副本" not in path.name and "修正前" not in path.name]
     pool = preferred or candidates
     if len(pool) == 1:
-        LOGGER.warning("默认原始文件名不存在，自动使用同目录唯一候选：%s", pool[0].name)
+        LOGGER.info("[来源选择] 默认原始文件名不存在，使用同目录唯一候选：%s", pool[0].name)
         return pool[0]
     raise FileNotFoundError(
         f"找不到原始历史文件：{requested}；同目录候选："
@@ -1579,7 +1576,7 @@ def resolve_mapping_path(requested: Path) -> Path:
     if requested == DEFAULT_MAPPING:
         legacy = next((path for path in LEGACY_MAPPINGS if path.exists()), None)
         if legacy:
-            LOGGER.warning("默认车型基本信息文件不存在，兼容使用旧文件名：%s", legacy.name)
+            LOGGER.info("[来源选择] 默认车型基本信息文件不存在，兼容使用旧文件名：%s", legacy.name)
             return legacy
     return requested
 

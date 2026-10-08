@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import os
 import shutil
 import subprocess
@@ -32,14 +33,43 @@ PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE
 AUTO_OPEN_HTML = True
 LOGGER = logging.getLogger("order_analysis")
 BUILD_DIAGNOSTICS: list[str] = []
+DIAGNOSTIC_COUNTS = {"WARNING": 0, "ERROR": 0}
 
 
 class DiagnosticCollector(logging.Handler):
     """Keep every emitted warning/error for the user-facing build report."""
 
+    def __init__(self):
+        super().__init__()
+        self.seen = set()
+
     def emit(self, record: logging.LogRecord) -> None:
-        if record.levelno >= logging.WARNING:
-            BUILD_DIAGNOSTICS.append(f"{record.levelname} | {record.getMessage()}")
+        if record.levelno >= logging.WARNING and not getattr(record, "diagnostic_continuation", False):
+            DIAGNOSTIC_COUNTS["ERROR" if record.levelno >= logging.ERROR else "WARNING"] += 1
+            message = f"{record.levelname} | {record.getMessage()}"
+            if message not in self.seen:
+                self.seen.add(message)
+                BUILD_DIAGNOSTICS.append(message)  # Only the final inventory is unique; console/file output is untouched.
+
+
+def relay_refresh_line(line: str, previous_level: int = logging.INFO) -> int:
+    """Preserve severity, strip duplicate level prefixes, and keep tracebacks as errors."""
+    text = line.rstrip("\r\n")
+    if not text:
+        return previous_level
+    prefix = re.match(r"^\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s*(.*)$", text)
+    continuation = False
+    if prefix:
+        level, text = getattr(logging, prefix[1]), prefix[2]
+    elif text.startswith("Traceback (most recent call last)"):
+        level, continuation = logging.ERROR, previous_level >= logging.ERROR
+    elif re.search(r":\s*\w*Warning:", text):
+        level = logging.WARNING
+    else:
+        level = previous_level if previous_level >= logging.WARNING else logging.INFO
+        continuation = previous_level >= logging.WARNING
+    LOGGER.log(level, "[销量预测刷新] %s", text, extra={"diagnostic_continuation": continuation})
+    return level
 
 
 def refresh_sales_forecast_data(config: dict[str, Any], input_dir: Path | None = None) -> None:
@@ -54,7 +84,7 @@ def refresh_sales_forecast_data(config: dict[str, Any], input_dir: Path | None =
     child_env = os.environ.copy()
     child_env["PYTHONIOENCODING"] = "utf-8"
     child_env["PYTHONUTF8"] = "1"
-    command = [sys.executable, str(script)]
+    command = [sys.executable, "-u", str(script)]
     if LOGGER.isEnabledFor(logging.DEBUG):
         command.append("--debug")
     if input_dir is not None:
@@ -62,29 +92,23 @@ def refresh_sales_forecast_data(config: dict[str, Any], input_dir: Path | None =
         command.extend(["--output", str((input_dir / SUMMARY_NAME).resolve())])
     if config.get("forecast_as_of_date"):
         command.extend(["--as-of-date", str(config["forecast_as_of_date"])])
-    result = subprocess.run(
+    with subprocess.Popen(
         command,
         cwd=script.parent,
         env=child_env,
         text=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
         encoding="utf-8",
         errors="replace",
-        check=False,
-    )
-    for line in result.stdout.splitlines():
-        if line.startswith("[ERROR]"):
-            LOGGER.error("[销量预测刷新] %s", line)
-        elif line.startswith("[WARNING]"):
-            LOGGER.warning("[销量预测刷新] %s", line)
-        elif line.startswith("[DEBUG]"):
-            LOGGER.debug("[销量预测刷新] %s", line)
-        else:
-            LOGGER.info("[销量预测刷新] %s", line)
-    for line in result.stderr.splitlines():
-        LOGGER.warning("[销量预测刷新] %s", line)
-    if result.returncode:
-        raise RuntimeError(f"销量预测二次处理刷新失败，退出码 {result.returncode}")
+    ) as process:
+        level = logging.INFO
+        for line in process.stdout:
+            level = relay_refresh_line(line, level)
+        returncode = process.wait()
+    if returncode:
+        raise RuntimeError(f"销量预测二次处理刷新失败，退出码 {returncode}")
     LOGGER.info("销量预测二次处理刷新：完成")
 
 
@@ -129,6 +153,7 @@ def configure_runtime(output_dir: Path, debug: bool = False) -> Path:
     file_handler = logging.FileHandler(log_file, mode="w", encoding="utf-8")
     file_handler.setFormatter(logging.Formatter(fmt, datefmt="%H:%M:%S"))
     BUILD_DIAGNOSTICS.clear()
+    DIAGNOSTIC_COUNTS.update(WARNING=0, ERROR=0)
     diagnostic_handler = DiagnosticCollector()
     logging.basicConfig(
         level=logging.DEBUG if debug else logging.INFO,
@@ -344,9 +369,10 @@ def build(
         LOGGER.info("生成HTML体积: %.1fMB", output_size / 1024 / 1024)
         if output_size > 35 * 1024 * 1024:
             LOGGER.warning("[性能校验] 单HTML超过35MB，建议优先拆分大底表或图表资源")
+        emitted_messages = "\n".join(BUILD_DIAGNOSTICS)
         warnings = list(dict.fromkeys([
             *BUILD_DIAGNOSTICS,
-            *(f"WARNING | {message}" for message in runtime_warnings if message not in "\n".join(BUILD_DIAGNOSTICS)),
+            *(f"WARNING | {message}" for message in runtime_warnings if message not in emitted_messages),
         ]))
         stage_started = perf_counter()
         manifest_path = output_file.parent / "build_manifest.json"
@@ -370,7 +396,8 @@ def build(
             legacy_warning_file.unlink()
         manifest_seconds = perf_counter() - stage_started
         if warnings:
-            LOGGER.info("诊断完成：发现 %d 条不同问题，告警已按实际发生逐条打印到本次运行日志（包含重复告警）", len(warnings))
+            LOGGER.info("诊断完成：WARNING %d条，ERROR %d条；不同诊断记录%d条；全部问题已写入本次日志（重复发生照常打印）",
+                        DIAGNOSTIC_COUNTS["WARNING"], DIAGNOSTIC_COUNTS["ERROR"], len(warnings))
         else:
             LOGGER.info("校验完成：没有发现警告")
         module_summary = "；".join(

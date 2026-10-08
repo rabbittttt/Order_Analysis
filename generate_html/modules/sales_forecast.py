@@ -1327,8 +1327,8 @@ def _read_steady_history(
             if gaps:
                 LOGGER.warning(
                     "[销量预测字段校验] 代际=%s | 文件=%s | Sheet=%s | 平销锁单周不连续 | "
-                    "未知缺口%d处，示例=%s | 处理=保留有效周与真实日，仅跳过跨缺口环比，不把未知周补0",
-                    generation, lock_item.path.name, sheet.title, len(gaps), "、".join(gaps[:3]),
+                    "未知缺口%d处，全部缺口=%s | 处理=保留有效周与真实日，仅跳过跨缺口环比，不把未知周补0",
+                    generation, lock_item.path.name, sheet.title, len(gaps), "、".join(gaps),
                 )
             if not weeks and not daily:
                 continue
@@ -1821,7 +1821,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             source = SourceRef(small_mix_item.path.name, sheet.title, "小订选配比例by天真实小订")
             campaigns, overlap = _small_campaign_rows(model, daily_rows, stage_windows or {})
             if overlap:
-                LOGGER.warning("[二级代际归属] 代际=%s | 小订窗口重叠日期%d个，示例=%s | 一级小订无法拆分，不复制给多个版本；按各版本退订分时／历史整理表补缺", model, len(overlap), "、".join(overlap[:3]))
+                LOGGER.warning("[二级代际归属] 代际=%s | 小订窗口重叠日期%d个，全部日期=%s | 一级小订无法拆分，不复制给多个版本；按各版本退订分时／历史整理表补缺", model, len(overlap), "、".join(overlap))
             for profile_name, owned_rows in campaigns.items():
                 profile = profiles.setdefault(profile_name, {"model": profile_name, "days": [], "hourly_days": [], "small_hourly_days": []})
                 by_date = {row["date"]: row for row in profile.get("small_daily_days", [])}
@@ -2629,10 +2629,11 @@ def _target_options(
                     profile["model"], parsed_start.isoformat(), parsed_end.isoformat(),
                     date_span, int(_number(maintained_days)),
                 )
-        elif parsed_start and not parsed_end and _number(maintained_days) > 0:
-            LOGGER.warning(
-                "[销量预测估算] 代际=%s | 首销截止日期缺失 | "
-                "处理=按明确维护的%d天推导截止日，请补齐截止日期",
+        elif (parsed_start and not end_date and _number(maintained_days) > 0
+              and math.isfinite(_number(maintained_days)) and float(_number(maintained_days)).is_integer()):
+            LOGGER.info(
+                "[日期推导] 代际=%s | 首销截止日期未单独维护 | "
+                "处理=按明确开始日期及%d天计算截止日",
                 profile["model"], int(_number(maintained_days)),
             )
         if (window or {}).get("small_start_date") and not (window or {}).get("small_end_date"):
