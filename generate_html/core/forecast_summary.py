@@ -772,8 +772,22 @@ def read_public_forecast(book, history, today=None):
                     (not first_date or iso_day(r.get("日期")) ==
                      (date.fromisoformat(first_date) + timedelta(days=lifecycle(r)-1)).isoformat()))]
         selected.sort(key=lambda r: iso_day(r.get("日期")) if canonical else lifecycle(r))
-        daily = [r.get("小订数量") for r in selected]
-        dates = [iso_day(r.get("日期")) for r in selected]
+        if canonical:
+            # A historical reference uses completed calendar days, not row order.
+            # Keep live snapshots in profiles above; missing/duplicate days here
+            # stay unknown. Confirmed sparse-source zeros were resolved upstream.
+            by_date = {}
+            for observation in selected:
+                day = calendar_day(observation.get("日期"))
+                if day and day < current.isoformat():
+                    by_date[day] = None if day in by_date else observation.get("小订数量")
+            last = max(by_date, default="")
+            dates = [(date.fromisoformat(start) + timedelta(days=i)).isoformat()
+                     for i in range((date.fromisoformat(last) - date.fromisoformat(start)).days + 1)] if start and last else []
+            daily = [by_date.get(day) for day in dates]
+        else:
+            daily = [r.get("小订数量") for r in selected]
+            dates = [iso_day(r.get("日期")) for r in selected]
         curve = [v for k, v in row.items() if k.startswith("D") and k[1:].isdigit()]
         while curve and curve[-1] is None:
             curve.pop()
