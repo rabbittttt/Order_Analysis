@@ -176,6 +176,12 @@ class SubjectParsingTests(unittest.TestCase):
         self.assertEqual(len(view["periods"]), 3)
         summary = view["pages"]["全部阶段"]["sections"][0]["data"]["rows"]
         self.assertEqual(summary[1][4], 19)
+        for page in view["pages"].values():
+            for item in page["sections"]:
+                if item['kind'] == 'launch_composite':
+                    self.assertEqual(item['data']['grain'], 'day')
+                    self.assertIn('当日', item['meta'])
+                    self.assertIn('不累计', item['meta'])
 
     def test_launch_small_conversion_kpi_uses_source_total_small_rate(self):
         workbook = Workbook()
@@ -638,6 +644,9 @@ class SubjectParsingTests(unittest.TestCase):
         week_page = dashboard.views["week"]["pages"][dashboard.views["week"]["default_period"]]
         self.assertEqual(dashboard.views["week"]["default_period"], "26WK24")
         self.assertIn("launch_hourly", [item["kind"] for item in week_page["sections"]])
+        source_chart = next(item for item in week_page['sections'] if item['kind'] == 'launch_composite')
+        self.assertEqual(source_chart['data']['grain'], 'week')
+        self.assertIn('当周直接大定', source_chart['meta'])
 
     def test_generation_name_ending_in_total_is_preserved(self):
         name = sheet_subject("问界 M9 2026款总计by周")

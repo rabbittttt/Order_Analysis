@@ -90,7 +90,7 @@ class LaunchRhythmModule:
                 phase_number = _phase_number(sheet.title)
                 campaign_label = stage_label(sheet_subject(sheet.title), subject.name)
                 hourly = next((found for found in hourly_matches if sheet_subject(found[1].title) == sheet_subject(sheet.title)), None) if campaign_label else self._matching_hourly(hourly_matches, phase_number, len(matches))
-                phase = self._build_phase(item, sheet, phase_number or index, hourly, len(matches) > 1 or phase_number is not None, campaign_label)
+                phase = self._build_phase(item, sheet, phase_number or index, hourly, len(matches) > 1 or phase_number is not None, campaign_label, grain=grain)
                 if phase:
                     phases.append(phase)
                     sources.extend(phase["sources"])
@@ -121,7 +121,7 @@ class LaunchRhythmModule:
             return next((found for found in hourly_matches if _phase_number(found[1].title) == phase_number), None)
         return hourly_matches[0] if phase_count == 1 and hourly_matches else None
 
-    def _build_phase(self, item, sheet, phase_number: int, hourly, show_phase: bool, campaign_label: str = "") -> dict | None:
+    def _build_phase(self, item, sheet, phase_number: int, hourly, show_phase: bool, campaign_label: str = "", grain: str = "day") -> dict | None:
         source = SourceRef(item.path.name, sheet.title, "首销期订单节奏")
         period_columns = [col for col in range(2, sheet.max_column + 1) if clean_text(sheet.cell(1, col).value) and clean_text(sheet.cell(1, col).value) != "总计"]
         periods = [clean_text(sheet.cell(1, col).value) for col in period_columns]
@@ -151,6 +151,7 @@ class LaunchRhythmModule:
         cumulative_small_rate = latest("累计小订转化率") or latest("累计小转大率")
         cumulative_small_base = safe_rate(cumulative_small, cumulative_small_rate) if cumulative_small_rate > 0 else 0
         cumulative_direct = latest("累计直接大定数量")
+        source_note = f"{'当周' if grain == 'week' else '当日'}直接大定 / {'当周' if grain == 'week' else '当日'}小订转大 · 数量不累计，转化率和进度仍为累计口径"
         matrix_rows = [[name, *[f"{value * 100:.1f}%" if value is not None and ("率" in name or "进度" in name) else value for value in values]] for name, values in metrics.items()]
         page = {
             "kpis": [
@@ -160,7 +161,7 @@ class LaunchRhythmModule:
                 kpi("累计直接大定占比", safe_rate(cumulative_direct, cumulative_order) * 100, "%", "累计大定来源", "blue"),
             ],
             "sections": [
-                section("launch_composite", f"{campaign_label or f'第{phase_number}期'} · 首销订单来源" if show_phase else "首销订单来源", {"periods": periods, "metrics": metrics}, f"{start_date or '日期缺失'} 至 {end_date or '日期缺失'} · 各期独立计算" if show_phase else "累计直接大定 / 累计小订转大 / 来源进度", source=source),
+                section("launch_composite", f"{campaign_label or f'第{phase_number}期'} · 首销订单来源" if show_phase else "首销订单来源", {"periods": periods, "metrics": metrics, "grain": grain}, f"{start_date or '日期缺失'} 至 {end_date or '日期缺失'} · {source_note}" if show_phase else source_note, source=source),
                 section("matrix", f"{campaign_label or f'第{phase_number}期'} · 完整指标" if show_phase else "首销期完整指标", table(["首销指标", *periods], matrix_rows), f"全部 {len(metrics)} 项指标 × {len(periods)} 个周期", source=source),
             ],
         }
@@ -181,7 +182,7 @@ class LaunchRhythmModule:
             "days": len(periods), "orders": cumulative_order, "net": cumulative_net,
             "small": cumulative_small, "small_rate": cumulative_small_rate,
             "small_base": cumulative_small_base, "direct": cumulative_direct,
-            "page": page, "metrics": metrics, "periods": periods,
+            "page": page, "metrics": metrics, "periods": periods, "grain": grain,
             "source": source, "sources": phase_sources,
         }
 
@@ -216,8 +217,8 @@ class LaunchRhythmModule:
         for phase in phases:
             sections.append(section(
                 "launch_composite", (phase.get("campaign_label") or f"第{phase['phase']}期") + " · 首销订单来源",
-                {"periods": phase["periods"], "metrics": phase["metrics"]},
-                f"{phase['start_date'] or '日期缺失'} 至 {phase['end_date'] or '日期缺失'} · 与其他期次断开显示",
+                {"periods": phase["periods"], "metrics": phase["metrics"], "grain": phase["grain"]},
+                f"{phase['start_date'] or '日期缺失'} 至 {phase['end_date'] or '日期缺失'} · {'当周' if phase['grain'] == 'week' else '当日'}来源，数量不累计，比例仍累计 · 与其他期次断开显示",
                 source=phase["source"],
             ))
         return {

@@ -36,17 +36,50 @@ assert.strictEqual(fmt(null),'');
         script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
         renderer = script[script.index('  function renderLaunch(data){'):script.index('  function renderSmallOrderRhythm(rows){')]
         dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;"
-        data = "{periods:['D1','D2','D3','D4'],metrics:{'累计小订转大定数量':[20,null,40,0],'累计直接大定数量':[60,null,160,0],'累计小订转化率':[.1,null,.2,0]}}"
+        data = "{periods:['D1','D2','D3','D4'],metrics:{'当日小订转大定数量':[20,null,40,0],'当日直接大定数量':[60,null,160,0],'累计小订转大定数量':[999,999,999,999],'累计直接大定数量':[9999,9999,9999,9999],'累计小订转化率':[.1,null,.2,0]}}"
         result = subprocess.run([node, '-e', dependencies + renderer + 'process.stdout.write(renderLaunch(' + data + '));'],
                                 text=True, encoding='utf-8', capture_output=True, check=True)
         self.assertEqual(result.stdout.count('<circle'), 3)
         self.assertEqual(result.stdout.count('<rect'), 6)
-        self.assertIn('>0.0%</text>', result.stdout)
+        self.assertIn('>0</text>', result.stdout)
         self.assertIn('尚未更新或不完整', result.stdout)
+        self.assertIn('D3 · 当日直接大定 160 · 当日小订转大 40 · 来源合计 200', result.stdout)
+        self.assertIn('累计小转大率（累计小转大÷总小订）', result.stdout)
+        self.assertIn('>20.0%</text>', result.stdout)
+        self.assertNotIn('>999</text>', result.stdout)
+        self.assertNotIn('>9999</text>', result.stdout)
         path = re.search(r'<path d="([^"]*)"', result.stdout)[1]
         self.assertEqual(path.count('M'), 2)
         self.assertEqual(path.count('L'), 1)
         self.assertNotIn('NaN', result.stdout)
+
+    def test_launch_sources_only_use_current_period_and_do_not_fill_unknown_with_zero(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
+        renderer = script[script.index('  function renderLaunch(data){'):script.index('  function renderSmallOrderRhythm(rows){')]
+        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;"
+        checks = r'''
+const assert=require('assert');
+const metrics={'当日大定数量':[100,50,30],'当日小订转大数量':[40,null,10]};
+const html=renderLaunch({periods:['D1','D2','D3'],metrics});
+assert(html.includes('D1 · 当日直接大定 60 · 当日小订转大 40 · 来源合计 100'));
+assert(html.includes('D3 · 当日直接大定 20 · 当日小订转大 10 · 来源合计 30'));
+assert.equal((html.match(/<rect/g)||[]).length,4);
+assert.equal((html.match(/尚未更新或不完整/g)||[]).length,1);
+for(const missing of [{'累计直接大定数量':[100],'累计小订转大数量':[40]}, {'当日大定数量':[100]}]){
+ const unavailable=renderLaunch({periods:['D1'],metrics:missing});
+ assert(!unavailable.includes('<rect'));
+ assert(unavailable.includes('尚未更新或不完整'));
+}
+const week=renderLaunch({periods:['W1','W2','W3'],metrics,grain:'week'});
+assert(week.includes('当周直接大定'));assert(!week.includes('当日'));assert(!week.includes('累计直接大定</span>'));
+const rates=renderLaunch({periods:['D1','D2'],metrics:{'当日小订转大数量':[10,10],'当日直接大定数量':[30,20],'累计小订转化率':[.1,.2],'累计直接大定进度':[.6,1]}});
+assert(rates.includes('>20.0%</text>'));assert(rates.includes('>100.0%</text>'));
+assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · 来源合计 30'));
+'''
+        subprocess.run([node, '-e', dependencies + renderer + checks], check=True, capture_output=True)
 
     def test_day_period_selector_uses_chronological_order(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
