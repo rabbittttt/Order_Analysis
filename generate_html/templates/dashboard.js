@@ -1172,11 +1172,13 @@
       const normalLevel=item=>{const values=normalWeeks(item).slice(-4);return values.length?values.reduce((a,b)=>a+b,0)/values.length:NaN};
       const normalRatio=item=>{const rows=(item?.weeks||[]).filter(row=>row.end_date<today),values=normalWeeks(item),ratios=values.slice(1).map((value,i)=>values[i]>0&&Date.parse(rows[i+1].start_date)-Date.parse(rows[i].start_date)===604800000?value/values[i]:NaN).filter(Number.isFinite).slice(-4);return ratios.length?ratios.reduce((a,b)=>a+b,0)/ratios.length:NaN};
       const launchProfile=context.findStageActual(target.name,today>target.endDate?'ended':'active');
+      // Remove the calendar effect of the source stage before applying steady factors.
+      const launchCalendarFactor=date=>context.factors('launch')[calendar(date,0).type]||1;
       const upstream=root._forecastComparison,upstreamScenario=upstream?.scenarios?.progress?.available?upstream.scenarios.progress:upstream?.scenarios?.parameter,upstreamMethod=upstreamScenario===upstream?.scenarios?.progress?'方法一':'方法二';
       const projectedRows=steadyNotStarted&&upstream?.name===target.name&&upstreamScenario?.available&&!upstreamScenario.bridgeError?(upstreamScenario.rows||[]).map(row=>({...row,lock:row.actual&&Number.isFinite(row.lock)?row.lock:row.gross*(upstreamScenario.gross>0?upstreamScenario.lock/upstreamScenario.gross:0)})):[];
-      const projectedBaseline=window.ForecastMath.launchDirectLockBaseline({rows:projectedRows,launchDate:target.launchDate,endDate:target.endDate,today:target.steadyStartDate,factor});
+      const projectedBaseline=window.ForecastMath.launchDirectLockBaseline({rows:projectedRows,launchDate:target.launchDate,endDate:target.endDate,today:target.steadyStartDate,factor:launchCalendarFactor});
       const useProjection=steadyNotStarted&&projectedBaseline.available;
-      const launchBaseline=window.ForecastMath.launchDirectLockBaseline({rows:launchProfile?.days||[],launchDate:target.launchDate,endDate:target.endDate,today,factor});
+      const launchBaseline=window.ForecastMath.launchDirectLockBaseline({rows:launchProfile?.days||[],launchDate:target.launchDate,endDate:target.endDate,today,factor:launchCalendarFactor});
       const hasLaunch=!!target.launchDate&&today>target.launchDate;
       const ownDaily=window.ForecastMath.recentSteadyBaseline({rows:own?.daily||[],startDate:target.steadyStartDate,today,factor});
       const ownLevel=normalLevel(own),ownRatio=normalRatio(own),hasOwn=ownDaily.available||Number.isFinite(ownLevel);
