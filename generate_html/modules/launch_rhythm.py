@@ -2,15 +2,43 @@ from __future__ import annotations
 
 import re
 import math
+import logging
 from datetime import date, datetime
 
 from openpyxl.utils.datetime import from_excel
 
 from core.components import kpi, section, table
-from core.excel import WorkbookStore, cell_number, clean_text, display_period, safe_number, safe_rate
+from core.excel import WorkbookStore, cell_number, clean_text, display_period, safe_rate
 from core.models import Dashboard, SourceRef, Subject
 from core.excel import sheet_subject
 from core.model_identity import stage_label
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _hourly_timestamp(cell) -> datetime | None:
+    """Read the actual clock time; Hn is a column sequence, not an hour of day."""
+    value = cell.value
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            timestamp = from_excel(value, epoch=cell.parent.parent.epoch)
+            return timestamp if isinstance(timestamp, datetime) else None
+        except (TypeError, ValueError, OverflowError):
+            return None
+    text = clean_text(value).replace('年', '-').replace('月', '-').replace('日', ' ').replace('：', ':')
+    match = re.fullmatch(
+        r'(\d{4}|\d{2})[-/.](\d{1,2})[-/.](\d{1,2})[ T]+(\d{1,2}):(\d{1,2})(?::(\d{1,2})(?:\.\d+)?)?', text,
+    )
+    if match:
+        year, month, day, hour, minute, second = (int(part or 0) for part in match.groups())
+        try:
+            return datetime(year + 2000 if year < 100 else year, month, day, hour, minute, second)
+        except ValueError:
+            pass
+    return None
 
 
 def _phase_number(sheet_name: str) -> int | None:
@@ -33,6 +61,7 @@ def _date_label(cell) -> str:
 def _read_hourly(sheet) -> tuple[list[dict], str]:
     rows: list[dict] = []
     start_label = ""
+    invalid_times = []
     metric_rows = {
         clean_text(sheet.cell(row, 1).value): row
         for row in range(3, sheet.max_row + 1)
@@ -41,22 +70,14 @@ def _read_hourly(sheet) -> tuple[list[dict], str]:
     for col in range(2, sheet.max_column + 1):
         time_cell = sheet.cell(2, col)
         time_value = time_cell.value
-        if time_value in (None, ""):
+        if time_value in (None, "") or clean_text(time_value) in ("总计", "合计"):
             continue
-        if isinstance(time_value, (datetime, date)):
-            period = time_value.strftime("%Y-%m-%d")
-            hour = time_value.hour if isinstance(time_value, datetime) else col - 2
-            timestamp_label = time_value.strftime("%Y-%m-%d %H:%M") if isinstance(time_value, datetime) else f"{period} {int(hour):02d}:00"
-        elif isinstance(time_value, (int, float)):
-            timestamp = from_excel(time_value, epoch=sheet.parent.epoch)
-            period, hour = timestamp.strftime("%Y-%m-%d"), timestamp.hour
-            timestamp_label = timestamp.strftime("%Y-%m-%d %H:%M")
-        else:
-            period = display_period(time_value, time_cell.number_format).split(" ", 1)[0]
-            header = clean_text(sheet.cell(1, col).value)
-            digits = "".join(char for char in header if char.isdigit())
-            hour = max(safe_number(digits, col - 1) - 1, 0)
-            timestamp_label = f"{period} {int(hour):02d}:00"
+        timestamp = _hourly_timestamp(time_cell)
+        if timestamp is None:
+            invalid_times.append(f"{time_cell.coordinate}={clean_text(time_value)}")
+            continue
+        period, hour = timestamp.strftime("%Y-%m-%d"), timestamp.hour
+        timestamp_label = timestamp.strftime("%Y-%m-%d %H:%M")
         start_label = start_label or timestamp_label
 
         def metric(*names: str) -> float:
@@ -69,6 +90,12 @@ def _read_hourly(sheet) -> tuple[list[dict], str]:
             "small": metric("当日小订转大定数量"), "direct": metric("当日直接大定数量"),
             "lock": metric("当日交车锁单数量"),
         })
+    if invalid_times:
+        LOGGER.warning(
+            "[首销分时时间校验] Sheet=%s | 时间缺少小时或无法解析=%d列 | 示例=%s | "
+            "处理=相关列不参与分时图，不用H编号或列位置猜测小时；请核对时间行",
+            sheet.title, len(invalid_times), "；".join(invalid_times[:3]),
+        )
     return rows, start_label
 
 
