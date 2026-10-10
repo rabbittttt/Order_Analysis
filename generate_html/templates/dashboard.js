@@ -65,7 +65,7 @@
     const root=document.querySelector('.forecast-workspace.forecast-v2');
     if(state.module!=="sales_forecast"||!root||root.dataset.forecastDirty!=="true")return;
     const meta=root._forecastDraftState?.()||{};
-    forecastDrafts.set(root._forecastSubjectId||state.subject,{generatedAt:DATA.meta?.generated_at,meta,controls:[...root.querySelectorAll(forecastDraftSelector)].filter(control=>root._forecastTouched?.has(forecastDraftControlKey(control))||(meta.manualOverride&&['conversion','direct','lock'].includes(control.dataset.forecastInput))).map(control=>({key:forecastDraftControlKey(control),value:control.value,checked:control.type==='checkbox'?control.checked:null}))});
+    forecastDrafts.set(root._forecastSubjectId||state.subject,{generatedAt:DATA.meta?.generated_at,meta,controls:[...root.querySelectorAll(forecastDraftSelector)].filter(control=>root._forecastTouched?.has(forecastDraftControlKey(control))||meta.parameterOverrides?.includes(control.dataset.forecastInput)).map(control=>({key:forecastDraftControlKey(control),value:control.value,checked:control.type==='checkbox'?control.checked:null}))});
     return persistForecastState();
   }
   function restoreForecastDraft(){
@@ -931,13 +931,13 @@
       <section id="forecast-pane-evidence" aria-labelledby="forecast-tab-evidence" class="forecast-pane${activeForecastView==='evidence'?' active':''}" role="tabpanel" data-forecast-pane="evidence">
         <aside class="forecast-evidence-controls" data-forecast-region="controls" aria-label="预测参数">
           <section class="forecast-parameter-rail forecast-result-section" data-forecast-region="parameters">
-            <div class="forecast-rail-head"><div><small>人工确认与共同调整</small><h4>预测参数</h4></div><span>修改后实时重算</span></div>
+            <div class="forecast-rail-head"><div><small>逐项调整，即时生效</small><h4>预测参数</h4></div><span>修改后实时重算</span></div>
             <div class="forecast-result-grid forecast-control-grid">
-              <div class="forecast-assumptions forecast-progress-controls"><div class="forecast-block-head"><div><small>方法一人工确认区</small><h4>同期完成率参数</h4></div><button data-forecast-apply-progress>采用参考完成率</button></div><div class="forecast-progress-actuals"><span>已结束日真实小转大 <b data-forecast-progress-actual-small>—</b></span><span>已结束日真实直接大定 <b data-forecast-progress-actual-direct>—</b></span><span data-forecast-progress-intraday></span></div><div class="forecast-input-grid">
+              <div class="forecast-assumptions forecast-progress-controls"><div class="forecast-block-head"><div><h4>方法一 · 同期完成率</h4></div></div><div class="forecast-progress-actuals"><span>已结束日真实小转大 <b data-forecast-progress-actual-small>—</b></span><span>已结束日真实直接大定 <b data-forecast-progress-actual-direct>—</b></span><span data-forecast-progress-intraday></span></div><div class="forecast-input-grid">
                 <label>参考车型同期小转大完成率<input data-forecast-input="progressSmallCompletion" type="number" min="0.1" max="100" step="0.1" placeholder="等待参考"><small>%</small></label>
                 <label>参考车型同期直接大定完成率<input data-forecast-input="progressDirectCompletion" type="number" min="0.1" max="100" step="0.1" placeholder="等待参考"><small>%</small></label>
-              </div><p class="forecast-progress-source" data-forecast-progress-source>当前车型只提供真实累计量；完成率来自主辅历史参考车型，可以人工覆盖。</p></div>
-              <div class="forecast-assumptions forecast-parameter-controls"><div class="forecast-block-head"><div><small>方法二人工确认区</small><h4>转化参数</h4></div><button data-forecast-apply>采用参考均值</button></div><div class="forecast-input-grid">
+              </div><details class="forecast-parameter-details"><summary>完成率口径与周期适配</summary><p class="forecast-progress-source" data-forecast-progress-source>当前车型只提供真实累计量；完成率来自主辅历史参考车型，可以人工覆盖。</p></details></div>
+              <div class="forecast-assumptions forecast-parameter-controls"><div class="forecast-block-head"><div><h4>方法二 · 转化参数</h4></div></div><div class="forecast-input-grid">
                 <label>总小订<input data-forecast-input="small" type="number" min="0" value="${target.total_small}"><small>份</small></label>
                 <label>小订转化率<input data-forecast-input="conversion" type="number" min="0" max="100" step="0.1" value="${(target.conversion*100).toFixed(1)}"><small>%</small></label>
                 <label>直接大定占比<input data-forecast-input="direct" type="number" min="0" max="99.9" step="0.1" value="${(target.direct_share*100).toFixed(1)}"><small>%</small></label>
@@ -948,7 +948,7 @@
           <section class="forecast-common-controls forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>首日锚点、锁单换算与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div><div class="forecast-common-grid">
             <div class="forecast-d1-card" data-forecast-d1-card><div class="forecast-block-head"><div><small>首日锚点</small><h4 data-forecast-d1-title>D1大定</h4></div><span data-forecast-d1-stage>判定中</span></div><label data-forecast-d1-input-wrap>D1预测大定<input data-forecast-input="d1Gross" type="number" min="0" placeholder="系统自动"><small>单</small></label><div class="forecast-d1-value"><strong data-forecast-d1-value>—</strong><em>单</em><details class="forecast-d1-details"><summary>来源与状态</summary><small data-forecast-d1-note></small></details></div><div class="forecast-d1-components"><span>小转大 <b data-forecast-d1-small>—</b></span><span>直接大定 <b data-forecast-d1-direct>—</b></span></div></div>
             <label class="forecast-common-lock">大定到锁单率<span>首销期锁单 ÷ 总大定</span><span class="forecast-common-lock-input"><input data-forecast-input="lock" type="number" min="0" max="100" step="0.1" value="${(target.lock_rate*100).toFixed(1)}"><small>%</small></span><em>用于两种方法的首销期锁单测算</em></label>
-          </div><p data-forecast-allocation-note></p>${renderBridgeControls('launch')}</section>
+          </div><details class="forecast-parameter-details forecast-allocation-details"><summary>当前预测的日历与分配说明</summary><p data-forecast-allocation-note></p></details>${renderBridgeControls('launch')}</section>
         </aside>
         <div class="forecast-evidence-groups">${evidenceGroups}</div><details class="forecast-method"><summary>查看完整预测逻辑（7步）</summary><ol>${(data.method||[]).map(item=>`<li>${esc(item)}</li>`).join('')}</ol></details>
       </section>
@@ -1511,9 +1511,10 @@
     const suggestions=()=>{const refs=chosen();return {conversion:parameterReference(refs.conversion,'conversion','conversion',data.target.conversion).value,direct:parameterReference(refs.direct_share,'direct_share','direct_share',data.target.direct_share).value,lock:parameterReference(refs.lock,'lock_rate','lock',data.target.lock_rate).value}};
     const setEstimate=createForecastEstimateLogger(root);
     let manualOverride=false,progressOverride={small:false,direct:false};
-    const setOverride=value=>{manualOverride=!!value};
+    const parameterOverrides=new Set();
+    const setOverride=(field,enabled=true)=>{if(enabled)parameterOverrides.add(field);else parameterOverrides.delete(field);manualOverride=parameterOverrides.size>0};
     const formatParameterRate=value=>Number.isFinite(value)?(value*100).toFixed(1)+'%':'未取得有效比例';
-    const applySystemSuggestion=()=>{const value=suggestions();for(const field of ['conversion','direct','lock'])root.querySelector(`[data-forecast-input="${field}"]`).value=Number.isFinite(value[field])?(value[field]*100).toFixed(1):'';setOverride(false)};
+    const applySystemSuggestion=()=>{const value=suggestions();for(const field of ['conversion','direct','lock'])if(!parameterOverrides.has(field))root.querySelector(`[data-forecast-input="${field}"]`).value=Number.isFinite(value[field])?(value[field]*100).toFixed(1):'';};
     const progressEstimate=(items,field,day,targetDays,task)=>{const values=(items||[]).map((item,slot)=>{if(day===1&&item?.d1_valid===false)return {value:NaN,weight:0};if(day===2&&(item?.d2_valid===false||item?.d12_valid===false))return {value:NaN,weight:0};const adapted=rebasedForecastCompletion(item,field,day,targetDays);return {value:adapted.value,weight:slotWeight(slot,task)}}).filter(row=>Number.isFinite(row.value)&&row.value>0&&row.weight>0),total=values.reduce((sum,row)=>sum+row.weight,0),raw=total?values.reduce((sum,row)=>sum+row.value*row.weight,0)/total:NaN;return protectCompletion(raw)};
     const adaptationText=(items,field,targetDays)=>(items||[]).filter(Boolean).map(item=>{const curve=forecastReferenceCurve(item,field);return !window.ForecastMath.stretchCompletion(curve,targetDays).length?`${item.model}：曲线缺失或短周期不兼容`:`${item.model} ${curve.length}→${targetDays}天：保留头两天、尾两天各日占比，中间按比例拉伸`}).join('；');
     const historicalFactor=(item,index)=>{const meta=calendarType(item?.launch_date,index);return bridgeSettings(root,'launch',0).factors[meta.type]||1};
@@ -1547,7 +1548,7 @@
           });
           updatePickerCount(card);refreshCardExplanation(card,target);
         });
-        if(!manualOverride)applySystemSuggestion();
+        applySystemSuggestion();
       }
       const get=id=>Number(root.querySelector(`[data-forecast-input="${id}"]`)?.value||0),rate=id=>window.ForecastMath.weightedObserved([{value:root.querySelector(`[data-forecast-input="${id}"]`)?.value,weight:1}])/100,target=targetState(),stageInfo=absoluteStage(target),small=get('small'),baseConversion=rate('conversion'),baseShare=rate('direct'),lockRate=rate('lock'),refs=chosen(),actual=actualForTarget(target),today=todayIso();
       root._forecastDailyEvidence.targetFactor=index=>bridgeSettings(root,'launch',0).factors[calendarType(target.launchDate,index).type]||1;
@@ -1698,7 +1699,7 @@
       });
       root._forecastComparison={name:target.name,rows:scenarios.progress.rows.length?scenarios.progress.rows:scenarios.parameter.rows.length?scenarios.parameter.rows:knownActualRows,progressRows:scenarios.progress.rows,parameterRows:scenarios.parameter.rows,scenarios,hourlyActual,hourlyForecast,hourly,actualRates:{net_rate:NaN,lock_rate:actualGross?actualLock/actualGross:NaN},forecastRates:endedComplete?{net_rate:NaN,lock_rate:actualGross?actualLock/actualGross:NaN}:{net_rate:parameterReference(refs.lock,'net_rate','lock').value,lock_rate:lockRate}};
       if(linkSmall){const node=root.querySelector('[data-forecast-suggestion]');node.textContent=(smallResult.error?`小订预测不可用：${smallResult.error}`:`首销方法二的总小订采用当前小订预测 ${fmt(small)} 单；该值为预测，随小订参数更新。`)+(node.textContent?' '+node.textContent:'');}
-      root._steadyForecastUpdate?.();root._renderImportedForecast?.();renderScaleCheck({...target,small},scenarios);renderForecastDecisionChartV2(root,scenarios.progress.rows.length?scenarios.progress.rows:knownActualRows,'progress');renderForecastDecisionChartV2(root,scenarios.parameter.rows.length?scenarios.parameter.rows:knownActualRows,'parameter');renderForecastWeeklyV2(root,scenarios.progress.rows.length?scenarios.progress.rows:knownActualRows,'progress');renderForecastWeeklyV2(root,scenarios.parameter.rows.length?scenarios.parameter.rows:knownActualRows,'parameter');renderForecastReferenceChartV2(root,data,history);if(root.querySelector('[data-forecast-pane="score"].active'))renderScoreDashboard(target);
+      root._syncParameterResets?.();root._steadyForecastUpdate?.();root._renderImportedForecast?.();renderScaleCheck({...target,small},scenarios);renderForecastDecisionChartV2(root,scenarios.progress.rows.length?scenarios.progress.rows:knownActualRows,'progress');renderForecastDecisionChartV2(root,scenarios.parameter.rows.length?scenarios.parameter.rows:knownActualRows,'parameter');renderForecastWeeklyV2(root,scenarios.progress.rows.length?scenarios.progress.rows:knownActualRows,'progress');renderForecastWeeklyV2(root,scenarios.parameter.rows.length?scenarios.parameter.rows:knownActualRows,'parameter');renderForecastReferenceChartV2(root,data,history);if(root.querySelector('[data-forecast-pane="score"].active'))renderScoreDashboard(target);
     };
     const activateForecastTab=(id,writeHistory=true)=>{if(!forecastViews.includes(id))return;applyForecastView(root,id);if(state.forecastStage==='launch'&&id==='evidence'){const target=targetState();root.querySelectorAll('[data-forecast-task]').forEach(card=>refreshCardExplanation(card,target));renderForecastReferenceChartV2(root,data,history)}if(writeHistory)syncUrl('push')};
     root.querySelectorAll('[data-forecast-stage-switch]').forEach(button=>button.onclick=()=>activateForecastStage(button.dataset.forecastStageSwitch));
@@ -1706,18 +1707,17 @@
     forecastTabButtons.forEach((button,index)=>{button.onclick=()=>activateForecastTab(button.dataset.forecastTab);button.onkeydown=event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?forecastTabButtons.length-1:(index+(event.key==='ArrowRight'?1:-1)+forecastTabButtons.length)%forecastTabButtons.length;forecastTabButtons[next].focus();activateForecastTab(forecastTabButtons[next].dataset.forecastTab)}});
     root.querySelectorAll('[data-forecast-score-jump]').forEach(button=>button.onclick=()=>{activateForecastTab('score');const select=root.querySelector('[data-forecast-score-task]');if(select){select.value=button.dataset.forecastScoreJump;renderScoreDashboard(targetState())}requestAnimationFrame(()=>{const detail=root.querySelector('.forecast-score-detail');if(detail){detail.tabIndex=-1;detail.focus({preventScroll:true});detail.scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})}})});
     let forecastUpdateTimer=null;const scheduleForecastUpdate=()=>{clearTimeout(forecastUpdateTimer);forecastUpdateTimer=setTimeout(()=>{if(root.isConnected)update()},120)};
-    root.querySelectorAll('[data-forecast-input],[data-forecast-allocation]').forEach(input=>input.oninput=()=>{if(['small','conversion','direct','lock'].includes(input.dataset.forecastInput))setOverride(true);if(input.dataset.forecastInput==='progressSmallCompletion')progressOverride.small=true;if(input.dataset.forecastInput==='progressDirectCompletion')progressOverride.direct=true;scheduleForecastUpdate()});
-    root.querySelectorAll('[data-forecast-ref]').forEach(select=>select.onchange=()=>{const card=select.closest('[data-forecast-task]');if(card.dataset.forecastTask==='daily_slope'){const others=[...card.querySelectorAll('[data-forecast-ref]')];for(const other of others)if(other!==select&&select.value&&other.value===select.value)other.value='';}const matching=[...card.querySelectorAll('[data-forecast-chart-ref]')].find(input=>input.value===select.value);if(matching)matching.checked=true;updatePickerCount(card);refreshCardExplanation(card,targetState());renderForecastReferenceChartV2(root,data,history,card);renderScoreDashboard(targetState());if(card.dataset.forecastTask==='daily_slope')return;if(!manualOverride)applySystemSuggestion();update()});
-    root.querySelectorAll('[data-forecast-ref-weight]').forEach(input=>input.oninput=()=>{const card=input.closest('[data-forecast-task]');updateWeightSummary(card);if(!manualOverride)applySystemSuggestion();scheduleForecastUpdate()});
+    root.querySelectorAll('[data-forecast-input],[data-forecast-allocation]').forEach(input=>input.oninput=()=>{if(['conversion','direct','lock'].includes(input.dataset.forecastInput))setOverride(input.dataset.forecastInput);if(input.dataset.forecastInput==='progressSmallCompletion')progressOverride.small=true;if(input.dataset.forecastInput==='progressDirectCompletion')progressOverride.direct=true;scheduleForecastUpdate()});
+    root.querySelectorAll('[data-forecast-ref]').forEach(select=>select.onchange=()=>{const card=select.closest('[data-forecast-task]');if(card.dataset.forecastTask==='daily_slope'){const others=[...card.querySelectorAll('[data-forecast-ref]')];for(const other of others)if(other!==select&&select.value&&other.value===select.value)other.value='';}const matching=[...card.querySelectorAll('[data-forecast-chart-ref]')].find(input=>input.value===select.value);if(matching)matching.checked=true;updatePickerCount(card);refreshCardExplanation(card,targetState());renderForecastReferenceChartV2(root,data,history,card);renderScoreDashboard(targetState());if(card.dataset.forecastTask==='daily_slope')return;applySystemSuggestion();update()});
+    root.querySelectorAll('[data-forecast-ref-weight]').forEach(input=>input.oninput=()=>{const card=input.closest('[data-forecast-task]');updateWeightSummary(card);applySystemSuggestion();scheduleForecastUpdate()});
     root.querySelectorAll('[data-forecast-chart-ref]').forEach(input=>input.onchange=()=>{const card=input.closest('[data-forecast-task]');updatePickerCount(card);renderForecastReferenceChartV2(root,data,history,card)});
     root.querySelectorAll('[data-forecast-ref-quick]').forEach(button=>button.onclick=()=>{root.dataset.forecastDirty='true';const card=button.closest('[data-forecast-task]');setChartSelection(card,button.dataset.forecastRefQuick,button.dataset.brand||'');renderForecastReferenceChartV2(root,data,history,card)});
     root.querySelectorAll('[data-forecast-target]').forEach(control=>{
       let timer;
-      const apply=()=>{refreshReferences();root._smallForecastRefreshReferences?.();root._steadyForecastRefreshReferences?.();if(!manualOverride)applySystemSuggestion();root._smallForecastUpdate?.();update();root._steadyForecastUpdate?.();root._renderImportedForecast?.();};
+      const apply=()=>{refreshReferences();root._smallForecastRefreshReferences?.();root._steadyForecastRefreshReferences?.();applySystemSuggestion();root._smallForecastUpdate?.();update();root._steadyForecastUpdate?.();root._renderImportedForecast?.();};
       control.onchange=()=>{clearTimeout(timer);apply();};
       control.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{if(root.isConnected)apply();},120);};
     });
-    root.querySelector('[data-forecast-apply]').onclick=()=>{root.dataset.forecastDirty='true';applySystemSuggestion();update()};root.querySelector('[data-forecast-apply-progress]').onclick=event=>{root.dataset.forecastDirty='true';progressOverride={small:false,direct:false};update();event.currentTarget.textContent='已采用参考完成率'};
     bindForecastImport(root,{sameModel,targetState,todayIso,stageInfo:absoluteStage,actualForTarget,actualRows:(stage,target,actual)=>{
       if(stage==='launch')return (actual?.days||[]).map(row=>({date:row.date,value:row.gross}));
       if(stage==='steady')return (data.steady_history||[]).find(item=>sameModel(item.generation||item.model,target.name))?.daily?.map(row=>({date:row.date,value:row.lock}))||[];
@@ -1727,10 +1727,32 @@
       return rows;
     }});
     const lifecycleContext={sameModel,findTarget,findActual,findStageActual,targetState,todayIso,calendarType,planBridge:(stage,args)=>planBridge(root,calendarType,stage,args),factors:stage=>bridgeSettings(root,stage,0).factors,onForecast:()=>scheduleForecastUpdate()};bindSmallOrderForecast(root,data,lifecycleContext);bindSteadyForecast(root,data,lifecycleContext);
-    root.querySelectorAll('[data-bridge-control]').forEach(input=>input.onchange=()=>{root.dataset.forecastDirty='true';root._smallForecastUpdate?.();root._steadyForecastUpdate?.();update()});
+    root.querySelectorAll('[data-bridge-control]').forEach(input=>{let timer;const apply=()=>{root.dataset.forecastDirty='true';root._smallForecastUpdate?.();update()};input.onchange=()=>{clearTimeout(timer);apply()};input.oninput=()=>{clearTimeout(timer);timer=setTimeout(()=>{if(root.isConnected)apply()},120)}});
     refreshReferences();applySystemSuggestion();update();activateForecastTab(state.forecastView||'result',false);bindForecastLifecycleNavigation(root);
-    root._forecastDraftState=()=>({manualOverride,progressOverride:{...progressOverride}});
-    root._forecastRestoreDraft=(meta={})=>{manualOverride=!!meta.manualOverride;progressOverride={small:!!meta.progressOverride?.small,direct:!!meta.progressOverride?.direct};refreshReferences();if(!manualOverride)applySystemSuggestion();root._smallForecastUpdate?.();update();root._steadyForecastUpdate?.();activateForecastTab(state.forecastView||'result',false)};
+    root._forecastDraftState=()=>({manualOverride,parameterOverrides:[...parameterOverrides],progressOverride:{...progressOverride}});
+    root._forecastRestoreDraft=(meta={})=>{parameterOverrides.clear();for(const field of (Array.isArray(meta.parameterOverrides)?meta.parameterOverrides:meta.manualOverride?['conversion','direct','lock']:[]))if(['conversion','direct','lock'].includes(field))parameterOverrides.add(field);manualOverride=parameterOverrides.size>0;progressOverride={small:!!meta.progressOverride?.small,direct:!!meta.progressOverride?.direct};refreshReferences();applySystemSuggestion();root._smallForecastUpdate?.();update();root._steadyForecastUpdate?.();root._syncParameterResets?.();activateForecastTab(state.forecastView||'result',false)};
+    const resetControls=[...root.querySelectorAll('[data-forecast-input],[data-bridge-control],[data-small-input]')];
+    resetControls.forEach((control,index)=>{
+      const label=control.closest('label'),name=[...(label?.childNodes||[])].filter(node=>node.nodeType===Node.TEXT_NODE).map(node=>node.textContent.trim()).filter(Boolean).join(' ')||control.dataset.forecastInput||control.dataset.bridgeControl;
+      const wrapper=document.createElement('span');wrapper.className='forecast-field-control';control.before(wrapper);wrapper.append(control);
+      const unit=wrapper.nextElementSibling;if(unit?.tagName==='SMALL'&&['%','倍','份','单'].includes(unit.textContent.trim()))wrapper.append(unit);
+      control.id=control.id||`forecast-parameter-${index}`;control.setAttribute('aria-label',name);label?.setAttribute('for',control.id);
+      const button=document.createElement('button');button.type='button';button.className='forecast-field-reset';button.textContent='恢复';button.setAttribute('aria-label',`恢复${name}的系统推荐值`);button.title='仅恢复此项，其他人工设置保留';wrapper.append(button);
+      button.onclick=event=>{
+        event.preventDefault();event.stopPropagation();if(control.readOnly||control.disabled)return;
+        const field=control.dataset.forecastInput;
+        root._forecastTouched.delete(forecastDraftControlKey(control));
+        if(['conversion','direct','lock'].includes(field))setOverride(field,false);
+        else if(field==='progressSmallCompletion')progressOverride.small=false;
+        else if(field==='progressDirectCompletion')progressOverride.direct=false;
+        else control.value=field==='small'?Number(actualForTarget(targetState())?.total_small??findTarget(targetState().name)?.small??0):control.defaultValue;
+        applySystemSuggestion();root._smallForecastUpdate?.();update();root.dataset.forecastDirty='true';
+        const saved=captureForecastDraft(),feedback=root.querySelector('[data-forecast-feedback]');
+        if(feedback){feedback.dataset.state=saved?'success':'loading';feedback.querySelector('span').textContent=saved?'此项已恢复 · 本机已保存':'此项已恢复 · 保存失败';}
+      };
+    });
+    root._syncParameterResets=()=>resetControls.forEach(control=>{control.closest('.forecast-field-control').querySelector('button').disabled=control.readOnly||control.disabled});
+    root._syncParameterResets();
     root.querySelector('[data-forecast-reset]').onclick=async()=>{
       if(!window.confirm('清除当前车型在本机保存的人工参数，恢复本次数据的系统参数？外部预测导入不会删除。'))return;
       forecastDrafts.delete(root._forecastSubjectId);root.dataset.forecastDirty='false';const saved=persistForecastState();
@@ -1751,10 +1773,8 @@
     };
     root.addEventListener('input',reflectParameterChange,true);root.addEventListener('change',reflectParameterChange,true);
     root.addEventListener('click',event=>{
-      const button=event.target.closest('[data-forecast-apply],[data-forecast-apply-progress],[data-forecast-ref-quick]');if(!button)return;
-      if(button.hasAttribute('data-forecast-ref-quick'))button.closest('[data-forecast-task]').querySelectorAll('[data-forecast-chart-ref]').forEach(control=>root._forecastTouched.add(forecastDraftControlKey(control)));
-      const resetFields=button.hasAttribute('data-forecast-apply')?['conversion','direct','lock']:button.hasAttribute('data-forecast-apply-progress')?['progressSmallCompletion','progressDirectCompletion']:[];
-      root.querySelectorAll('[data-forecast-input]').forEach(control=>{if(resetFields.includes(control.dataset.forecastInput))root._forecastTouched.delete(forecastDraftControlKey(control))});
+      const button=event.target.closest('[data-forecast-ref-quick]');if(!button)return;
+      button.closest('[data-forecast-task]').querySelectorAll('[data-forecast-chart-ref]').forEach(control=>root._forecastTouched.add(forecastDraftControlKey(control)));
       root.dataset.forecastDirty='true';const saved=captureForecastDraft(),feedback=root.querySelector('[data-forecast-feedback]');
       if(feedback){feedback.dataset.state=saved?'success':'loading';feedback.querySelector('span').textContent=saved?'已应用 · 本机已保存':'已应用 · 保存失败';feedback.title=forecastStorageWarning||'刷新后可恢复人工设置。'}
     });
@@ -1835,7 +1855,7 @@
   }
   function showToast(message){const node=$("#toast");if(!node)return;node.textContent=message;node.classList.add("show");clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>node.classList.remove("show"),4000)}
   function renderBridgeControls(stage){
-    return `<section class="forecast-day-allocation" data-bridge-stage="${stage}"><strong>真实日衔接与差额渐进分配</strong><div class="forecast-allocation-inputs">${[['workday','工作日',1],['weekend','周末',1.15],['holiday','节假日',1.3]].map(([key,label,value])=>`<label title="调休按工作日，节假日不叠加周末">${label}<input data-bridge-control="${key}" type="number" min="0.01" max="5" step="0.05" value="${value}"><small>倍</small></label>`).join('')}</div><label title="填写时需覆盖全部待预测日期，以逗号分隔；0表示优先保护该日。实际分配还乘当日基础量。">逐日差额权重（从首个待预测日开始）<input data-bridge-control="weights" type="text" placeholder="留空使用0,0.5,1,1,…；第3天起封顶"><small>逗号分隔；留空按默认递增</small></label><p data-bridge-notice aria-live="polite"></p></section>`;
+    return `<section class="forecast-day-allocation" data-bridge-stage="${stage}"><div class="forecast-calendar-heading"><h4>日历影响与逐日分配</h4><span>真实日衔接 · 差额渐进</span></div><div class="forecast-allocation-inputs">${[['workday','工作日',1],['weekend','周末',1.15],['holiday','节假日',1.3]].map(([key,label,value])=>`<label>${label}<input data-bridge-control="${key}" type="number" min="0.01" max="5" step="0.05" value="${value}"><small>倍</small></label>`).join('')}</div><label class="forecast-weights-field">逐日差额权重<input data-bridge-control="weights" type="text" placeholder="自动：0, 0.5, 1, 1, …"><small>默认前两天渐进，第3天起封顶</small></label><details class="forecast-parameter-details"><summary>如何应用这些参数</summary><p>调休按工作日，节假日不叠加周末。差额权重从首个待预测日开始，填写时须覆盖全部待预测日期，以逗号分隔；0表示优先保护该日。实际分配还乘当日基础量。留空使用系统默认。</p></details><p data-bridge-notice aria-live="polite"></p></section>`;
   }
   function renderStageCommonControls(stage){
     return `<section class="forecast-common-controls forecast-stage-common forecast-result-section" data-forecast-region="common"><div class="forecast-block-head"><div><small>日历影响与逐日分配</small><h4>公共参数</h4></div><span>修改后实时重算</span></div>${renderBridgeControls(stage)}</section>`;

@@ -19,7 +19,7 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   await page.goto(url.href);await ready(page);
   const original=await values(page),defaultConversion=await page.locator('[data-forecast-input="conversion"]').inputValue();
   check('车型时间参数不是折叠组件',await page.locator('.forecast-target-settings').evaluate(n=>n.tagName==='DIV'&&!n.querySelector('summary')));
-  const enter=async(selector,value)=>{await page.locator(selector).fill(value);await page.locator(selector).dispatchEvent('change');await page.waitForFunction(()=>document.querySelector('[data-forecast-feedback]').dataset.state==='success');};
+  const enter=async(selector,value)=>{await page.locator('[data-forecast-tab="evidence"]').click();await page.locator(selector).fill(value);await page.locator(selector).dispatchEvent('change');await page.waitForFunction(()=>document.querySelector('[data-forecast-feedback]').dataset.state==='success');};
   await enter('[data-forecast-input="conversion"]','41.2');
   await enter('[data-bridge-stage="launch"] [data-bridge-control="holiday"]','1.8');
   let saved=await storage(page),draft=saved.drafts[0][1];
@@ -30,7 +30,8 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   check('恢复后有明确反馈',(await page.locator('[data-forecast-feedback]').innerText()).includes('已恢复'));
   await page.locator('[data-forecast-stage-switch="small"]').click();
   await page.locator('[data-forecast-tab="evidence"]').click();
-  check('小订累计、到天、分时各自有主辅与权重',await page.locator('[data-lifecycle-reference^="small-"] [data-lifecycle-ref]').count()===6&&await page.locator('[data-lifecycle-reference^="small-"] [data-lifecycle-weight]').count()===6);
+  const smallPredictionCards=page.locator('[data-lifecycle-reference^="small-"]:not([data-lifecycle-reference="small-slope"])');
+  check('小订累计、到天、分时各自有主辅与权重',await smallPredictionCards.locator('[data-lifecycle-ref]').count()===6&&await smallPredictionCards.locator('[data-lifecycle-weight]').count()===6);
   await enter('[data-small-weight="0"]','65');
   await enter('[data-small-daily-weight="0"]','61');
   await enter('[data-small-hourly-weight="0"]','62');
@@ -161,6 +162,7 @@ const values=page=>page.evaluate(()=>{const r=document.querySelector('.forecast-
   const limited=await browser.newContext({viewport:{width:1440,height:900}});
   await limited.addInitScript(()=>{Storage.prototype.setItem=function(){throw new DOMException('full','QuotaExceededError')}});
   const blocked=await limited.newPage();blocked.on('pageerror',e=>report.errors.push(e.message));await blocked.goto(url.href);await ready(blocked);
+  await blocked.locator('[data-forecast-tab="evidence"]').click();
   await blocked.locator('[data-forecast-input="conversion"]').fill('43.5');
   await blocked.waitForFunction(()=>document.querySelector('[data-forecast-feedback]').textContent.includes('保存失败'));
   check('浏览器空间不足时明确提示但不阻断计算',await blocked.locator('.forecast-workspace').getAttribute('aria-busy')==='false');

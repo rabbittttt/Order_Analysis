@@ -17,7 +17,10 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
    const common=pane.locator('[data-forecast-region="common"]');
    assert(await common.isVisible(),stage+' common controls are in evidence');
    const parameter=pane.locator('[data-forecast-region="parameters"]');
-   if(await parameter.count())assert((await parameter.boundingBox()).y<(await common.boundingBox()).y,stage+' parameters precede common');
+   if(await parameter.count()){
+    const p=await parameter.boundingBox(),c=await common.boundingBox();
+    assert(p.y<c.y||Math.abs(p.y-c.y)<1&&p.x<c.x,stage+' parameters precede common vertically or left-to-right');
+   }
    const cards=pane.locator('[data-lifecycle-reference]');
    if(await cards.count()){
     await cards.first().locator(':scope > .forecast-ref-score-details > summary').click();
