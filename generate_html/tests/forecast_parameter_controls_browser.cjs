@@ -60,6 +60,25 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
   await page.locator('[data-forecast-target="launchDate"]').fill('2080-01-01');
   await page.locator('[data-forecast-target="launchDate"]').dispatchEvent('change');await pause();
   assert(await page.locator('.forecast-workspace').evaluate(r=>r._forecastComparison.scenarios.parameter.available));
+  const grossBefore=await page.locator('.forecast-workspace').evaluate(r=>r._forecastComparison.scenarios.parameter.gross);
+  for(const invalid of ['150','-1','']){
+   await input('lock').fill(invalid);await pause();
+   assert.equal(await input('lock').getAttribute('aria-invalid'),'true');
+   assert(await page.locator('.forecast-common-lock em').innerText().then(text=>text.includes('锁单预测留空')));
+   const scenario=await page.locator('.forecast-workspace').evaluate(r=>{
+    const s=r._forecastComparison.scenarios.parameter;return {available:s.available,gross:s.gross,lockValid:Number.isFinite(s.lock)};
+   });
+   assert.deepEqual(scenario,{available:true,gross:grossBefore,lockValid:false});
+   assert.equal(await page.locator('[data-forecast-value="parameter-lock"]').innerText(),'—');
+  }
+  for(const valid of ['0','75','100']){
+   await input('lock').fill(valid);await pause();
+   assert.equal(await input('lock').getAttribute('aria-invalid'),'false');
+   const scenario=await page.locator('.forecast-workspace').evaluate(r=>r._forecastComparison.scenarios.parameter);
+   assert.equal(scenario.lock,Math.round(grossBefore*Number(valid)/100));
+  }
+  await restore(input('lock'));await pause();
+  console.log('PASS invalid lock rates leave only lock prediction blank; 0–100% and reset recover');
   const before=await page.locator('.forecast-workspace').evaluate(r=>JSON.stringify(r._forecastComparison.scenarios.parameter.rows));
   // Dispatch input only (without change/blur): calendar coefficients must already recalculate.
   await weekend.evaluate(n=>{n.value='2.5';n.dispatchEvent(new Event('input',{bubbles:true}))});await pause();
@@ -69,6 +88,13 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
   // Fresh subject for consistent visual baseline and actual read-only controls.
   url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026款',forecastStage:'launch',forecastView:'evidence'});
   await page.goto(url.href);await page.waitForSelector('.forecast-workspace');await pause();
+  const endedValues=await page.locator('.forecast-workspace').evaluate(r=>JSON.stringify(r._forecastComparison.scenarios));
+  await input('lock').fill('150');await pause();
+  assert.equal(await page.locator('.forecast-workspace').evaluate(r=>JSON.stringify(r._forecastComparison.scenarios)),endedValues);
+  assert.equal(await input('lock').getAttribute('aria-invalid'),'false');
+  assert((await page.locator('.forecast-common-lock em').innerText()).includes('真实锁单'));
+  await restore(input('lock'));await pause();
+  console.log('PASS completed launch actuals are independent of invalid forecast rate');
   for(const width of [1440,1024,390]){
    await page.setViewportSize({width,height:1000});
    for(const stage of ['launch','small','steady']){

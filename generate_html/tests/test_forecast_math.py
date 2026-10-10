@@ -367,7 +367,7 @@ class ForecastMathTests(unittest.TestCase):
     def daily_runtime(self, expression):
         script = (ROOT / 'templates' / 'dashboard.js').read_text(encoding='utf-8')
         declarations = [next(line.strip() for line in script.splitlines() if line.strip().startswith('const '+name+'='))
-                        for name in ('adaptedDailyOrders', 'dailyUnavailable', 'rankedForTask', 'dailyShape')]
+                        for name in ('adaptedDailyOrders', 'naturalDailyOrders', 'dailyUnavailable', 'rankedForTask', 'dailyShape')]
         valid = {'model':'完整参考', 'days':40, 'launch_date':'2026-09-01', 'end_date':'2026-10-10',
                  'daily_orders':[100]+[10]*39}
         partial = dict(valid, model='未收齐参考', daily_orders=[100]+[10]*19)

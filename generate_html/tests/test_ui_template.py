@@ -687,7 +687,7 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
         self.assertIn("首销每日大定相对D1（基础曲线）", script)
-        self.assertIn("root._forecastDailyEvidence={adaptedDailyOrders,historicalFactor}", script)
+        self.assertIn("root._forecastDailyEvidence={adaptedDailyOrders,naturalDailyOrders,historicalFactor}", script)
         self.assertIn("root._forecastDailyEvidence.historicalFactor(item,day)", script)
         self.assertIn("root._forecastDailyEvidence.targetFactor=index=>", script)
         self.assertIn("D1=100%，用于未来余量的基础形状", script)

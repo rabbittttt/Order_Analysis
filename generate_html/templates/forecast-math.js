@@ -20,6 +20,11 @@
     return bottom > 0 ? top / bottom : NaN;
   }
 
+  function observedRate(value) {
+    const rate = observedQuantity(value);
+    return rate <= 1 ? rate : NaN;
+  }
+
   // A missing ratio is not a zero observation. Normalize only usable weights.
   function weightedObserved(rows, fallback = NaN) {
     const usable = (rows || []).filter(row => row.value !== null && row.value !== undefined &&
@@ -331,7 +336,7 @@
 
   // A known terminal total does not make a partial daily history complete.
   // Do not replace missing actual days with a standardized curve or stretch a prefix.
-  function adaptSmallDailyOrders(item = {}, targetDays) {
+  function adaptSmallDailyOrders(item = {}, targetDays, factor = () => 1) {
     if (item.total_complete === false) return [];
     const orders = item.daily_orders || [];
     let curve;
@@ -347,7 +352,11 @@
       if (progress.length !== Number(item.days || progress.length)) return [];
       curve = progress.map(observedQuantity);
     }
-    const adapted = stretchCompletion(curve, targetDays);
+    // Remove calendar effects on the source's dates, before changing its length.
+    const ordersWithoutCalendar = removeCalendarEffect(curve.map((value, index) =>
+      value - (index ? curve[index - 1] : 0)), factor);
+    let total = 0;
+    const adapted = stretchCompletion(ordersWithoutCalendar.map(value => (total += value)), targetDays);
     return adapted.map((value, index) => value - (index ? adapted[index - 1] : 0));
   }
 
@@ -376,11 +385,19 @@
     return {available:true, reason:'', orders:observed, observed};
   }
 
-  function adaptLaunchDailyOrders(item, targetDays, today) {
+  function removeCalendarEffect(orders, factor) {
+    const values = orders.map((value, index) => {
+      const multiplier = observedQuantity(factor(index));
+      return multiplier > 0 ? observedQuantity(value) / multiplier : NaN;
+    });
+    return values.every(Number.isFinite) ? values : [];
+  }
+
+  function adaptLaunchDailyOrders(item, targetDays, today, factor = () => 1) {
     const reference = launchDailyReference(item, today);
     if (!reference.available) return [];
     let total = 0;
-    const curve = reference.orders.map(value => (total += value));
+    const curve = removeCalendarEffect(reference.orders, factor).map(value => (total += value));
     const adapted = stretchCompletion(curve, targetDays);
     return adapted.map((value, index) => Math.max((value - (index ? adapted[index-1] : 0)) * total, 0));
   }
@@ -659,6 +676,7 @@
   return {
     weightedObserved,
     observedQuantity,
+    observedRate,
     observedRatio,
     launchCompletion,
     referenceParameter,
