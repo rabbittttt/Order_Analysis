@@ -472,6 +472,42 @@ class SubjectParsingTests(unittest.TestCase):
         self.assertEqual([row["count"] for row in first_share["data"]["rows"]], [5, 0])
         self.assertEqual([row["count"] for row in second_share["data"]["rows"]], [0, 4])
 
+    def test_overview_history_includes_day_week_month_and_matches_kpis(self):
+        for name, kind in (("鸿蒙智行", "group"), ("问界", "brand"), ("问界 M9 2026款", "generation")):
+            with self.subTest(subject=name):
+                order_book, lock_book = Workbook(), Workbook()
+                periods_by_grain = {
+                    "day": ("2026-09-01", "2026-09-02"),
+                    "week": ("26WK35", "26WK36"),
+                    "month": ("26-08", "26-09"),
+                }
+                for index, (grain, suffix) in enumerate((("day", "天"), ("week", "周"), ("month", "月")), 1):
+                    periods = periods_by_grain[grain]
+                    for book, metrics in ((order_book, ("大定", "留存大定")), (lock_book, ("交车锁单", "已交付"))):
+                        sheet = book.create_sheet(name + "by" + suffix)
+                        sheet.append(["指标", "统计类型", "分类", *periods, "近28天", "总计"])
+                        for offset, metric in enumerate(metrics, 1):
+                            value = index * 100 + offset * 10
+                            sheet.append([metric, "数量", "数量", value, value * 2, 9999, 99999])
+                store = WorkbookStore(Path("."))
+                self.addCleanup(store.close)
+                store.items = [
+                    WorkbookItem(Path("鸿蒙智行大定选配比例分析.xlsx"), order_book),
+                    WorkbookItem(Path("鸿蒙智行锁单选配比例分析.xlsx"), lock_book),
+                ]
+                dashboard = OverviewModule().build(store, Subject("history_test", name, kind))
+                for grain, view in dashboard.views.items():
+                    page = view["pages"][view["periods"][-1]]
+                    history = next(item["data"] for item in page["sections"] if item["kind"] == "history_table")
+                    self.assertEqual(set(history["granularities"]), {"day", "week", "month"})
+                    self.assertEqual(history["default"], grain)
+                    rows = history["granularities"][grain]["rows"]
+                    self.assertEqual([row[0] for row in rows], list(periods_by_grain[grain]))
+                    self.assertEqual(rows[0][2::2], ["—"] * 4)
+                    self.assertEqual(rows[1][2::2], [1.0] * 4)
+                    self.assertEqual(rows[-1][1::2], [item["value"] for item in page["kpis"]])
+                self.assertEqual(history["granularities"]["day"]["rows"][0][1::2], [110, 120, 110, 120])
+
     def test_brand_overview_uses_chart_totals_for_net_order_and_delivery_lock(self):
         order_book = Workbook()
         order_sheet = order_book.active

@@ -11,7 +11,15 @@ const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析
  const ready=()=>page.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false'&&window.DASHBOARD_DATA);
  try{
   const url=new URL(base);url.search=new URLSearchParams({module:'overview',subject:'问界 M9 2026款'});await page.goto(url.href);await ready();
-  for(const grain of ['day','week','month']){const button=page.locator('[data-grain="'+grain+'"]');if(await button.isEnabled()){await button.click();await ready();check('切换粒度 '+grain,new URL(page.url()).searchParams.get('grain')===grain)}}
+  for(const grain of ['day','week','month']){
+   const button=page.locator('[data-grain="'+grain+'"]');
+   if(await button.isEnabled()){
+    await button.click();await ready();check('切换粒度 '+grain,new URL(page.url()).searchParams.get('grain')===grain);
+    const periods=await page.locator('[data-history-body] tbody tr td:first-child').allTextContents();
+    const pattern={day:/^\d{4}-\d{2}-\d{2}$/,week:/^\d{2}WK\d{2}$/,month:/^\d{2}-\d{2}$/}[grain];
+    check('经营指标趋势显示对应周期 '+grain,periods.length>0&&periods.every(value=>pattern.test(value.trim())));
+   }
+  }
   await page.locator('[data-panel-source]').last().scrollIntoViewIfNeeded();
   const originalScroll=await page.locator('#page').evaluate(n=>n.scrollTop);check('来源入口位于滚动后位置',originalScroll>0);
   await page.locator('[data-panel-source]').last().click();await page.waitForSelector('#rawSearch');

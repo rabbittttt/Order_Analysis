@@ -466,7 +466,6 @@ class OverviewModule:
                 ),
             }
             for grain, gd in grains_data.items()
-            if grain in ("week", "month")
         }
 
         views = {}
