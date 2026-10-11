@@ -505,6 +505,28 @@
     return values.map((value, index) => index > 0 && Number.isFinite(value) && value >= 0 && Number.isFinite(values[index - 1]) && values[index - 1] > 0 ? value / values[index - 1] - 1 : NaN);
   }
 
+  // Evidence is indexed by calendar day, not by the count of available rows.
+  // Unknown days break cumulative progress and adjacent-day slopes, not the axis.
+  function smallDailyEvidence({rows = [], startDate, days, total, factor = () => 1}) {
+    const start = dateNumber(startDate), count = positiveDays(days), byDate = new Map();
+    for (const row of rows) byDate.set(row.date, byDate.has(row.date) ? null : row);
+    const aligned = Array.from({length:count}, (_,index) => Number.isFinite(start)
+      ? byDate.get(new Date(start+index*86400000).toISOString().slice(0,10)) || null : null);
+    const normalized = aligned.map((row,index) => {
+      const quantity = observedQuantity(row?.orders), multiplier = observedQuantity(factor(index,row?.date));
+      return multiplier > 0 ? quantity/multiplier : NaN;
+    });
+    const anchor = normalized[0], daily = normalized.map(value => anchor > 0 ? value/anchor : NaN);
+    let running = 0;
+    const cumulative = aligned.map(row => {
+      running += observedQuantity(row?.orders);
+      return Number.isFinite(total) && total > 0 ? running/total : NaN;
+    });
+    const firstForecast = aligned.findIndex(row => row?.actual === false && Number.isFinite(observedQuantity(row.orders)));
+    const anchorIndex = firstForecast > 0 && aligned[firstForecast-1]?.actual === true ? firstForecast-1 : -1;
+    return {rows:aligned, daily, cumulative, slope:dailySlope(normalized), anchorIndex};
+  }
+
   function anchoredAllocate({remaining, anchor=null, anchorFactor=1, anchorShape=1, shapes=[], factors=[], weights=[]}) {
     const total = Math.round(Number(remaining));
     const n = shapes.length, warnings = [];
@@ -701,6 +723,7 @@
     recentSteadyBaseline,
     defaultBridgeWeights,
     dailySlope,
+    smallDailyEvidence,
     anchoredAllocate,
     completedSmallOrderDays,
     DEFAULT_COMPLETION_FLOOR,
