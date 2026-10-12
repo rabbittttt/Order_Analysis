@@ -7,7 +7,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
  const browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[];let checks=0;
  const check=(label,ok)=>{assert(ok,label);checks++;console.log('PASS '+label)};
  try{
-  for(const scenario of ['no_small','missing_total','ended_components','unknown_window','missing_direct','invalid_rows','unknown_issue','conflicting_window']){
+  for(const scenario of ['no_small','missing_total','ended_components','unknown_window','missing_direct','invalid_rows','unknown_issue','conflicting_window','hourly_mismatch']){
    const context=await browser.newContext({viewport:{width:1440,height:1000}});
    await context.addInitScript(({scenario})=>{
     const parse=JSON.parse;
@@ -38,7 +38,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
         scenario==='unknown_issue'?[{code:'CUSTOM_SOURCE_BLOCKER',message:'不可忽略的来源异常'}]:[];
        for(const profile of data.actuals)if(same(profile.model)){
         for(const candidate of [profile,...Object.values(profile.stage_profiles||{})])Object.assign(candidate,{
-         days:rows.map(row=>({...row})),total_small:0,hourly_days:[],hard_errors:issues.map(issue=>issue.message),validation_issues:issues,data_error:!!issues.length,has_small:hasSmall});
+         days:rows.map(row=>({...row})),total_small:0,hourly_days:scenario==='hourly_mismatch'?[{date:'2026-09-30',gross:50,small_to_big:null,direct:null,lock:null,last_hour:15,hours:[{hour:15,gross:50}],component_status:'日/时大定数量不一致'}]:[],hard_errors:issues.map(issue=>issue.message),validation_issues:issues,data_error:!!issues.length,has_small:hasSmall});
        }
       }
       Object.values(data).forEach(visit);
@@ -88,6 +88,10 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:'问界 M9 2026�
    }else if(scenario==='missing_direct'){
     check('历史分项缺失按具体字段与日期提示',notice.includes('直接大定缺失或无效')&&notice.includes('2026-09-28～2026-09-29'));
     check('预测不可用时仍显示已知真实大定',result.rows.length===2&&result.rows.every(row=>row.actual));
+   }else if(scenario==='hourly_mismatch'){
+    check('日时分项未核对不阻断可用方法一',result.scenarios.progress.available);
+    check('未核对分项的估算明确标注',(await page.locator('.forecast-workspace').textContent()).includes('未核对分项不作为真实输入'));
+    check('分时核对不改变过去真实日',result.rows.filter(row=>row.actual).reduce((sum,row)=>sum+row.gross,0)===180);
    }else if(scenario==='conflicting_window'){
     check('冲突结束日期不按天数偷偷回退',notice.includes('首销窗口冲突')&&!result.scenarios.progress.available&&!result.scenarios.parameter.available);
    }else{

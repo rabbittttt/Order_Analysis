@@ -215,7 +215,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         files += [r.get("source_file") for r in data.get("steady_history", []) if r["model"] == target["name"]]
         row["订单来源文件"] = "、".join(dict.fromkeys(f for f in files if f)) or history_file
     master_headers = ["历史传播名", "订单分析代际名", "原始表简称/别名", "品牌", "产品档位", "能源类型",
-        "发布类型", "小订发布时段", "首销发布时段", "有小订", "小订开始", "小订结束", "首销开始", "首销结束", "首销天数",
+        "发布类型", "小订发布时段", "首销发布时段", "有小订", "小订开始", "小订结束", "首销开始", "首销结束", "小订天数", "首销天数",
         "总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比",
         "总退订", "退订率", "首销期留存大定", "留存大定率", "首销期锁单", "留存大定到锁单率", "大定到锁单率", "字段完整度", "订单来源文件"]
     emit(MASTER_SHEET, master_headers, [[r.get(k) for k in master_headers] for r in master],
@@ -263,30 +263,26 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
                 {"file": item.get("source_file"), "sheet": "、".join(item.get("daily_source_sheets", []))}, {"交车锁单": day.get("lock")})
     rows = resolved_daily_rows(rows, data, master, history_file, as_of_date or date.today())
     headers = ["订单分析代际名", "历史传播名", "日期", "订单阶段", "生命周期", "小订数量",
-               *ORDER_FIELDS.values(), "退订数量", "字段来源"]
-    emit(DAILY_SHEET, headers, [[r.get(k) for k in headers] for r in rows])
+               *ORDER_FIELDS.values(), "退订数量", "字段来源", "首销分时核对"]
     for sheet, key, field, label, source_key in (
         (SMALL_HOURLY_SHEET, "small_hourly_days", "orders", "小时小订", "small_hour_source"),
         (LAUNCH_HOURLY_SHEET, "hourly_days", "gross", "小时大定", "hour_source")):
         records = {}
-        extras = ["累计小转大", "累计直接大定", "累计交车锁单"] if key == "hourly_days" else []
         for raw in raw_profiles:
             for day in raw.get(key, []):
                 hours = list(day.get("hours", []))
-                last = day.get("last_hour", max((h["hour"] for h in hours), default=0))
-                if extras and not any(h["hour"] == last for h in hours) and any(day.get(k) is not None for k in ("small_to_big", "direct", "lock")):
-                    hours.append({"hour": last})
                 for hour in hours:
                     record = [raw["model"], date_cell(day.get("date")), hour.get("hour"), hour.get(field),
                               _source_parts(raw.get(source_key))[0]]
-                    if extras:
-                        record += [day.get(k) if hour["hour"] == last else None for k in ("small_to_big", "direct", "lock")]
                     identity = (raw["model"], iso_day(day.get("date")), hour.get("hour"))
                     if identity not in records:
                         records[identity] = record
                     else:
                         records[identity] = [a if a is not None else b for a, b in zip(records[identity], record)]
-        emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件", *extras], [records[k] for k in sorted(records)])
+        emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件"], [records[k] for k in sorted(records)])
+        if key == "hourly_days":
+            reconcile_intraday_fields(rows, data.get("actuals", []), records)
+    emit(DAILY_SHEET, headers, [[r.get(k) for k in headers] for r in rows])
     weekly = [list(r[:11]) for r in weekly_rows]
     for item in data.get("steady_history", []):
         for week in item.get("weeks", []):
@@ -305,7 +301,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
          small_records, {f"D{i+1}" for i in range(max_curve)})
     guide = [
         ["口径", "数量与空值", "单位：单；0是已知无销量，空白是未知。未来日期不视为真实完成日。", None, None],
-        ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。分时累计只放by时。", None, None],
+        ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。by时只存小时数量；by天的首销分时核对列记录可用于分时快照的分项，不重复存数量。", None, None],
         ["口径", "参考曲线", "小订累计完成度、小订当日数量按小订窗口排列D1、D2；已结束日期真实日量逐日填入，完成度除以有效最终总小订。进行中车型终值未知时完成度留空，不清空已有真实日量；参考来源见车型基本信息。", None, None],
         ["口径", "退订", "逐日和累计小订退订优先小订退订分析，缺失时回退小订及首销数据整理；真实0有效，日量不从缺少前一日基数的累计值猜算。", None, None],
         ["口径", "小订", "小订选配比例分析by天 → 小订退订分析分时汇总 → 历史小订by天", None, None],
@@ -473,6 +469,35 @@ def resolved_weekly_rows(candidates):
         row += [stages[s][i] if len(parts) > 1 and s in stages else None for s in ("首销", "平销") for i in range(5, 8)]
         result.append(row)
     return result
+
+
+def reconcile_intraday_fields(daily, profiles, hourly_records):
+    """Verify day fields against the selected hour snapshot once, during refresh.
+
+    Equal dates or gross alone do not prove component consistency. Store only
+    the verified field names, not another copy of their quantities.
+    """
+    valid = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+    totals = {}
+    for (model, day, _), record in hourly_records.items():
+        key = (model, day)
+        previous = totals.get(key, 0)
+        totals[key] = previous + record[3] if previous is not None and valid(record[3]) else None
+    snapshots = {(p["model"], d["date"]): d for p in profiles for d in p.get("hourly_days", [])}
+    for row in daily:
+        key = (row["订单分析代际名"], iso_day(row["日期"]))
+        if key not in totals:
+            continue
+        snapshot, total = snapshots.get(key, {}), totals[key]
+        if not valid(total) or not valid(row.get("大定")) or not valid(snapshot.get("gross")):
+            row["首销分时核对"] = "大定快照缺失"
+            continue
+        if abs(row["大定"] - total) > .5 or abs(snapshot["gross"] - total) > .5:
+            row["首销分时核对"] = "日/时大定数量不一致"
+            continue
+        fields = [label for metric, label in (("small_to_big", "小转大"), ("direct", "直接大定"), ("lock", "交车锁单"))
+                  if valid(row.get(label)) and valid(snapshot.get(metric)) and abs(row[label] - snapshot[metric]) <= .5]
+        row["首销分时核对"] = "一致：" + "/".join(fields) if fields else "分项缺失或不一致"
 
 
 def complete_master_fields(book, masters, headers):
@@ -787,15 +812,17 @@ def read_public_forecast(book, history, today=None):
             bucket["hours"].append({"hour": hour, field: value})
             if isinstance(value, (int, float)):
                 bucket[field] += value
-            if canonical and key == "hourly_days":
-                for metric, column in (("small_to_big", "累计小转大"), ("direct", "累计直接大定"), ("lock", "累计交车锁单")):
-                    if row.get(column) is not None:
-                        bucket[metric] = row[column]
+        daily_index = {(model, iso_day(r.get("日期"))): r for (model, kind), entries in grouped.items()
+                       if kind == "首销订单" for r in entries} if key == "hourly_days" else {}
         for (model, d), bucket in sorted(buckets.items()):
             bucket["hours"].sort(key=lambda r: r["hour"])
             if key == "hourly_days":
-                for metric in ("small_to_big", "direct", "lock"):
-                    bucket.setdefault(metric, None)
+                daily = daily_index.get((model, d), {})
+                status = str(daily.get("首销分时核对") or "未核对，日/时快照不可混用")
+                verified = status.removeprefix("一致：").split("/") if status.startswith("一致：") else []
+                bucket["component_status"] = status
+                for metric, column in (("small_to_big", "小转大"), ("direct", "直接大定"), ("lock", "交车锁单")):
+                    bucket[metric] = daily.get(column) if column in verified else None
                 for row in grouped.get((model, "首销分时累计"), []):
                     if iso_day(row.get("日期")) == d:
                         bucket.update({k: row[c] for k, c in ORDER_FIELDS.items() if row.get(c) is not None})

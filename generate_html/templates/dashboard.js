@@ -1703,11 +1703,14 @@
         root.querySelector('[data-forecast-suggestion]').textContent=closedText+(componentIssues.length?'；'+componentIssues.join('；'):'');root.querySelectorAll('.forecast-scenario-lock>span').forEach(node=>node.textContent='首销期实际锁单');root.querySelectorAll('.forecast-scenario-lock>small').forEach(node=>node.textContent=endedLockReference?'逐日锁单未完整，采用汇总表已确认终值':'完整真实日锁单合计');
       }
       // The shared suggestion retains the closed-period reason once.
+      const partialComponentNote=partial&&partialEstimate.estimated?`当日分项：${partial.component_status||'分项缺失或未核对'}；未核对分项不作为真实输入，按历史参考占比估算，已知真实数量保留。`:'';
+      if(partialComponentNote)root.querySelector('[data-forecast-suggestion]').append(document.createTextNode(' '+partialComponentNote));
       for(const node of [bridgeNotice, progressSource, allocation])if(node)node.hidden=endedComplete;
       setEstimate('day_component_split',resolvedFixed.some(row=>row.component_derived)?`${target.name} | 已结束日小转大/直接大定缺失，按参考占比拆分真实大定：${resolvedFixed.filter(row=>row.component_derived).map(row=>row.day).join('、')}`:'');
       setEstimate('hourly_fallback',todayIndex!==0&&!endedComplete&&hourlyFallbackUsed?`${target.name} | D1分时完成率无可用历史分时曲线，按通用线性回退（低置信度）`:'');
       setEstimate('daily_fallback',!endedComplete&&dailyFallbackUsed?`${target.name} | 到天基础曲线无可用历史参考，按通用幂衰减回退（低置信度）`:'');
       setEstimate('partial_day',partial?`${target.name} | D${partial.index+1}全天量按分时进度反推：真实累计${fmt(partial.gross)}÷同期完成率${(partialFactor*100).toFixed(1)}%${partial.from_day_snapshot?'（无by时数据，按by天快照估算，低置信度）':ownHourly.days?`（本车型${ownHourly.days}个完整非D1日分时基准）`:partial.index>0?'（借用历史D1分时曲线，低置信度）':''}`:'');
+      setEstimate('partial_components',partialComponentNote?`${target.name} | ${partialComponentNote}`:'');
       setEstimate('method1_completion',!endedComplete&&progressAvailable?`${target.name} | 方法一同期完成率取自主辅历史参考并重定基：${adaptationText(refs.small_progress,'small_progress',target.days)}；${adaptationText(refs.direct_progress,'direct_progress',target.days)}`:'');
       setEstimate('method1_floor',completionWarnings.length?`${target.name} | 方法一低完成率保护已生效：${completionWarnings.join('；')}`:'');
       setEstimate('method2_params',parameterAvailable&&!manualOverride?`${target.name} | 方法二参数采用参考加权均值（估算）：转化率${formatParameterRate(suggest.conversion)} / 直接大定占比${formatParameterRate(suggest.direct)} / 大定到锁单率${formatParameterRate(suggest.lock)}`:'');

@@ -2271,6 +2271,37 @@ def _resolve_stage_candidate(
     }
 
 
+def _package_summary_profiles(profiles, targets):
+    """Adapt resolved cells for the UI; never choose or repair data sources."""
+    by_model = {profile["model"]: profile for profile in profiles}
+    resolved = []
+    for target in targets:
+        name = target["name"]
+        raw = by_model.get(name, {})
+        stage = target.get("stage") or "unknown"
+        label = SOURCE_LABELS["summary"]
+        days = list(raw.get("days") or [])
+        hourly = list(raw.get("hourly_days") or [])
+        total = int(_number(raw.get("total_small")))
+        fields = {"首销日明细": label, "总小订": label if total > 0 else SOURCE_LABELS["missing"],
+                  "分时进度": label, **{f"首销日·{k}": label for k in ("gross", "net", "small_to_big", "direct", "lock", "cancel")}}
+        latest = max((r.get("date", "") for r in [*days, *hourly]), default="")
+        selected = "summary" if days or hourly or total > 0 or raw.get("small_daily_days") else "missing"
+        stages = {}
+        for key in ("before", "active", "ended", "unknown"):
+            missing = (["首销日真实进度"] if not days and key != "before" else []) + (["总小订"] if total <= 0 else [])
+            stages[key] = {"stage": key, "priority": ("summary",), "days": days, "hourly_days": hourly,
+                "total_small": total, "total_small_source": "summary", "day_source": raw.get("day_source"),
+                "selected_source": selected, "selected_source_label": SOURCE_LABELS[selected], "field_sources": fields,
+                "missing_fields": missing, "data_missing": selected == "missing", "source_latest_date": latest}
+        current = stages.get(stage, stages["unknown"])
+        profile = {**raw, **current, "model": name, "stage_profiles": stages}
+        target.update({k: current[k] for k in ("selected_source", "selected_source_label", "field_sources", "missing_fields", "data_missing", "source_latest_date")})
+        target["small"] = total
+        resolved.append(profile)
+    return resolved
+
+
 def _resolve_actual_profiles(
     history: list[dict[str, Any]],
     profiles: list[dict[str, Any]],
@@ -2285,28 +2316,6 @@ def _resolve_actual_profiles(
         raw = next((profile for profile in profiles if _same_model(profile.get("model"), name)), None) or {}
         reference = _history_record(history, name)
         stage = target.get("stage") or "unknown"
-        if raw.get("_summary_resolved"):
-            label = SOURCE_LABELS["summary"]
-            days = list(raw.get("days") or [])
-            hourly = list(raw.get("hourly_days") or [])
-            total = int(_number(raw.get("total_small")))
-            fields = {"首销日明细": label, "总小订": label if total > 0 else SOURCE_LABELS["missing"],
-                      "分时进度": label, **{f"首销日·{k}": label for k in ("gross", "net", "small_to_big", "direct", "lock", "cancel")}}
-            latest = max((r.get("date", "") for r in [*days, *hourly]), default="")
-            selected = "summary" if days or hourly or total > 0 or raw.get("small_daily_days") else "missing"
-            stages = {}
-            for key in ("before", "active", "ended", "unknown"):
-                missing = (["首销日真实进度"] if not days and key != "before" else []) + (["总小订"] if total <= 0 else [])
-                stages[key] = {"stage": key, "priority": ("summary",), "days": days, "hourly_days": hourly,
-                    "total_small": total, "total_small_source": "summary", "day_source": raw.get("day_source"),
-                    "selected_source": selected, "selected_source_label": SOURCE_LABELS[selected], "field_sources": fields,
-                    "missing_fields": missing, "data_missing": selected == "missing", "source_latest_date": latest}
-            current = stages.get(stage, stages["unknown"])
-            profile = {**raw, **current, "model": name, "stage_profiles": stages}
-            target.update({k: current[k] for k in ("selected_source", "selected_source_label", "field_sources", "missing_fields", "data_missing", "source_latest_date")})
-            target["small"] = total
-            resolved.append(profile)
-            continue
 
         history_profile = _profile_from_history(
             name,
@@ -2947,8 +2956,8 @@ class SalesForecastModule:
             with summary_scope(self.summary_path) as summary:
                 if summary.get("visible"):
                     return self._build_from_visible(summary["workbook"], subject)
-                return self._build_from_sources(summary["store"], subject)
-        return self._build_from_sources(store, subject)
+                raise ValueError("销量汇总结构已过期，请运行main刷新汇总，网页不会回退读取原始文件")
+        raise FileNotFoundError("销量汇总缺失，请先运行main生成鸿蒙智行销量数据汇总.xlsx")
 
     def _build_from_visible(self, workbook, subject):
         from core.forecast_summary import read_public_forecast, MASTER_SHEET, DAILY_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET
@@ -2962,16 +2971,10 @@ class SalesForecastModule:
         _attach_steady_launch_features(steady_history, history)
         targets = _target_options(history, raw_profiles, windows, today=self.as_of_date, model_master=master)
         source = SourceRef(path.name, MASTER_SHEET, "车型基本信息与历史基准")
-        profiles = _resolve_actual_profiles(history, raw_profiles, targets, source, today=self.as_of_date)
-        _merge_small_daily_history(profiles, small_history, targets, SourceRef(path.name, DAILY_SHEET, "历史真实逐日小订"))
+        profiles = _package_summary_profiles(raw_profiles, targets)
         by_model = {profile["model"]: profile for profile in profiles}
         for target in targets:
             profile = by_model[target["name"]]
-            candidate = profile["stage_profiles"].get(target["stage"], {})
-            profile.update(candidate)
-            for key in ("selected_source", "selected_source_label", "field_sources", "missing_fields", "data_missing", "source_latest_date"):
-                target[key] = candidate.get(key)
-            target["small"] = candidate.get("total_small", profile.get("total_small"))
             _apply_small_order_applicability(target, profile)
             issues = _profile_issues(target, profile, today=self.as_of_date)
             errors = [issue["message"] for issue in issues]

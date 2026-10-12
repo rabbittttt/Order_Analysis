@@ -241,7 +241,9 @@ class PublicForecastTablesTests(TestCase):
             module.as_of_date = date(2026, 1, 4)
             with patch('modules.sales_forecast._read_actual_profiles', side_effect=AssertionError('raw orders must not be loaded')), \
                  patch('modules.sales_forecast._read_small_order_history', side_effect=AssertionError('raw history must not be loaded')), \
-                 patch('modules.sales_forecast._read_steady_history', side_effect=AssertionError('raw steady must not be loaded')):
+                 patch('modules.sales_forecast._read_steady_history', side_effect=AssertionError('raw steady must not be loaded')), \
+                 patch('modules.sales_forecast._resolve_actual_profiles', side_effect=AssertionError('summary must not reselect sources')), \
+                 patch('modules.sales_forecast._merge_small_daily_history', side_effect=AssertionError('summary must not merge history again')):
                 dashboard = module.build(None, Subject('summary', '鸿蒙智行', 'group'))
             data = dashboard.views['week']['pages']['预测方案']['workspace']['data']
             self.assertEqual(data['actuals'][0]['days'][0]['gross'], 30)
@@ -356,15 +358,18 @@ class PublicForecastTablesTests(TestCase):
         book = self.make_public()
         prohibited = {'适用取数阶段', '小订参考累计完成度', '小订标准进度', '真实逐日',
                       '已结束日', '参考事件', '数据状态', '用途', '截至末小时小转大',
-                      '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考'}
+                      '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考',
+                      '累计小转大', '累计直接大定', '累计交车锁单'}
         for sheet in book:
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
         self.assertEqual(book[MASTER_SHEET].max_column, 39 + len(SMALL_REFERENCE_FIELDS))
         self.assertIn('小订发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn('首销发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn("有小订", [c.value for c in book[MASTER_SHEET][1]])
+        headers = [c.value for c in book[MASTER_SHEET][1]]
+        self.assertEqual(headers.index('小订天数') + 1, headers.index('首销天数'))
         for name in (SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET):
-            self.assertEqual(book[name].max_column, 5 if name == SMALL_HOURLY_SHEET else 8)
+            self.assertEqual(book[name].max_column, 5)
             self.assertEqual(book[name].cell(1, 5).value, '来源文件')
         book.close()
 
@@ -399,16 +404,72 @@ class PublicForecastTablesTests(TestCase):
         self.assertFalse(any(r['小订数量'] is not None for r in table_records(book, DAILY_SHEET)))
         book.close()
 
-    def test_hourly_components_live_in_hourly_table_not_duplicate_daily_rows(self):
+    def test_hourly_components_use_verified_daily_cells(self):
         def customize(data):
-            data['actuals'][0]['hourly_days'] = [{'date': '2026-01-03', 'last_hour': 15,
-                'gross': 9, 'small_to_big': 0, 'direct': 9, 'lock': None,
-                'hours': [{'hour': 15, 'gross': 9}]}]
+            data['actuals'][0]['hourly_days'] = [{'date': '2026-01-03', 'last_hour': 16,
+                'gross': 30, 'small_to_big': 10, 'direct': 20, 'lock': None,
+                'hours': [{'hour': 15, 'gross': 9}, {'hour': 16, 'gross': 21}]}]
             data['actuals'][0]['hour_source'] = {'file': '首销期订单节奏.xlsx', 'sheet': '测试车by时'}
         book = self.make_public(customize=customize)
         bucket = read_public_forecast(book, [])[0][0]['hourly_days'][0]
-        self.assertEqual((bucket['gross'], bucket['small_to_big'], bucket['direct'], bucket['lock']), (9, 0, 9, None))
+        self.assertEqual((bucket['gross'], bucket['small_to_big'], bucket['direct'], bucket['lock']), (30, 10, 20, None))
+        self.assertEqual(bucket['component_status'], '一致：小转大/直接大定')
         self.assertEqual(book[LAUNCH_HOURLY_SHEET].cell(2, 5).value, '首销期订单节奏.xlsx')
+        book.close()
+
+    def test_mismatched_hourly_snapshot_does_not_borrow_daily_components(self):
+        for gross, small, direct in ((9, 0, 9), (30, 9, 21), (30, None, None)):
+            with self.subTest(gross=gross, small=small):
+                def customize(data):
+                    data['actuals'][0]['hourly_days'] = [{'date': '2026-01-03',
+                        'gross': gross, 'small_to_big': small, 'direct': direct,
+                        'hours': [{'hour': 15, 'gross': gross}]}]
+                book = self.make_public(customize=customize)
+                profile = read_public_forecast(book, [])[0][0]
+                bucket = profile['hourly_days'][0]
+                self.assertEqual(bucket['gross'], gross)
+                self.assertIsNone(bucket['small_to_big'])
+                self.assertIsNone(bucket['direct'])
+                self.assertEqual(profile['days'][0]['gross'], 30)
+                book.close()
+
+    def test_daily_hourly_reconciliation_preserves_zero_and_checks_each_component(self):
+        from core.forecast_summary import reconcile_intraday_fields
+        rows = [{'订单分析代际名': 'A', '日期': '2026-01-03', '大定': 30,
+                 '小转大': 0, '直接大定': 30, '交车锁单': 4}]
+        profiles = [{'model': 'A', 'hourly_days': [{'date': '2026-01-03', 'gross': 30,
+                     'small_to_big': 0, 'direct': 30, 'lock': 3}]}]
+        records = {('A', '2026-01-03', 15): ['A', '2026-01-03', 15, 30, '原始.xlsx']}
+        reconcile_intraday_fields(rows, profiles, records)
+        self.assertEqual(rows[0]['首销分时核对'], '一致：小转大/直接大定')
+        self.assertEqual(rows[0]['交车锁单'], 4)
+        records[('A', '2026-01-03', 15)][3] = 29
+        reconcile_intraday_fields(rows, profiles, records)
+        self.assertEqual(rows[0]['首销分时核对'], '日/时大定数量不一致')
+
+    def test_missing_summary_does_not_fall_back_to_raw_files(self):
+        from modules.sales_forecast import SalesForecastModule
+        from core.models import Subject
+        with TemporaryDirectory() as folder:
+            module = SalesForecastModule()
+            module.summary_path = Path(folder) / 'missing.xlsx'
+            with patch.object(module, '_build_from_sources', side_effect=AssertionError('no raw fallback')):
+                with self.assertRaisesRegex(FileNotFoundError, '销量汇总缺失'):
+                    module.build(None, Subject('summary', '鸿蒙智行', 'group'))
+
+    def test_unverified_summary_cannot_supply_hourly_actual_components(self):
+        def customize(data):
+            data['actuals'][0]['hourly_days'] = [{'date': '2026-01-03', 'gross': 30,
+                'small_to_big': 10, 'direct': 20, 'hours': [{'hour': 15, 'gross': 30}]}]
+        book = self.make_public(customize=customize)
+        sheet = book[DAILY_SHEET]
+        column = [c.value for c in sheet[1]].index('首销分时核对') + 1
+        for row in range(2, sheet.max_row + 1):
+            sheet.cell(row, column).value = None
+        bucket = read_public_forecast(book, [])[0][0]['hourly_days'][0]
+        self.assertEqual(bucket['gross'], 30)
+        self.assertIsNone(bucket['small_to_big'])
+        self.assertIsNone(bucket['direct'])
         book.close()
 
     def test_week_reference_eligibility_is_derived_from_dates(self):
@@ -430,15 +491,14 @@ class PublicForecastTablesTests(TestCase):
         book.close()
 
     def test_summary_result_is_authoritative_across_stages(self):
-        from modules.sales_forecast import _resolve_actual_profiles
-        from core.models import SourceRef
+        from modules.sales_forecast import _package_summary_profiles
         book = self.make_public()
         history = [{'model': '历史车', 'generation': '测试车', 'small': 100, 'gross': 20,
                     'days': 1, 'daily_small': [10], 'daily_direct': [10],
                     'launch_date': '2026-01-03'}]
         raw = read_public_forecast(book, history)[0]
         targets = [{'name': '测试车', 'stage': 'ended', 'launch_date': '2026-01-03'}]
-        result = _resolve_actual_profiles(history, raw, targets, SourceRef('summary.xlsx', MASTER_SHEET))[0]
+        result = _package_summary_profiles(raw, targets)[0]
         self.assertEqual(result['stage_profiles']['active']['days'][0]['gross'], 30)
         self.assertEqual(result['stage_profiles']['ended']['days'][0]['gross'], 30)
         book.close()
