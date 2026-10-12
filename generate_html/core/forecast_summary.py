@@ -89,6 +89,14 @@ def iso_day(value):
     return value.isoformat() if isinstance(value, date) else str(value or "")
 
 
+def calendar_day(value):
+    """Only valid calendar dates may anchor relative forecast curves."""
+    try:
+        return date.fromisoformat(iso_day(value)).isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
 def date_cell(value):
     try:
         return datetime.fromisoformat(value) if value else None
@@ -306,6 +314,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         ["口径", "首销结束及平销关联首销", "首销期订单节奏／小订退订分析按字段优先 → 整理表补缺", None, None],
         ["口径", "平销", "预测交车锁单。完整周按周起止和阶段日期判断；不足完整周不当作完整周参考。", None, None],
         ["口径", "预测指标", "D1/D2和后续曲线使用同一份多来源取值结果；未来实际值、未知终局分母留空，不用预测补真实值。", None, None],
+        ["口径", "字段补齐", "车型基本信息保留原维护时段，开始小时优先按上午9/下午14/晚上19；留白才用同代际（含二级事件）本阶段D1首个正数订单小时，另列来源。日期可确定的天数、星期和平销开始在汇总生成时补齐。无依据留空，不补预测终值。", None, None],
         ["口径", "字段完整度", "按汇总最终字段是否有值计算；口径一致性和质量状态由同一组数量计算。", None, None],
         ["生成", "数据判定日期", (as_of_date or date.today()).isoformat(), None, None],
     ]
@@ -466,6 +475,40 @@ def resolved_weekly_rows(candidates):
     return result
 
 
+def complete_master_fields(book, masters, headers):
+    """Persist deterministic defaults, scoped to the exact event and its D1."""
+    fields = ["小订天数", "小订发布星期", "首销发布星期", "平销开始",
+              "小订开始小时", "小订开始小时来源", "首销开始小时", "首销开始小时来源"]
+    headers.extend(k for k in fields if k not in headers)
+    anchors = {"上午": 9, "下午": 14, "晚上": 19}
+    for stage, sheet, quantity in (("小订", SMALL_HOURLY_SHEET, "小时小订"),
+                                    ("首销", LAUNCH_HOURLY_SHEET, "小时大定")):
+        first = {}
+        for row in table_records(book, sheet):
+            hour, value = row.get("小时"), row.get(quantity)
+            if (isinstance(hour, bool) or not isinstance(hour, (int, float)) or
+                    not math.isfinite(hour) or int(hour) != hour or not 0 <= hour < 24 or
+                    isinstance(value, bool) or not isinstance(value, (int, float)) or
+                    not math.isfinite(value) or value <= 0):
+                continue
+            key = (row.get("订单分析代际名"), calendar_day(row.get("日期")))
+            if key not in first or hour < first[key][0]:
+                first[key] = (int(hour), row.get("来源文件") or sheet)
+        for row in masters:
+            start, end = calendar_day(row.get(stage + "开始")), calendar_day(row.get(stage + "结束"))
+            if start:
+                row[stage + "发布星期"] = "周" + "一二三四五六日"[date.fromisoformat(start).weekday()]
+            if start and end and end >= start:
+                row[stage + "天数"] = (date.fromisoformat(end) - date.fromisoformat(start)).days + 1
+            if stage == "首销" and end:
+                row["平销开始"] = date_cell((date.fromisoformat(end) + timedelta(days=1)).isoformat())
+            maintained = anchors.get(str(row.get(stage + "发布时段") or "").strip())
+            evidence = first.get((row.get("订单分析代际名"), start)) if start else None
+            row[stage + "开始小时"] = maintained if maintained is not None else evidence[0] if evidence else None
+            row[stage + "开始小时来源"] = ("原表维护时段" if maintained is not None else
+                f"D1首个正数订单小时：{evidence[1]}" if evidence else "缺少本阶段D1正数分时")
+
+
 def refresh_reference_tables(book, data, emit, daily, today):
     """Rebuild reference features from the same resolved quantities as actuals."""
     from tools.refresh_sales_forecast_data import safe_div, cumulative, day_structure_quality
@@ -608,6 +651,7 @@ def refresh_reference_tables(book, data, emit, daily, today):
     for name, records in ((SMALL_CURVE_SHEET, small_curves), (SMALL_DAILY_SHEET, small_daily)):
         emit(name, small_headers, [r+[None]*(len(small_headers)-len(r)) for r in records],
              set(small_headers[2:]) if name == SMALL_CURVE_SHEET else set())
+    complete_master_fields(book, masters, headers)
     emit(MASTER_SHEET, headers, [[r.get(k) for k in headers] for r in masters],
          {k for k in headers if k.endswith("率") or "占比" in k or k == "字段完整度"})
     if SMALL_TOTAL_SHEET in book.sheetnames:
@@ -619,12 +663,6 @@ def read_public_forecast(book, history, today=None):
     from core.model_identity import model_key
     from modules.sales_forecast import _read_model_mapping, _read_model_master, _master_record, _brand
     current = today or date.today()
-    def calendar_day(value):
-        """Only valid calendar dates may anchor relative forecast curves."""
-        try:
-            return date.fromisoformat(iso_day(value)).isoformat()
-        except (TypeError, ValueError):
-            return ""
 
     masters = table_records(book, MASTER_SHEET)
     days = table_records(book, DAILY_SHEET)
@@ -816,6 +854,7 @@ def read_public_forecast(book, history, today=None):
         item = {"model": name, "generation": generation, "mapped": model_key(row.get("原始名称") or name) in mapping,
             "brand": attrs.get("品牌") or _brand(name), "tier": attrs.get("产品档位") or "未维护",
             "energy": attrs.get("能源类型") or "未维护", "node": attrs.get("发布类型") or attrs.get("发布节点") or "未维护",
+            "release_start_hour": row.get("小订开始小时", attrs.get("小订开始小时")),
             "launch_period": row.get("小订发布时段") or attrs.get("小订发布时段") or "未维护", "small_start_date": start, "small_end_date": end,
             "days": row.get("小订天数") or ((date.fromisoformat(end)-date.fromisoformat(start)).days+1 if start and end else max(len(daily), 1)), "total": total, "total_complete": complete,
             "total_source": row.get("总量来源"),

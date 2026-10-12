@@ -254,7 +254,8 @@
   }
 
   const RELEASE_HOURS = Object.freeze({'上午':9,'下午':14,'晚上':19});
-  function releaseStartHour(period, hours = [], field = 'orders') {
+  function releaseStartHour(period, hours = [], field = 'orders', summaryHour = null) {
+    if (Number.isInteger(summaryHour) && summaryHour >= 0 && summaryHour < 24) return summaryHour;
     const maintained = RELEASE_HOURS[String(period || '').trim()];
     if (Number.isInteger(maintained)) return maintained;
     const positive = hours.filter(row => Number.isInteger(row.hour) && row.hour >= 0 && row.hour < 24
@@ -262,7 +263,20 @@
     return positive.length ? Math.min(...positive.map(row => row.hour)) : -1;
   }
 
+  function releaseHourForTarget(target, stage, hours = []) {
+    const small = stage === 'small', config = target.releaseDefaults || {};
+    const period = small ? target.smallPeriod : target.period;
+    const day = small ? target.smallStartDate : target.launchDate;
+    const originalPeriod = (small ? config.small_period : config.launch_period) || '未维护';
+    const originalDay = small ? config.small_start_date : config.launch_date;
+    const saved = day === originalDay && period === originalPeriod
+      ? config[stage + '_release_start_hour'] : null;
+    // Only user changes or legacy summaries require recomputing the default.
+    return releaseStartHour(period, hours, small ? 'orders' : 'gross', saved);
+  }
+
   function smallHourlyStart(item = {}) {
+    if (Number.isInteger(item.release_start_hour) && item.release_start_hour >= 0 && item.release_start_hour < 24) return item.release_start_hour;
     const maintained = releaseStartHour(item.launch_period);
     if (maintained >= 0) return maintained;
     const explicit = item.small_start_hour;
@@ -485,7 +499,7 @@
   }
 
   function launchHourlyItem(item={}) {
-    return {small_hourly_curve:item.hourly_curve||[],small_start_hour:item.launch_start_hour,launch_period:item.launch_period};
+    return {small_hourly_curve:item.hourly_curve||[],small_start_hour:item.launch_start_hour,launch_period:item.launch_period,release_start_hour:item.release_start_hour};
   }
 
   // Release age uses complete seven-day bins, not each model's latest weeks.
@@ -810,6 +824,7 @@
     adaptSmallDailyOrders,
     smallReferenceScore,
     releaseStartHour,
+    releaseHourForTarget,
     smallHourlyStart,
     smallReferenceAvailable,
     smallHourlyCurve,

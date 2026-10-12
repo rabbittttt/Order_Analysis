@@ -68,6 +68,10 @@ class ForecastMathTests(unittest.TestCase):
         self.assertEqual(self.run_node("m.releaseStartHour('',[{hour:9,orders:0},{hour:25,orders:1}])"), -1)
         self.assertEqual(self.run_node("m.releaseStartHour('',[{hour:8,gross:0},{hour:13,gross:2}], 'gross')"), 13)
 
+    def test_summary_hour_is_consumed_unless_user_changes_date_or_period(self):
+        result = self.run_node("(()=>{const t={smallStartDate:'2026-01-01',smallPeriod:'未维护',releaseDefaults:{small_start_date:'2026-01-01',small_period:'未维护',small_release_start_hour:0}},h=[{hour:13,orders:3}];return [m.releaseHourForTarget(t,'small',h),m.releaseHourForTarget({...t,smallPeriod:'晚上'},'small',h),m.releaseHourForTarget({...t,smallStartDate:'2026-01-02'},'small',h),m.smallHourlyStart({release_start_hour:0,small_start_hour:13}),m.smallHourlyStart(m.launchHourlyItem({release_start_hour:17,launch_period:'未维护'}))]})()")
+        self.assertEqual(result, [0, 19, 13, 0, 17])
+
     def test_maintained_reference_period_has_priority_for_both_stages(self):
         result = self.run_node("(()=>{const curve=[...Array(13).fill(0),...Array(11).fill(1)];return [m.smallHourlyStart({launch_period:'上午',small_start_hour:13,small_hourly_curve:curve}),m.smallHourlyStart(m.launchHourlyItem({launch_period:'晚上',hourly_curve:curve})),m.smallHourlyStart(m.launchHourlyItem({hourly_curve:curve})),m.smallHourlyCurve({launch_period:'上午',small_start_hour:13,small_hourly_curve:curve})[9]]})()")
         self.assertEqual(result, [9, 19, 13, 0])

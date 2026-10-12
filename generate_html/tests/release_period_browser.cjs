@@ -17,7 +17,7 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
    assert.deepEqual(await control.locator('option').evaluateAll(nodes=>nodes.map(n=>n.value)),['上午','下午','晚上','未维护']);
    assert.equal(await control.inputValue(),['上午','下午','晚上'].includes(raw)?raw:'未维护');
   }
-  await page.evaluate(()=>{const real=window.ForecastMath.releaseStartHour;window.releaseCalls=[];window.ForecastMath.releaseStartHour=(period,hours=[],field='orders')=>{const start=real(period,hours,field);if(hours.length)window.releaseCalls.push({period,hours,field,start});return start;};});
+  await page.evaluate(()=>{const real=window.ForecastMath.releaseHourForTarget;window.releaseCalls=[];window.ForecastMath.releaseHourForTarget=(target,stage,hours=[])=>{const start=real(target,stage,hours),period=stage==='small'?target.smallPeriod:target.period,field=stage==='small'?'orders':'gross';if(hours.length)window.releaseCalls.push({period,hours,field,start});return start;};});
   for(const [stage,field,metric] of [['small','smallPeriod','orders'],['launch','period','gross']]){
    await page.locator(`[data-forecast-stage-switch="${stage}"]`).click();
    const control=page.locator(`[data-forecast-target="${field}"]`);

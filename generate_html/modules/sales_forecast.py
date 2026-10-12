@@ -1571,6 +1571,7 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
                 item["energy"] = str(master_record.get("能源类型") or "未维护")
                 item["node"] = str(master_record.get("发布类型") or master_record.get("发布节点") or "未维护")
                 item["launch_period"] = usable_attribute(master_record.get("首销发布时段"))
+                item["release_start_hour"] = master_record.get("首销开始小时")
             for field, mapping in progress_maps.items():
                 # Different historical events/editions may map to one generation.
                 # Preserve their own named curves before considering an alias.
@@ -2674,6 +2675,8 @@ def _target_options(
             "launch_weekday": reference["launch_weekday"] if reference else _weekday(launch_date),
             "launch_period": usable_attribute(master_record.get("首销发布时段")) if master_record else usable_attribute(reference["launch_period"] if reference else None),
             "small_period": usable_attribute(master_record.get("小订发布时段")) if master_record else "未维护",
+            "small_release_start_hour": (master_record or {}).get("小订开始小时"),
+            "launch_release_start_hour": (master_record or {}).get("首销开始小时"),
             "days": stage["days"],
             "launch_days_maintained": bool(parsed_end or _number(maintained_days) > 0),
             "small": profile.get("total_small") or (window or {}).get("small") or (reference["small"] if reference else 0),

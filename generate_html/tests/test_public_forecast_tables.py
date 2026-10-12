@@ -18,6 +18,55 @@ from modules.sales_forecast import _history_item, _target_options
 
 
 class PublicForecastTablesTests(TestCase):
+    def test_summary_completes_exact_stage_hours_and_calendar_fields(self):
+        def customize(data):
+            profile = data['actuals'][0]
+            profile['small_hour_source'] = {'file': '小订.xlsx'}
+            profile['small_hourly_days'].append({'date': '2026-01-01', 'hours': [
+                {'hour': 17, 'orders': 5}, {'hour': 0, 'orders': 1}, {'hour': 9, 'orders': 0}]})
+            profile['hour_source'] = {'file': '首销.xlsx'}
+            profile['hourly_days'] = [{'date': '2026-01-03', 'hours': [
+                {'hour': 17, 'gross': 5}, {'hour': 13, 'gross': 3}, {'hour': 9, 'gross': None}]}]
+        book = self.make_public(customize=customize)
+        row = table_records(book, MASTER_SHEET)[0]
+        self.assertEqual(row['小订开始小时'], 0)
+        self.assertEqual(row['首销开始小时'], 13)
+        self.assertEqual(row['小订发布时段'], '未维护')
+        self.assertIn('小订.xlsx', row['小订开始小时来源'])
+        self.assertIn('首销.xlsx', row['首销开始小时来源'])
+        self.assertEqual(row['小订天数'], 2)
+        self.assertEqual(row['首销天数'], 7)
+        self.assertEqual(row['小订发布星期'], '周四')
+        self.assertEqual(row['首销发布星期'], '周六')
+        self.assertEqual(row['平销开始'].date(), date(2026, 1, 10))
+        _, _, small, _ = read_public_forecast(book, [])
+        self.assertEqual(small[0]['release_start_hour'], 0)
+        book.close()
+
+    def test_missing_d1_does_not_borrow_d2_and_maintained_period_wins(self):
+        book = self.make_public(master_periods={'首销发布时段': '晚上'})
+        row = table_records(book, MASTER_SHEET)[0]
+        self.assertIsNone(row['小订开始小时'])  # fixture has positive D2, not D1
+        self.assertEqual(row['首销开始小时'], 19)
+        self.assertEqual(row['首销开始小时来源'], '原表维护时段')
+        book.close()
+
+    def test_completion_never_borrows_another_edition_or_accepts_invalid_hours(self):
+        from core.forecast_summary import complete_master_fields
+        book = Workbook()
+        sheet = book.create_sheet(SMALL_HOURLY_SHEET)
+        sheet.append(['代际名', '二级代际名', '日期', '小时', '小时小订', '来源文件'])
+        for edition, hour, count in [('车 Ultra', 13, 1), ('车 Pro', 15, 2),
+                                      ('车 Pro', 9, 0), ('车 Pro', 8, None), ('车 Pro', 25, 3)]:
+            sheet.append(['车', edition, '2026-01-01', hour, count, '来源.xlsx'])
+        rows = [{'订单分析代际名': name, '小订开始': '2026-01-01'}
+                for name in ('车 Ultra', '车 Pro', '车')]
+        headers = []
+        complete_master_fields(book, rows, headers)
+        self.assertEqual([r['小订开始小时'] for r in rows], [13, 15, None])
+        self.assertTrue(all(r['首销开始小时'] is None for r in rows))
+        book.close()
+
     def test_separate_publication_periods_survive_public_workbook(self):
         book = self.make_public(customize=lambda data:data['targets'][0].update(
             small_period='下午',launch_period='晚上'))
@@ -278,7 +327,7 @@ class PublicForecastTablesTests(TestCase):
                       '截至末小时直接大定', '截至末小时交车锁单', '平销完整周参考'}
         for sheet in book:
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
-        self.assertEqual(book[MASTER_SHEET].max_column, 31 + len(SMALL_REFERENCE_FIELDS))
+        self.assertEqual(book[MASTER_SHEET].max_column, 39 + len(SMALL_REFERENCE_FIELDS))
         self.assertIn('小订发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn('首销发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn("有小订", [c.value for c in book[MASTER_SHEET][1]])
