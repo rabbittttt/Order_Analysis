@@ -521,7 +521,7 @@ assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · �
         self.assertIn("实际对比、评分规则与贡献", script)
         self.assertIn('.forecast-pane[data-forecast-pane="score"].active', css)
         self.assertIn(".forecast-score-rule-box", css)
-        self.assertIn(".forecast-score-detail-table th:nth-child(2),.forecast-score-detail-table td:nth-child(2){width:132px;min-width:132px;max-width:132px;white-space:normal;overflow-wrap:anywhere}", css)
+        self.assertIn(".forecast-score-detail-table th:nth-child(2),.forecast-score-detail-table td:nth-child(2){width:210px;min-width:210px;max-width:210px;white-space:normal;overflow-wrap:anywhere}", css)
 
     def test_small_and_steady_score_pages_explain_the_actual_ranking(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
