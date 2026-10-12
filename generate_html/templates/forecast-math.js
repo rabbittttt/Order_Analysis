@@ -734,8 +734,13 @@
     // Known components are lower bounds, not proportions to overwrite. Only
     // the unclassified part of a gross snapshot may use the reference share.
     const unclassified=Math.max(observed-(small??0)-(direct??0),0);
-    const observedSmall=small!==null&&direct!==null?small+unclassified*share:
+    let observedSmall=small!==null&&direct!==null?small+unclassified*share:
       small!==null?small:direct!==null?observed-direct:observed*share;
+    // Allocate indivisible observed orders once. Ceil on both estimated parts
+    // invents an order (e.g. 100 split at 1/3 becomes 34 + 67) and raises D1 floors.
+    // Actual components are lower bounds and are never rounded or overwritten.
+    if ([observed,small??0,direct??0].every(Number.isInteger))
+      observedSmall=Math.min(observed-(direct??0),Math.max(small??0,Math.round(observedSmall)));
     const observedDirect=observed-observedSmall,rate=Number(completion);
     const total=observed/(Number.isFinite(rate)&&rate>0?Math.min(rate,1):1),remaining=Math.max(total-observed,0);
     const projectedSmall=Math.max(Math.round(observedSmall+remaining*share),Math.ceil(observedSmall));

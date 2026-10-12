@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
+from datetime import date
 
 from core.components import kpi, section
 from core.discovery import BRAND_ORDER
-from core.excel import GRAIN_LABELS, WorkbookStore, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_parent, subject_type
+from core.excel import GRAIN_LABELS, WorkbookStore, _source_date_range, compact_text, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_parent, subject_type
 from core.models import Dashboard, SourceRef, Subject
 
 
@@ -25,8 +27,28 @@ def _latest_detail_period(periods: list[str]) -> str:
     )
 
 
-def _metric_value(metrics: dict, *names: str) -> float:
-    return next((metrics[name] for name in names if name in metrics), 0)
+def _metric_value(metrics: dict, *names: str, default: float | None = 0) -> float | None:
+    return next((metrics[name] for name in names if name in metrics), default)
+
+
+def _comparable_ranking_counts(current, previous):
+    """Missing periods/metrics are unknown, unlike upstream-confirmed sparse zeros."""
+    return all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+               for v in (current, previous)) and previous > 0
+
+
+def _ranking_value(series, metric, period):
+    values = series[metric]
+    aliases = ("留存大定", "净大定") if metric == "留存大定" else (metric,)
+    if period in values:
+        return _metric_value(values[period].get("metrics", {}), *aliases, default=None)
+    # Only omitted daily columns inside a physical export mean zero. Do not
+    # extend to a new date, bridge gaps between files, or infer missing metrics.
+    try:
+        day = date.fromisoformat(period)
+    except (TypeError, ValueError):
+        return None
+    return 0 if any(start <= day <= end for start, end in series.get("_daily_coverage", {}).get(metric, [])) else None
 
 
 def _group_model_series(store: WorkbookStore, grain: str) -> dict[str, dict[str, dict]]:
@@ -67,6 +89,22 @@ def _group_model_series(store: WorkbookStore, grain: str) -> dict[str, dict[str,
             "留存大定": parse_metric_sheet(order_sheet),
             "交车锁单": parse_metric_sheet(lock_sheet),
         }
+    if grain == "day":
+        names_by_key = {compact_text(name): name for name in series}
+        for keyword, metric in (("大定选配比例", "留存大定"), ("锁单选配比例", "交车锁单")):
+            aliases = {"留存大定", "净大定"} if metric == "留存大定" else {metric}
+            for item in store.find_all(keyword):
+                span = _source_date_range(item)
+                if not span:
+                    continue
+                for sheet in item.workbook.worksheets:
+                    name = names_by_key.get(compact_text(sheet_subject(sheet.title)))
+                    if not name or "图表" in sheet.title or grain_from_sheet(sheet.title) != "day":
+                        continue
+                    if any(str(sheet.cell(row, 1).value or "").strip() in aliases
+                           and sheet.cell(row, 2).value == "数量" and sheet.cell(row, 3).value == "数量"
+                           for row in range(2, sheet.max_row + 1)):
+                        series[name].setdefault("_daily_coverage", {}).setdefault(metric, []).append(span)
     return series
 
 
@@ -83,12 +121,9 @@ def _change_rankings(
     for metric in ("留存大定", "交车锁单"):
         rows = []
         for name, series in model_series.items():
-            current_metrics = series[metric].get(period, {}).get("metrics", {})
-            previous_metrics = series[metric].get(previous_period, {}).get("metrics", {})
-            aliases = ("留存大定", "净大定") if metric == "留存大定" else (metric,)
-            current = _metric_value(current_metrics, *aliases)
-            previous = _metric_value(previous_metrics, *aliases)
-            if not isinstance(current, (int, float)) or not isinstance(previous, (int, float)) or previous <= 0:
+            current = _ranking_value(series, metric, period)
+            previous = _ranking_value(series, metric, previous_period)
+            if not _comparable_ranking_counts(current, previous):
                 continue
             if direction == "rise":
                 if current <= previous:
@@ -122,12 +157,11 @@ def _rise_rankings_with_empty(model_series, period, previous_period):
     for metric in ("留存大定", "交车锁单"):
         if metric in rankings:
             continue
-        aliases = ("留存大定", "净大定") if metric == "留存大定" else (metric,)
         comparable = False
         for series in model_series.values():
-            current = _metric_value(series[metric].get(period, {}).get("metrics", {}), *aliases)
-            previous = _metric_value(series[metric].get(previous_period, {}).get("metrics", {}), *aliases)
-            comparable |= isinstance(current, (int, float)) and isinstance(previous, (int, float)) and previous > 0
+            current = _ranking_value(series, metric, period)
+            previous = _ranking_value(series, metric, previous_period)
+            comparable |= _comparable_ranking_counts(current, previous)
         rankings[metric] = {"rows": [], "empty_reason": "本期暂无环比上涨车型" if comparable else "暂无可比数据：需要本期实绩及大于0的上期基数"}
     return rankings
 
