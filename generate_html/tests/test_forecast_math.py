@@ -76,6 +76,10 @@ class ForecastMathTests(unittest.TestCase):
         result = self.run_node("(()=>{const curve=[...Array(13).fill(0),...Array(11).fill(1)];return [m.smallHourlyStart({launch_period:'上午',small_start_hour:13,small_hourly_curve:curve}),m.smallHourlyStart(m.launchHourlyItem({launch_period:'晚上',hourly_curve:curve})),m.smallHourlyStart(m.launchHourlyItem({hourly_curve:curve})),m.smallHourlyCurve({launch_period:'上午',small_start_hour:13,small_hourly_curve:curve})[9]]})()")
         self.assertEqual(result, [9, 19, 13, 0])
 
+    def test_inferred_summary_period_does_not_snap_exact_hour_to_period_anchor(self):
+        result = self.run_node("(()=>{const t={smallStartDate:'2026-01-01',launchDate:'2026-01-02',smallPeriod:'下午',period:'晚上',releaseDefaults:{small_start_date:'2026-01-01',launch_date:'2026-01-02',small_period:'下午',launch_period:'晚上',small_release_start_hour:17,launch_release_start_hour:23}};return [m.releaseHourForTarget(t,'small'),m.releaseHourForTarget(t,'launch'),m.smallHourlyStart({release_start_hour:17,launch_period:'下午'}),m.smallHourlyStart(m.launchHourlyItem({release_start_hour:23,launch_period:'晚上'})),m.releaseHourForTarget({...t,smallPeriod:'上午'},'small')]})()")
+        self.assertEqual(result, [17, 23, 17, 23, 9])
+
     def test_await_maintained_release_does_not_silently_move_it_earlier(self):
         result = self.run_node("m.smallHourlyForecast({hours:[{hour:18,orders:40}],startHour:19})")
         self.assertIsNone(result['total'])

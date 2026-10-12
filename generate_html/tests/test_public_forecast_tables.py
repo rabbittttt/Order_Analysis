@@ -31,7 +31,8 @@ class PublicForecastTablesTests(TestCase):
         row = table_records(book, MASTER_SHEET)[0]
         self.assertEqual(row['小订开始小时'], 0)
         self.assertEqual(row['首销开始小时'], 13)
-        self.assertEqual(row['小订发布时段'], '未维护')
+        self.assertEqual(row['小订发布时段'], '上午')
+        self.assertEqual(row['首销发布时段'], '下午')
         self.assertIn('小订.xlsx', row['小订开始小时来源'])
         self.assertIn('首销.xlsx', row['首销开始小时来源'])
         self.assertEqual(row['小订天数'], 2)
@@ -41,6 +42,37 @@ class PublicForecastTablesTests(TestCase):
         self.assertEqual(row['平销开始'].date(), date(2026, 1, 10))
         _, _, small, _ = read_public_forecast(book, [])
         self.assertEqual(small[0]['release_start_hour'], 0)
+        self.assertEqual(small[0]['launch_period'], '上午')
+        book.close()
+
+    def test_inferred_period_boundaries_preserve_exact_hour_and_provenance(self):
+        from core.forecast_summary import complete_master_fields
+        book = Workbook()
+        expected = [(0, '上午'), (11, '上午'), (12, '下午'), (17, '下午'), (18, '下午'), (19, '晚上'), (23, '晚上')]
+        masters = [{'订单分析代际名': str(hour), '小订开始': '2026-01-01', '首销开始': '2026-01-02',
+                    '小订发布时段': '未维护', '首销发布时段': '未维护'} for hour, _ in expected]
+        for stage, sheet_name, quantity, day in [('小订', SMALL_HOURLY_SHEET, '小时小订', '2026-01-01'),
+                                                ('首销', LAUNCH_HOURLY_SHEET, '小时大定', '2026-01-02')]:
+            sheet = book.create_sheet(sheet_name)
+            sheet.append(['订单分析代际名', '日期', '小时', quantity, '来源文件'])
+            for hour, _ in expected:
+                sheet.append([str(hour), day, hour, 2, stage + '.xlsx'])
+        for _ in range(2):
+            complete_master_fields(book, masters, [])
+            for row, (hour, period) in zip(masters, expected):
+                for stage in ('小订', '首销'):
+                    self.assertEqual(row[stage + '发布时段'], period)
+                    self.assertEqual(row[stage + '开始小时'], hour)
+                    self.assertIn('D1首个正数', row[stage + '开始小时来源'])
+        book.close()
+
+    def test_maintained_period_is_not_replaced_by_inferred_label(self):
+        def customize(data):
+            data['actuals'][0]['small_hourly_days'].append({'date': '2026-01-01', 'hours': [{'hour': 17, 'orders': 2}]})
+        book = self.make_public(customize=customize, master_periods={'小订发布时段': '上午'})
+        row = table_records(book, MASTER_SHEET)[0]
+        self.assertEqual((row['小订发布时段'], row['小订开始小时']), ('上午', 9))
+        self.assertEqual(row['小订开始小时来源'], '原表维护时段')
         book.close()
 
     def test_missing_d1_does_not_borrow_d2_and_maintained_period_wins(self):

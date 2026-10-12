@@ -30,7 +30,10 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
     await page.evaluate(()=>window.releaseCalls=[]);await control.selectOption(period);await pause();
     const values=await page.evaluate(()=>window.releaseCalls);
     const maintained=values.filter(c=>c.field===metric&&c.period===period);assert(maintained.length);
-    assert(maintained.every(c=>c.start===hour),stage+' table/manual period must override order hour');
+    const configuredPeriod=stage==='small'?config.target.small_period:config.target.launch_period;
+    const configuredHour=config.target[stage+'_release_start_hour'];
+    const expected=period===configuredPeriod&&Number.isInteger(configuredHour)?configuredHour:hour;
+    assert(maintained.every(c=>c.start===expected),stage+' unchanged inferred period keeps exact summary hour; changed period uses anchor');
    }
    console.log('PASS '+stage+': three periods, exact D1 fallback and maintained priority');
   }

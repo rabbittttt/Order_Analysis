@@ -314,7 +314,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         ["口径", "首销结束及平销关联首销", "首销期订单节奏／小订退订分析按字段优先 → 整理表补缺", None, None],
         ["口径", "平销", "预测交车锁单。完整周按周起止和阶段日期判断；不足完整周不当作完整周参考。", None, None],
         ["口径", "预测指标", "D1/D2和后续曲线使用同一份多来源取值结果；未来实际值、未知终局分母留空，不用预测补真实值。", None, None],
-        ["口径", "字段补齐", "车型基本信息保留原维护时段，开始小时优先按上午9/下午14/晚上19；留白才用同代际（含二级事件）本阶段D1首个正数订单小时，另列来源。日期可确定的天数、星期和平销开始在汇总生成时补齐。无依据留空，不补预测终值。", None, None],
+        ["口径", "字段补齐", "车型基本信息优先保留原维护时段，开始小时优先按上午9/下午14/晚上19；留白才用同代际（含二级事件）本阶段D1首个正数订单小时，并回填时段（0–11时上午、12–18时下午、19–23时晚上），另列来源并保留精确小时。日期可确定的天数、星期和平销开始在汇总生成时补齐。无依据留空，不补预测终值。", None, None],
         ["口径", "字段完整度", "按汇总最终字段是否有值计算；口径一致性和质量状态由同一组数量计算。", None, None],
         ["生成", "数据判定日期", (as_of_date or date.today()).isoformat(), None, None],
     ]
@@ -503,7 +503,14 @@ def complete_master_fields(book, masters, headers):
             if stage == "首销" and end:
                 row["平销开始"] = date_cell((date.fromisoformat(end) + timedelta(days=1)).isoformat())
             maintained = anchors.get(str(row.get(stage + "发布时段") or "").strip())
+            inferred_before = str(row.get(stage + "开始小时来源") or "").startswith("D1首个正数订单小时：")
+            if inferred_before:
+                maintained = None  # A previously inferred label is not a maintained anchor.
             evidence = first.get((row.get("订单分析代际名"), start)) if start else None
+            if maintained is None and evidence:
+                row[stage + "发布时段"] = "上午" if evidence[0] < 12 else "下午" if evidence[0] < 19 else "晚上"
+            elif inferred_before:
+                row[stage + "发布时段"] = "未维护"
             row[stage + "开始小时"] = maintained if maintained is not None else evidence[0] if evidence else None
             row[stage + "开始小时来源"] = ("原表维护时段" if maintained is not None else
                 f"D1首个正数订单小时：{evidence[1]}" if evidence else "缺少本阶段D1正数分时")
