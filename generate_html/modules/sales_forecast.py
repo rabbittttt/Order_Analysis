@@ -2567,7 +2567,9 @@ def _attach_small_hourly_curves(small_history: list[dict[str, Any]], profiles: l
         if not curve:
             continue
         start_hour = next(hour for hour, value in enumerate(curve) if value > 0)
-        item["small_hourly_curve"] = [value if hour >= start_hour else None for hour, value in enumerate(curve)]
+        # Keep validated pre-order zeros: a maintained release period may start
+        # before the first sale. The frontend alone resolves the release anchor.
+        item["small_hourly_curve"] = curve
         item["small_start_hour"] = start_hour
 
 

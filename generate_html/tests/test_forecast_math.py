@@ -54,9 +54,29 @@ class ForecastMathTests(unittest.TestCase):
         self.assertEqual(empty['steadyStartDate'], '')
 
     def test_later_publication_time_never_discards_real_observations(self):
-        result = self.run_node("m.smallHourlyForecast({hours:[{hour:18,orders:40},{hour:19,orders:40}],startHour:20,references:[{item:{small_start_hour:18,small_hourly_curve:[...Array(18).fill(null),.2,.4,.6,.8,.9,1]},weight:100}]})")
+        result = self.run_node("m.smallHourlyForecast({hours:[{hour:18,orders:40},{hour:19,orders:40},{hour:20,orders:0}],startHour:20,references:[{item:{small_start_hour:18,small_hourly_curve:[...Array(18).fill(null),.2,.4,.6,.8,.9,1]},weight:100}]})")
         self.assertEqual(result['observed'], 80)
-        self.assertEqual(result['total'], 200)
+        self.assertEqual(result['start'], 20)
+        self.assertEqual(result['total'], 80 + result['remaining'])
+        self.assertAlmostEqual(result['actual'][20], 80 / result['total'])
+        self.assertAlmostEqual(result['forecast'][-1], 1)
+
+    def test_release_period_priority_and_positive_hour_fallback(self):
+        result = self.run_node("(()=>{const h=[{hour:23,orders:2},{hour:8,orders:0},{hour:17,orders:3},{hour:9,orders:null}];return ['上午','下午','晚上','','未维护'].map(p=>m.releaseStartHour(p,h))})()")
+        self.assertEqual(result, [9, 14, 19, 17, 17])
+        self.assertEqual(self.run_node("m.releaseStartHour('',[{hour:0,orders:1}])"), 0)
+        self.assertEqual(self.run_node("m.releaseStartHour('',[{hour:9,orders:0},{hour:25,orders:1}])"), -1)
+        self.assertEqual(self.run_node("m.releaseStartHour('',[{hour:8,gross:0},{hour:13,gross:2}], 'gross')"), 13)
+
+    def test_maintained_reference_period_has_priority_for_both_stages(self):
+        result = self.run_node("(()=>{const curve=[...Array(13).fill(0),...Array(11).fill(1)];return [m.smallHourlyStart({launch_period:'上午',small_start_hour:13,small_hourly_curve:curve}),m.smallHourlyStart(m.launchHourlyItem({launch_period:'晚上',hourly_curve:curve})),m.smallHourlyStart(m.launchHourlyItem({hourly_curve:curve})),m.smallHourlyCurve({launch_period:'上午',small_start_hour:13,small_hourly_curve:curve})[9]]})()")
+        self.assertEqual(result, [9, 19, 13, 0])
+
+    def test_await_maintained_release_does_not_silently_move_it_earlier(self):
+        result = self.run_node("m.smallHourlyForecast({hours:[{hour:18,orders:40}],startHour:19})")
+        self.assertIsNone(result['total'])
+        self.assertEqual(result['observed'], 40)
+        self.assertIn('发布时段', result['error'])
 
     def test_completion_stretch_preserves_four_edge_days_and_middle_mass(self):
         source = [.2, .3, .35, .42, .5, .58, .65, .75, .85, 1]

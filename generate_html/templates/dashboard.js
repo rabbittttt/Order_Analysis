@@ -873,7 +873,7 @@
     const nodeOptions=nodeValues.map(value=>`<option value="${esc(value)}"${value===target.launch_node?' selected':''}>${esc(value)}</option>`).join('');
     const energyValues=[...new Set([target.energy,...(data.energies||[]),'未维护'].filter(Boolean))];
     const energyOptions=energyValues.map(value=>`<option value="${esc(value)}"${value===target.energy?' selected':''}>${esc(value)}</option>`).join('');
-    const periodOptions=selected=>['上午','下午','晚上','夜间','全天','未维护'].map(value=>`<option${value===(selected||'未维护')?' selected':''}>${value}</option>`).join('');
+    const periodOptions=selected=>{const value=['上午','下午','晚上'].includes(String(selected||'').trim())?String(selected).trim():'未维护';return ['上午','下午','晚上','未维护'].map(period=>`<option value="${period}"${period===value?' selected':''}>${period==='未维护'?'自动（D1首单）':period}</option>`).join('')};
     const noSmall=target.has_small===false?' disabled':'';
     const referenceModels=data.history||[],brands=[...new Set(referenceModels.map(referenceBrand))];
     const chartPicker=task=>{const defaults=new Set((task.recommended||[]).slice(0,2));return `<details class="forecast-chart-picker" data-forecast-chart-picker="${esc(task.key)}"><summary>图表对比车型 <b data-forecast-picker-count>${defaults.size}项</b></summary><div class="forecast-chart-picker-panel"><div class="forecast-chart-quick"><button type="button" data-forecast-ref-quick="primary">主辅</button><button type="button" data-forecast-ref-quick="all">全选</button><button type="button" data-forecast-ref-quick="none">清空</button>${brands.map(brand=>`<button type="button" data-forecast-ref-quick="brand" data-brand="${esc(brand)}">${esc(brand)}</button>`).join('')}</div><small>额外勾选仅用于图表比较，不参与主辅权重计算；“未映射”历史记录不会自动绑定当前订单分析代际。</small><div class="forecast-chart-options">${brands.map(brand=>`<fieldset><legend>${esc(brand)}</legend>${referenceModels.filter(item=>referenceBrand(item)===brand).map(item=>`<label><input type="checkbox" data-forecast-chart-ref="${esc(task.key)}" data-brand="${esc(brand)}" value="${esc(item.model)}"${defaults.has(item.model)?' checked':''}><span>${esc(item.model)}${item.mapped===false?' · 未映射':''}</span></label>`).join('')}</fieldset>`).join('')}</div></div></details>`};
@@ -902,10 +902,10 @@
           <label>能源类型<select data-forecast-target="energy">${energyOptions}</select></label>
           <label>发布类型<select data-forecast-target="node">${nodeOptions}</select></label>
           <label>小订开始日期<input type="date" data-forecast-target="smallStartDate" value="${esc(target.small_start_date||'')}"${noSmall}></label>
-          <label>小订发布时段<select data-forecast-target="smallPeriod"${noSmall}>${periodOptions(target.small_period)}</select></label>
+          <label>小订发布时段<select data-forecast-target="smallPeriod" title="表格时段优先；自动模式取小订D1首个正数订单小时，没有则不推断"${noSmall}>${periodOptions(target.small_period)}</select></label>
           <label>小订天数<input type="number" min="1" max="366" data-forecast-target="smallDays" value="${target.small_days||''}"${noSmall}><small>天</small></label>
           <label>首销开始<input type="date" data-forecast-target="launchDate" value="${esc(target.launch_date||'')}"></label>
-          <label>首销发布时段<select data-forecast-target="period">${periodOptions(target.launch_period)}</select></label>
+          <label>首销发布时段<select data-forecast-target="period" title="表格时段优先；自动模式取首销D1首个正数大定小时，没有则不推断">${periodOptions(target.launch_period)}</select></label>
           <label>首销天数<input type="number" min="1" max="90" data-forecast-target="days" value="${target.launch_days||''}"><small>天</small></label>
         </div></div>
         <span class="forecast-status confirmed" data-forecast-feedback role="status" aria-live="polite"><i></i><span>参数实时生效</span></span>
@@ -990,7 +990,7 @@
     ];
     const scoreResult=(item,target,current)=>smallReferenceScore(item,target,current,minimumEvidence);
     const attributeScore=(item,target,current)=>scoreResult(item,target,current).score;
-    const hourlyContext=()=>{const target=targetState(),hours=(findActual(target.name)?.small_hourly_days||[]).find(row=>row.date===target.smallStartDate)?.hours||[],positive=hours.filter(row=>row.orders>0),startHour=({'上午':9,'下午':14,'晚上':19,'夜间':20}[target.smallPeriod]??(positive.length?Math.min(...positive.map(row=>row.hour)):-1));return {hours,startHour};};
+    const hourlyContext=()=>{const target=targetState(),hours=(findActual(target.name)?.small_hourly_days||[]).find(row=>row.date===target.smallStartDate)?.hours||[],startHour=window.ForecastMath.releaseStartHour(target.smallPeriod,hours);return {hours,startHour};};
     const ranked=(task='progress')=>{const target=targetState(),current=targetItem();return history.filter(item=>!sameModel(item.generation||item.model,target.name)&&window.ForecastMath.smallReferenceAvailable(item,task)).map(item=>({item,...(task==='hourly'?window.ForecastMath.smallHourlyReferenceScore(item,hourlyContext()):scoreResult(item,target,current))})).filter(row=>row.parts.length).sort((a,b)=>b.score-a.score)};
     const selects=[...workspace.querySelectorAll('[data-small-ref]')],weights=[...workspace.querySelectorAll('[data-small-weight]')];
     const groups={progress:{selects,weights},daily:{selects:[...workspace.querySelectorAll('[data-small-daily-ref]')],weights:[...workspace.querySelectorAll('[data-small-daily-weight]')]},hourly:{selects:[...workspace.querySelectorAll('[data-small-hourly-ref]')],weights:[...workspace.querySelectorAll('[data-small-hourly-weight]')]}};
@@ -1040,7 +1040,7 @@
         if(forecast.hourly?.forecast?.some(Number.isFinite))hourlySeries.push({label:target.name+' · 后续小时预测',values:forecast.hourly.forecast,color:'#00A878',role:'forecast',dashed:true});
         lifecycleChartReferences(workspace.querySelector('[data-lifecycle-reference="small-hourly"]'),history,selectedRefs('hourly')).forEach(({item,label,color})=>{const start=window.ForecastMath.smallHourlyStart(item),values=Array.from({length:24},(_,hour)=>hour>=start&&Number.isFinite(item.small_hourly_curve?.[hour])?item.small_hourly_curve[hour]:null);if(values.some(Number.isFinite))hourlySeries.push({label:label+' · D1',values,color,role:'reference'});});
         const first=Math.min(...hourlySeries.map(row=>row.values.findIndex(Number.isFinite)).filter(hour=>hour>=0),23),hours=Array.from({length:24-first},(_,index)=>`${first+index}时`);
-        const note=sampled.length?`当前已采集至${lastHour}时。已发生${fmt(forecast.hourly?.observed??sampled.reduce((sum,row)=>sum+row.orders,0))}单，后续小时预测${forecast.hourly?fmt(forecast.hourly.remaining):'—'}单；按已发生累计与最近3小时增量拟合历史曲线，全天量等于真实累计加未来预测。各参考从首个有效小订小时绘制（作为发布时间参考）。`:'当前车型D1分时数据缺失，仅展示可用历史参考；不使用整日数据冒充分时。';
+        const note=sampled.length?`当前已采集至${lastHour}时。已发生${fmt(forecast.hourly?.observed??sampled.reduce((sum,row)=>sum+row.orders,0))}单，后续小时预测${forecast.hourly?fmt(forecast.hourly.remaining):'—'}单；按已发生累计与最近3小时增量拟合历史曲线，全天量等于真实累计加未来预测。发布起点优先采用表格小订发布时段；留白才取D1首个正数订单小时，实际订单不改写。`:'当前车型D1分时数据缺失，仅展示可用历史参考；不使用整日数据冒充分时。';
         hourlyNode.innerHTML=renderLifecycleLineChart({series:hourlySeries.map(row=>({...row,values:row.values.slice(first)})),labels:hours,hourly:true,unit:'percent',title:'D1 小订分时累计进度',note,ariaLabel:target.name+'小订D1分时累计与主辅参考对比',empty:note});
       }
       workspace.querySelectorAll('[data-lifecycle-reference]').forEach(card=>{const task=card.dataset.lifecycleReference.split('-').at(-1),rows=selectedRefs(task);card.querySelector('[data-lifecycle-ref-reason]').innerHTML=renderLifecycleReferenceScores(rows,item=>task==='hourly'?window.ForecastMath.smallHourlyReferenceScore(item,hourlyContext()):scoreResult(item,target,targetItem()),target.name);card._refreshLifecycleControls?.();});
@@ -1312,7 +1312,7 @@
       const series=[...references,...currentSeries],hourStarts=spec.hourly?series.map(row=>row.values.findIndex(Number.isFinite)).filter(i=>i>=0):[],hourOffset=hourStarts.length?Math.min(...hourStarts):0;if(hourOffset)series.forEach(row=>row.values=row.values.slice(hourOffset));const finiteValues=series.flatMap(item=>item.values.filter(Number.isFinite));
       if(!finiteValues.length){target.innerHTML='<div class="empty-image">当前预测代际及所选参考暂无对应曲线（分时缺失时：无D1分时数据）</div>';return}
       const maxPoints=Math.max(...series.map(item=>item.values.length),1),format=value=>spec.unit==='rate'?`${(value*100).toFixed(value<.1?1:0)}%`:Math.round(value).toLocaleString('zh-CN');
-      const note=spec.hourly?`${comparison?.hourly?.missing?'无D1分时数据。':''}发布前留空，参考从各自首个有效成交小时开始（发布时间近似）。分子为截至各小时真实大定；${comparison?.hourly?.ongoing?'分母为当日预计全天大定，因此蓝线百分比也受预测分母影响':'分母为同一天实际大定，数据未齐时不强行拉到100%'}。绿色虚线为后续小时估算；橙/紫线为历史D1对比。滚动采用${comparison?.hourly?.referenceLabel||'历史D1参考'}。${comparison?.hourly?.date?`当前累计${fmt(comparison.hourly.observed)}单 / 全天${fmt(comparison.hourly.terminal)}单。`:''}`:spec.slope?'斜率＝（剔除日历影响后的当天日量÷前一天日量－1）×100%；D1、前一天为0或数据缺失时不计算；独立评分仅用于选择对比车型，不参与销量预测。蓝色为真实、绿色虚线为预测。':spec.observableShape?`蓝色实线＝截至各日真实累计量÷方法一预测终局，因此当前真实日不会提前归一到100%；绿色虚线和历史参考均按预测对象首销周期重定基，只有首销结束日达到100%；预测完成度仅用于方法一展示和反推，不参与参考车型评分`:(task==='daily'?`只有已结束且逐日大定收齐的首销参考才参与分配；未收齐参考仅展示已发生走势、不拉伸。有效曲线值＝适配到当前首销周期后的每日总大定÷历史日期类型系数，再除以剔除日历影响后的D1；D1=100%，用于未来余量的基础形状，当前日期系数在分配时另乘`:'蓝色实线为当前真实，绿色虚线为当前预测');
+      const note=spec.hourly?`${comparison?.hourly?.missing?'无D1分时数据。':''}参考发布起点优先采用表格首销发布时段，留白才取D1首个正数大定小时；起点前留空，实际订单不改写。分子为截至各小时真实大定；${comparison?.hourly?.ongoing?'分母为当日预计全天大定，因此蓝线百分比也受预测分母影响':'分母为同一天实际大定，数据未齐时不强行拉到100%'}。绿色虚线为后续小时估算；橙/紫线为历史D1对比。滚动采用${comparison?.hourly?.referenceLabel||'历史D1参考'}。${comparison?.hourly?.date?`当前累计${fmt(comparison.hourly.observed)}单 / 全天${fmt(comparison.hourly.terminal)}单。`:''}`:spec.slope?'斜率＝（剔除日历影响后的当天日量÷前一天日量－1）×100%；D1、前一天为0或数据缺失时不计算；独立评分仅用于选择对比车型，不参与销量预测。蓝色为真实、绿色虚线为预测。':spec.observableShape?`蓝色实线＝截至各日真实累计量÷方法一预测终局，因此当前真实日不会提前归一到100%；绿色虚线和历史参考均按预测对象首销周期重定基，只有首销结束日达到100%；预测完成度仅用于方法一展示和反推，不参与参考车型评分`:(task==='daily'?`只有已结束且逐日大定收齐的首销参考才参与分配；未收齐参考仅展示已发生走势、不拉伸。有效曲线值＝适配到当前首销周期后的每日总大定÷历史日期类型系数，再除以剔除日历影响后的D1；D1=100%，用于未来余量的基础形状，当前日期系数在分配时另乘`:'蓝色实线为当前真实，绿色虚线为当前预测');
       target.innerHTML=renderForecastEvidenceLines({series,labels:Array.from({length:maxPoints},(_,index)=>spec.hourly?`${index+hourOffset}时`:`D${index+1}`),ariaLabel:spec.title,title:spec.title,note:note+(spec.observableShape?'周期对齐：D1、D2及最后两天的日占比保持不变，中间部分按剩余周期比例拉伸后重新累计；仅对齐参考曲线，不改写历史真实销量。同长度不拉伸；不同长度且任一周期不足5天时不自动推荐该完成度参考。':''),unit:spec.unit,slope:!!spec.slope,hourly:!!spec.hourly,extra:'',table:true});
     });
   }
@@ -1401,7 +1401,7 @@
       energy:'历史车型能源字段包含当前能源类型100%；否则55%。',
       node:'发布类型完全一致100%；其他类型62%。',
       weekday:'发布星期一致100%；不一致45%。',
-      release_hour:'发布时间越接近越相似：1−小时差/12；首个有效成交小时仅作为近似。',hour_slope:'在共同已观测窗口内，逐小时新增量各自归一后比较，不使用D1绝对量。',hour_progress:'在共同已观测窗口内，比较各小时累计量占该窗口总量的比例，不使用预测全天量作分母。',period:'发布时段一致100%；不一致或未维护50%。',
+      release_hour:'发布时间越接近越相似：1−小时差/12；优先采用表格时段，留白才用D1首个正数订单小时。',hour_slope:'在共同已观测窗口内，逐小时新增量各自归一后比较，不使用D1绝对量。',hour_progress:'在共同已观测窗口内，比较各小时累计量占该窗口总量的比例，不使用预测全天量作分母。',period:'发布时段一致100%；不一致或未维护50%。',
       days:'1−|两车首销天数差|÷max(当前首销天数,35)，最低为0%。',
       size:'min(两车总小订)÷max(两车总小订)；当前车型可引用已联动的小订预测总量并标注；任一侧缺少有效总量时不参与评分。',
       holiday:'假期天数相似度×50%＋前14日日期类型一致率×35%＋调休工作日相似度×15%。',
@@ -1424,7 +1424,7 @@
       if(task==='hourly'){
         if(!(item.hourly_curve||[]).some(Number))return [];
         const hours=(actualForTarget(target)?.hourly_days||[]).find(row=>row.date===target.launchDate)?.hours||[];
-        const start=({'上午':9,'下午':14,'晚上':19,'夜间':20}[target.period]??hours.find(row=>row.gross>0)?.hour??-1);
+        const start=window.ForecastMath.releaseStartHour(target.period,hours,'gross');
         const result=window.ForecastMath.smallHourlyReferenceScore(window.ForecastMath.launchHourlyItem(item),{hours:hours.map(row=>({hour:row.hour,orders:row.gross})),startHour:start});
         return result.parts.map(part=>({...part,label:scoreSpecs.hourly.find(row=>row[1]===part.key)?.[0]||part.key,current:'当前D1真实观测窗口',reference:part.evidence}));
       }
@@ -1580,7 +1580,7 @@
       const indexedDays=[...(actual?.days||[])].filter(row=>row.date&&row.date<=today).map(row=>({...row,index:dayIndexForDate(target.launchDate,row.date)})).filter(row=>row.index>=0&&row.index<target.days).sort((a,b)=>a.index-b.index),todayIndex=stageInfo.key==='active'?stageInfo.day-1:-1,todayRow=indexedDays.find(row=>row.index===todayIndex&&row.date===today),latestHourly=[...(actual?.hourly_days||[])].filter(row=>row.date===today).sort((a,b)=>Number(a.last_hour||0)-Number(b.last_hour||0)).at(-1);let partial=null;
       if(stageInfo.key==='active'&&latestHourly)partial={...latestHourly,index:todayIndex};if(!partial&&stageInfo.key==='active'&&todayIndex>0&&todayRow)partial={...todayRow,index:todayIndex,last_hour:Math.max(0,Math.min(Number(String(DATA.meta?.generated_at||'').slice(11,13))||0,23)),from_day_snapshot:true};const fixed=indexedDays.filter(row=>row.date<today),calendarCompletedDays=stageInfo.key==='ended'?target.days:stageInfo.key==='active'?Math.max(stageInfo.day-1,0):0,actualIndexes=new Set(fixed.map(row=>row.index)),pastMissingIndexes=Array.from({length:calendarCompletedDays},(_,index)=>index).filter(index=>!actualIndexes.has(index)),historyComplete=pastMissingIndexes.length===0;
       const defaultSmallShare=target.hasSmall===false?0:Number.isFinite(baseShare)?Math.max(1-baseShare,0):.5,resolvedFixed=fixed.map(row=>target.hasSmall===false?({...row,small_to_big:row.small_to_big??0,direct:row.direct??row.gross}):({...row}));
-      const d1Fit=todayIndex===0?window.ForecastMath.smallHourlyForecast({hours:(partial?.hours||[]).map(row=>({hour:row.hour,orders:row.gross})),references:refs.hourly.map((item,slot)=>({item:window.ForecastMath.launchHourlyItem(item),weight:slotWeight(slot,'hourly')})),startHour:({'上午':9,'下午':14,'晚上':19,'夜间':20}[target.period]??undefined)}):null;
+      const d1Fit=todayIndex===0?window.ForecastMath.smallHourlyForecast({hours:(partial?.hours||[]).map(row=>({hour:row.hour,orders:row.gross})),references:refs.hourly.map((item,slot)=>({item:window.ForecastMath.launchHourlyItem(item),weight:slotWeight(slot,'hourly')})),startHour:window.ForecastMath.releaseStartHour(target.period,partial?.hours||[],'gross')}):null;
       const d1Unavailable=todayIndex===0&&(!partial?.hours?.length||!!d1Fit?.error);
       if(d1Unavailable)partial=null;
       const ownHourly=todayIndex>0?window.ForecastMath.intradayReference({buckets:actual?.hourly_days||[],days:resolvedFixed,today,launchDate:target.launchDate,dayType:date=>calendarType(date,0).type}):{curve:[],days:0},rollingHourlyCompletion=hour=>ownHourly.curve.length?Math.max(ownHourly.curve[hour],.005):hourlyCompletion(refs.hourly,hour);

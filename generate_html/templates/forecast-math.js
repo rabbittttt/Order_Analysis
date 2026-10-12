@@ -253,7 +253,18 @@
     return scoredEvidence(parts, minimumEvidence);
   }
 
+  const RELEASE_HOURS = Object.freeze({'上午':9,'下午':14,'晚上':19});
+  function releaseStartHour(period, hours = [], field = 'orders') {
+    const maintained = RELEASE_HOURS[String(period || '').trim()];
+    if (Number.isInteger(maintained)) return maintained;
+    const positive = hours.filter(row => Number.isInteger(row.hour) && row.hour >= 0 && row.hour < 24
+      && Number.isFinite(row[field]) && row[field] > 0);
+    return positive.length ? Math.min(...positive.map(row => row.hour)) : -1;
+  }
+
   function smallHourlyStart(item = {}) {
+    const maintained = releaseStartHour(item.launch_period);
+    if (maintained >= 0) return maintained;
     const explicit = item.small_start_hour;
     if (Number.isInteger(explicit) && explicit >= 0 && explicit < 24) return explicit;
     return (item.small_hourly_curve || []).findIndex(value => Number.isFinite(value) && value > 0);
@@ -305,8 +316,9 @@
     const invalid=hours.some(row=>!Number.isInteger(row.hour)||row.hour<0||row.hour>23||!Number.isFinite(row.orders)||row.orders<0);
     if(invalid)return {error:'D1分时存在无效小时或数量',total:null};
     const counts=Array(24).fill(0);hours.forEach(row=>counts[row.hour]+=row.orders);
-    const observed=counts.reduce((a,b)=>a+b,0),first=counts.findIndex(value=>value>0),start=Number.isInteger(startHour)&&startHour>=0?Math.min(startHour,first>=0?first:startHour):first,last=hours.length?Math.max(...hours.map(row=>row.hour)):-1;
-    if(start<0||last<start||observed<=0)return {error:'等待发布后的有效分时小订',total:null};
+    const observed=counts.reduce((a,b)=>a+b,0),first=counts.findIndex(value=>value>0),start=Number.isInteger(startHour)&&startHour>=0&&startHour<24?startHour:first,last=hours.length?Math.max(...hours.map(row=>row.hour)):-1;
+    if(start<0||observed<=0)return {error:'D1尚无正数订单，等待有效分时数据',total:null,observed};
+    if(last<start)return {error:'已采集末小时早于维护的发布时段，暂不能估算D1剩余小时',total:null,observed};
     const refs=references.map(row=>({...row,curve:smallHourlyCurve(row.item,start)})).filter(row=>row.weight>0&&row.curve[last]>0&&row.curve.slice(start).every(Number.isFinite));
     if(!refs.length)return {error:'所选参考车型缺少有效D1分时曲线',total:null};
     const weight=refs.reduce((sum,row)=>sum+row.weight,0),curve=Array.from({length:24},(_,hour)=>hour<start?null:refs.reduce((sum,row)=>sum+row.curve[hour]*row.weight,0)/weight);
@@ -316,7 +328,7 @@
     // hourly increments. Historical D1 absolute volume never enters this fit.
     const cumulativeScale=observed/cut,scale=recentShare>0?(cumulativeScale+recent/recentShare)/2:cumulativeScale;
     const remaining=Math.max(0,Math.round(scale*(1-cut))),future=distributeInteger(remaining,curve.slice(last+1).map((value,i)=>Math.max(value-curve[last+i],0)));
-    const total=observed+remaining,actual=Array(24).fill(null),forecast=Array(24).fill(null),predictedHours=Array(24).fill(null);let running=0;
+    const total=observed+remaining,actual=Array(24).fill(null),forecast=Array(24).fill(null),predictedHours=Array(24).fill(null);let running=counts.slice(0,start).reduce((sum,value)=>sum+value,0);
     for(let hour=start;hour<=last;hour++){running+=counts[hour];actual[hour]=running/total;}
     if(last<23){forecast[last]=running/total;future.forEach((value,index)=>{const hour=last+index+1;predictedHours[hour]=value;running+=value;forecast[hour]=running/total;});}
     return {error:'',observed,total,remaining,start,last,actual,forecast,predictedHours,curve};
@@ -473,7 +485,7 @@
   }
 
   function launchHourlyItem(item={}) {
-    return {small_hourly_curve:item.hourly_curve||[],small_start_hour:item.launch_start_hour};
+    return {small_hourly_curve:item.hourly_curve||[],small_start_hour:item.launch_start_hour,launch_period:item.launch_period};
   }
 
   // Release age uses complete seven-day bins, not each model's latest weeks.
@@ -797,6 +809,7 @@
     closeness,
     adaptSmallDailyOrders,
     smallReferenceScore,
+    releaseStartHour,
     smallHourlyStart,
     smallReferenceAvailable,
     smallHourlyCurve,
