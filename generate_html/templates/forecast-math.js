@@ -402,6 +402,66 @@
     return adapted.map((value, index) => Math.max((value - (index ? adapted[index-1] : 0)) * total, 0));
   }
 
+  // Source mix is separate from gross allocation. Only complete reference days are stretched.
+  function launchComponentShape(references, field, targetDays, today, factor=()=>1) {
+    const usable=[];
+    for (const {item,weight} of references) {
+      if (!item || !(weight>0)) continue;
+      const status=launchDailyReference(item,today);
+      if (!status.available) continue;
+      const small=(item.daily_small||[]).slice(0,item.days).map(observedQuantity);
+      const direct=(item.daily_direct||[]).slice(0,item.days).map(observedQuantity);
+      if (small.length!==Number(item.days) || direct.length!==Number(item.days) || !small.every((v,i)=>
+        Number.isFinite(v)&&Number.isFinite(direct[i])&&Math.abs(v+direct[i]-status.orders[i])<1e-6)) continue;
+      const natural=removeCalendarEffect(field==='daily_small'?small:direct,i=>factor(item,i));
+      let total=0;
+      const cumulative=natural.map(v=>(total+=v));
+      if (!(total>0)) continue;
+      const curve=stretchCompletion(cumulative,targetDays);
+      if (!curve.length) continue;
+      usable.push({weight,shape:curve.map((v,i)=>Math.max(v-(i?curve[i-1]:0),0))});
+    }
+    const total=usable.reduce((s,r)=>s+r.weight,0);
+    return total?Array.from({length:targetDays},(_,i)=>usable.reduce((s,r)=>s+r.weight*r.shape[i],0)/total):[];
+  }
+
+  function splitLaunchSources({gross,baselineDirect,smallShape,directShape,smallTotal,directTotal,mobility}) {
+    const unchanged=warning=>({direct:[...baselineDirect],warnings:warning?[warning]:[]});
+    const n=gross.length;
+    if (!n || !smallTotal || !directTotal) return unchanged('');
+    if (smallShape.length!==n || directShape.length!==n ||
+        !smallShape.every(v=>Number.isFinite(v)&&v>=0) || !directShape.every(v=>Number.isFinite(v)&&v>=0))
+      return unchanged('订单来源分项曲线不足，保留原逐日拆分；占比可能保持不变');
+    if (mobility.length!==n || !mobility.every(v=>Number.isFinite(v)&&v>=0) ||
+        !gross.every((v,i)=>Number.isInteger(v)&&v>=0&&Number.isInteger(baselineDirect[i])&&baselineDirect[i]>=0&&baselineDirect[i]<=v))
+      return unchanged('订单来源拆分约束无效，保留原逐日拆分');
+    const active=gross.map((v,i)=>v>0&&mobility[i]>0?i:-1).filter(i=>i>=0);
+    if (!active.length) return unchanged('');
+    const target=active.reduce((s,i)=>s+baselineDirect[i],0),capacity=active.reduce((s,i)=>s+gross[i],0);
+    if (!target || target===capacity) return unchanged('');
+    const logit=p=>Math.log(Math.max(1e-9,Math.min(1-1e-9,p))/(1-Math.max(1e-9,Math.min(1-1e-9,p))));
+    const desired=gross.map((v,i)=>{
+      const s=smallTotal*smallShape[i],d=directTotal*directShape[i],base=v?baselineDirect[i]/v:0;
+      const share=s+d>0?d/(s+d):base,blend=Math.min(mobility[i],1);
+      return logit(base+(share-base)*blend);
+    });
+    // Calibrate under daily capacities, retaining both terminals and zero-weight bridge days.
+    const maxWeight=Math.max(...active.map(i=>mobility[i]));
+    const value=(i,shift)=>gross[i]/(1+Math.exp(-desired[i]-shift*mobility[i]/maxWeight));
+    let low=-1,high=1;
+    const sum=shift=>active.reduce((s,i)=>s+value(i,shift),0);
+    for(let k=0;k<80&&sum(low)>target;k++)low*=2;
+    for(let k=0;k<80&&sum(high)<target;k++)high*=2;
+    for(let k=0;k<100;k++){const mid=(low+high)/2;if(sum(mid)<target)low=mid;else high=mid;}
+    const direct=[...baselineDirect],quotas=active.map(i=>({i,value:value(i,(low+high)/2)}));
+    quotas.forEach(({i,value})=>direct[i]=Math.min(gross[i],Math.floor(value)));
+    let remainder=target-active.reduce((s,i)=>s+direct[i],0);
+    for(const {i} of quotas.sort((a,b)=>(b.value-Math.floor(b.value))-(a.value-Math.floor(a.value))||a.i-b.i))
+      if(remainder>0&&direct[i]<gross[i]){direct[i]++;remainder--;}
+    if(remainder) return unchanged('订单来源整数分配未收敛，保留原逐日拆分');
+    return {direct,warnings:[]};
+  }
+
   function normalizedShapeSimilarity(current, reference) {
     if(current.length<3||reference.length<3)return NaN;
     if(!current.every(v=>Number.isFinite(v)&&v>=0)||!reference.every(v=>Number.isFinite(v)&&v>=0))return NaN;
@@ -712,6 +772,8 @@
     stretchCompletion,
     launchDailyReference,
     adaptLaunchDailyOrders,
+    launchComponentShape,
+    splitLaunchSources,
     normalizedShapeSimilarity,
     launchHourlyItem,
     applyObservedFloor,
