@@ -140,7 +140,7 @@ assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · �
         self.assertIn("setForecastStageSummary(root,'steady',stageLabel,sourceText)", script)
         self.assertIn("findStageActual(target.name,'before')", script)
         self.assertIn("transitionTotal||(current?.total_complete!==false?current?.total:0)", script)
-        self.assertIn("与首销未开始共用", script)
+        self.assertIn("整理表→小订选配比例→小订退订分时汇总", script)
         self.assertNotIn("findStageActual(target.name,'ended')", script)
         self.assertIn("const targetSteady=target=>history.find", script)
         self.assertIn("actualWeeks=[...(own?.weeks||[])]", script)

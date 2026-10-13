@@ -1927,8 +1927,10 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             profile["cancel_source"] = SourceRef(cancel_item.path.name, sheet.title, "逐日真实退订进度").to_dict()
             sources.append(SourceRef(cancel_item.path.name, sheet.title, "逐日真实退订进度"))
 
-    lock_item = store.find("锁单选配比例")
-    if lock_item:
+    for keyword in ("锁单选配比例", "大定选配比例"):
+        lock_item = store.find(keyword)
+        if not lock_item:
+            continue
         for sheet in lock_item.workbook.worksheets:
             model = _canonical_model(sheet_subject(sheet.title), model_mapping)
             if not model or subject_type(model) != "generation" or is_aggregate_generation(model):
@@ -2046,6 +2048,8 @@ SOURCE_LABELS = {
     "launch": "首销期订单节奏",
     "cancel": "小订退订分析",
     "small_mix": "小订选配比例分析",
+    "order_mix": "大定选配比例分析",
+    "lock_mix": "锁单选配比例分析",
     "missing": "数据缺失",
     "mixed": "多来源逐日回退",
     "summary": "销量数据汇总（已按字段取值）",
@@ -2197,15 +2201,16 @@ def _anchor_lifecycle_rows(rows: list[dict[str, Any]], launch_date: Any) -> list
     return anchored
 
 
-PRE_LAUNCH_SOURCE_PRIORITY = ("cancel", "history")
-POST_LAUNCH_SOURCE_PRIORITY = ("launch", "cancel", "history")
+PRE_LAUNCH_SOURCE_PRIORITY = ("history", "small_mix", "cancel")
+# Historical launch days keep their source order after the launch ends.
+POST_LAUNCH_SOURCE_PRIORITY = ("history", "launch")
 
 
 STAGE_SOURCE_PRIORITIES: dict[str, tuple[str, ...]] = {
     "ended": POST_LAUNCH_SOURCE_PRIORITY,
     "before": PRE_LAUNCH_SOURCE_PRIORITY,
-    "active": ("launch", "history"),
-    "unknown": ("launch", "history", "cancel"),
+    "active": ("history", "launch"),
+    "unknown": ("history", "cancel", "launch", "order_mix", "lock_mix"),
 }
 
 
@@ -2227,10 +2232,10 @@ def _resolve_stage_candidate(
         priority,
         log_issues=log_issues,
         diagnostic_context=diagnostic_context,
-        field_priorities={"cancel": ("cancel", "history")},
+        field_priorities={"cancel": ("cancel",)},
     )
-    hourly_days, hourly_source = _field_value(candidates, priority, "hourly_days", lambda value: bool(value))
-    total_priority = ("cancel", "launch", "history") if stage == "ended" else priority
+    hourly_days, hourly_source = _field_value(candidates, ("launch",), "hourly_days", lambda value: bool(value))
+    total_priority = ("history", "small_mix", "cancel", "launch")
     total_small, total_small_source = _field_value(candidates, total_priority, "total_small", lambda value: _number(value) > 0)
     day_source, day_source_owner = _field_value(candidates, priority, "day_source", lambda value: bool(value))
     missing_fields = []
@@ -2701,7 +2706,7 @@ def _merge_small_daily_history(
     targets: list[dict[str, Any]],
     history_source: SourceRef | None,
 ) -> None:
-    """Resolve real reservation days once for both the webpage and summary detail."""
+    """Maintained real small-order days win, only for the exact campaign window."""
     for profile in profiles:
         target = next((row for row in targets if _same_model(row.get("name"), profile.get("model"))), None)
         if not target:
@@ -2724,7 +2729,7 @@ def _merge_small_daily_history(
         by_date = {row["date"]: row for row in profile.get("small_daily_days", []) if row.get("date")}
         sources = profile.setdefault("small_daily_sources", {})
         for day, orders in zip(event.get("dates") or [], event.get("daily_orders") or []):
-            if not day or not start <= day <= end or (day in by_date and by_date[day].get("orders") is not None):
+            if not day or not start <= day <= end:
                 continue
             if not isinstance(orders, (int, float)) or not math.isfinite(orders) or orders < 0:
                 continue
@@ -3147,12 +3152,12 @@ class SalesForecastModule:
                 "传播名没有维护代际映射时，二次处理文件保留该历史记录并将代际名暂按传播名，同时标记“未映射”；它仍可作为历史参考，但不会猜测性绑定当前订单分析代际，需补充映射后刷新。别名冲突同样不自动匹配。",
                 "当前阶段按绝对日期判断：小订开始/结束、首销开始/结束优先读取《小订及首销数据整理》的“车型汇总”；若该代际没有汇总日期，才用《首销期订单节奏》对应by天 Sheet第二行的首个绝对日期作为首销开始日，并按首销天数计算截止日。",
                 "首销结束且真实数据完整时，两种方法均以真实累计收口，不依赖预测参考或分配参数，也不再分配剩余量；真实日期缺失仍停止预测。今天早于D1为首销期未开始；位于D1至首销截止之间（含首尾日期）为首销期进行中；晚于首销截止为首销期已结束。当前Dn按今天与D1的自然日差计算，不按已读取的数据行数计算。",
-                "小订结束至首销开始前视为同一个阶段：优先使用《小订退订分析》，其次使用《小订及首销数据整理》；两处都没有则标记数据缺失。",
-                "首销期已结束，以及平销期计算中需要引用的首销与小订数据，使用同一来源顺序：《首销期订单节奏》《小订退订分析》按字段优先，缺失时回退《小订及首销数据整理》；三处都没有则标记数据缺失。平销期已发生周固定读取《锁单选配比例分析》的交车锁单。",
-                "首销期进行中：优先使用《首销期订单节奏》，其次使用《小订及首销数据整理》；两处都没有则标记数据缺失。",
+                "小订及首销前：真实小订按整理表小订by天→小订选配比例by天→小订退订分析分时按日汇总；要求同一小订开始日期和维护窗口。",
+                "首销结束后的日期：大定、留存大定优先大定选配比例，交车锁单优先锁单选配比例；不延伸整理表、小转大和直接大定。引用过去小订/首销数据仍按当时窗口取值。",
+                "首销窗口内：整理表→首销期订单节奏→对应选配比例表补缺。退订只取小订退订分析；阶段未知保留实际数量但不能正常预测。",
                 "by天中早于今天、有日期且大定为数值的行视为已结束真实日期；今天的数据不直接当作完整日冻结。",
                 "今天优先取匹配的by时 Sheet，并按最后一个已采集小时反推当日终值；没有by时时，今天的by天行只作为当日快照。",
-                "各阶段先确定来源优先顺序，再对总小订、首销日明细、分时进度及各日小转大/直接大定/锁单/退订逐字段回退；主数据源字段为空或一致性校验不通过时自动读取下一顺位，三处均无可靠值才标记该字段缺失。",
+                "汇总先按字段优先级保留实际数量，未知才补缺，真实0不覆盖。分项结构不一致会限制相应预测指标，不在汇总中删除已知数量；日合计不冒充分时快照。",
                 "日期类型按国务院办公厅年度节假日安排自动判断；周末调休上班日按工作日处理，不读取人工维护的节假日日期字段。",
             ],
             "small_order_rules": [
@@ -3160,8 +3165,8 @@ class SalesForecastModule:
                 "小订D1当天：分时参考按发布时间、已发生小时的增量斜率与累计占比匹配，不比较参考车型D1绝对量；真实累计加上后续小时预测得到D1终值，再按累计参考曲线的D1占比推算小订总量。",
                 "小订D1已过：已发生累计小订除以主辅参考车型同Dn累计完成率反推最终总量；已结束日期冻结真实值。",
                 "未来小订使用独立主辅到天基础曲线，以前一完整真实日为衔接基准；先剔除历史日历影响，再应用目标日历系数并渐进分配差额。累计进度、到天基础、D1分时分别选择主辅及权重；额外图表对比车型只用于展示。",
-                "小订结束后即进入首销前衔接阶段，最终总小订和相关实际字段按《小订退订分析》→《小订及首销数据整理》的顺序逐字段取值。",
-                "逐日小订按《小订选配比例分析》代际by天→《小订退订分析》分时汇总→《小订及首销数据整理》小订by天的顺序逐字段取值；前两者没有同车型同日期可用值时才使用历史小订by天。“小订进度”标准化曲线只作为最后回退。",
+                "小订结束后保留明确维护的最终总小订；缺失时仅用其他来源的明确终值或完整真实日合计，不用转化率/退订率反推。真实日量继续遵守同一小订窗口的来源顺序。",
+                "逐日小订按整理表真实小订by天→小订选配比例代际by天→小订退订分析分时汇总逐字段取值；历史需同一小订开始日期及维护窗口。“小订进度”仅为参考形状，不补真实日量。",
             ],
             "steady_rules": [
                 "平销真实日只读取《锁单选配比例分析》的代际by天，完整周读取by周；指标固定为交车锁单，不再读取独立平销历史文件，也不再预测平销大定。",

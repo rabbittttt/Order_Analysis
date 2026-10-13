@@ -19,6 +19,7 @@ url.search=new URLSearchParams({module:'sales_forecast',subject:parent,forecastS
   const labels=await page.locator('#periodSelect option').allTextContents();
   check('右上角版本与时间范围',labels.length===2&&labels.some(s=>s.startsWith('Ultra版 · 2024-05-31'))&&labels.some(s=>s.startsWith('Pro版 · 2024-08-26')));
   check('事件选择可操作',await page.locator('#periodSelect').isEnabled());
+  await page.locator('[data-forecast-tab="evidence"]').click();
   const conversion=page.locator('[data-forecast-input="conversion"]');
   await conversion.fill('89.7');await conversion.dispatchEvent('change');
   await page.locator('#periodSelect').selectOption(pro);await waitTarget(pro);

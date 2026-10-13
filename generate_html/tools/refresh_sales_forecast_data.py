@@ -28,7 +28,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
-from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records
+from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records, iso_day
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook, compact_diagnostic_ranges, reset_conflict_diagnostics
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -868,7 +868,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         ],
         ["经营结果", "留存大定/锁单", "按表头读取车型汇总；大定到锁单率统一按首销期锁单/总大定计算，任一数量缺失时不输出该比例", source.name],
         ["历史首销数量", "首销逐日参考数量", "生成时读取D1、D2…当日数量；汇总文件只保留预测所需参考结果，不复制原始Sheet", source.name],
-        ["小订", "逐日数量", "同车型同日期按可用值逐级读取：小订选配比例分析代际by天→小订退订分析分时汇总→历史小订by天", "小订及退订逐日"],
+        ["小订", "逐日数量", "同车型同日期：整理表真实小订by天→小订选配比例by天→小订退订分析分时按日汇总；需同一小订开始日期及维护窗口", DAILY_SHEET],
         ["小转大", "累计完成度", "累计当日小转大数量/总小转大", "小转大当日数量+传播名汇总"],
         ["直接大定", "累计完成度", "累计当日直接大定数量/总直接大定", "直接大定当日数量+传播名汇总"],
         ["总大定", "累计完成度", "累计(当日小转大+当日直接大定)/总大定", "小转大当日数量+直接大定当日数量+预测基准总表"],
@@ -1156,7 +1156,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         ["数据边界", "缺失保持空白，真实0保留为0。历史合成曲线、当日快照和未来日期单独标识，不作为已结束日期真实值。"],
         ["退订口径", "累计小订退订统一放在小订及退订逐日，不与当日大定退订混用。当前订单逐日只放大定、留存大定、小转大、直接大定和交车锁单。"],
         ["阅读顺序", "先看字段说明、车型基本信息和数据来源目录；再看小订及退订逐日、当前小订分时、当前订单逐日和当前首销分时；最后核对预测参考。"],
-        ["当前结果区", "车型基本信息已合并当前车型阶段；小订及退订逐日合并三类来源，同车型同日期按《小订选配比例分析》代际by天→《小订退订分析》分时汇总→历史小订by天读取可用值。"],
+        ["当前结果区", "车型基本信息合并阶段；真实小订按整理表小订by天→小订选配比例by天→小订退订分析分时汇总，退订独立取小订退订分析。"],
         ["预测参考区", "车型基本信息、首销D1D2预测指标及首销参考曲线：保留首销预测现有参考数据和计算结果，首销预测继续读取这些既有口径。"],
         ["历史与资料区", "车型基本信息、小订及退订逐日和预测基准总表：用于名称映射、车型属性、当前阶段及历史小订/首销基准核对。"],
         ["来源说明", "本文件只保留预测所需的汇总结果，不复制原始订单Sheet，也不重复展示可由统一逐日表表达的明细；数据来源目录记录对应汇总位置。"],
@@ -1169,17 +1169,19 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
     workbook["汇总说明"].column_dimensions["B"].width = 105
 
 
-def forecast_weekly_orders(store, dashboard, today, daily_output=None):
+def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collect_only=False, resolved_daily=None):
     """Collect quantities after file-boundary merging, split stage-boundary weeks by day."""
     from modules.sales_forecast import (_iso_week_bounds, _as_date, _canonical_model,
         _read_model_mapping, _fill_sparse_dates)
-    from core.excel import sheet_subject, display_period, _source_date_ranges
+    from core.excel import sheet_subject, display_period, _source_date_ranges, subject_type
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
     targets = {r["name"]: r for r in [*data.get("targets", []), *data.get("steady_targets", [])]}
     mapping = _read_model_mapping()
-    daily, weekly = {}, {}
+    cached = "mix_weekly" in data
+    daily, weekly = data.get("mix_daily", {}), data.get("mix_weekly", {})
+    selected_ranks = {}
     labels = {"大定": "gross", "总大定": "gross", "留存大定": "net", "净大定": "net", "交车锁单": "lock"}
-    for keyword in ("大定选配比例", "锁单选配比例"):
+    for keyword in (() if cached else ("大定选配比例", "锁单选配比例")):
         item = store.find(keyword)
         if item is None:
             continue
@@ -1190,7 +1192,11 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
                 continue
             model = _canonical_model(sheet_subject(sheet.title), mapping)
             if model not in targets:
-                continue
+                if subject_type(model) != "generation":
+                    continue
+                target = {"name": model, "history_model": model, "stage": "unknown", "has_small": False}
+                targets[model] = target
+                data.setdefault("targets", []).append(target)
             metric = ""
             for row in sheet.iter_rows(min_row=2):
                 metric = str(row[0].value or metric).strip()
@@ -1198,6 +1204,13 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
                 if field is None or row[1].value != "数量" or row[2].value != "数量":
                     continue
                 source = f"{item.path.name}｜{sheet.title}"
+                rank = 0 if keyword == ("锁单选配比例" if field == "lock" else "大定选配比例") else 1
+                def keep(table, identity, value):
+                    key = (grain, *identity)
+                    if identity not in table or (value is not None and
+                            (table[identity][0] is None or rank < selected_ranks.get(key, 99))):
+                        table[identity] = (value, source)
+                        selected_ranks[key] = rank
                 observed = []
                 for cell in row[3:]:
                     header = sheet.cell(1, cell.column)
@@ -1210,13 +1223,16 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
                     else:
                         period = display_period(header.value, header.number_format)
                         if _iso_week_bounds(period):
-                            weekly[(model, period, field)] = (value, source)
+                            keep(weekly, (model, period, field), value)
                 if grain == "day":
                     filled = _fill_sparse_dates(observed, (field,), coverage, end=today)
                     for entry in filled:
-                        daily[(model, entry["date"], field)] = (entry.get(field), source)
+                        keep(daily, (model, entry["date"], field), entry.get(field))
+    data["mix_daily"], data["mix_weekly"] = daily, weekly
     if daily_output is not None:
         daily_output.update(daily)
+    if collect_only:
+        return []
     # Launch/day selections already carry the shared stage priority. For steady
     # sales the mix sheets remain primary; do not extend launch data over them.
     resolved = {}
@@ -1225,6 +1241,9 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
             if row.get("date"):
                 for field in ("gross", "net", "lock"):
                     resolved[(profile["model"], row["date"], field)] = (row.get(field), DAILY_SHEET + "｜字段来源")
+    if resolved_daily is not None:
+        resolved = {(r["订单分析代际名"], iso_day(r["日期"]), field): (r.get(label), DAILY_SHEET + "｜字段来源")
+                    for r in resolved_daily for field, label in (("gross", "大定"), ("net", "留存大定"), ("lock", "交车锁单"))}
     periods = {(model, period) for model, period, _ in weekly}
     for model, day, _ in {*daily, *resolved}:
         parsed = date.fromisoformat(day)
@@ -1238,10 +1257,27 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None):
             if entry[0] is not None and current_week_start <= day <= today.isoformat():
                 current_updated.setdefault(model, set()).add(day)
     for model, period in sorted(periods):
-        target = targets[model]
+        target = targets.get(model, {})
         launch, finish = _as_date(target.get("launch_date")), _as_date(target.get("end_date"))
         bounds = _iso_week_bounds(period)
-        if not bounds or not launch or not finish:
+        if not bounds or bounds[0] > today:
+            continue
+        if not launch or not finish or bounds[1] < launch:
+            start, end = bounds[0], min(bounds[1], today)
+            values, sources = [], []
+            for field in ("gross", "net", "lock"):
+                raw = weekly.get((model, period, field))
+                by_day = [resolved.get((model, (start+timedelta(days=i)).isoformat(), field)) or
+                          daily.get((model, (start+timedelta(days=i)).isoformat(), field))
+                          for i in range((end-start).days+1)]
+                complete = all(entry and entry[0] is not None for entry in by_day)
+                value, source = (sum(entry[0] for entry in by_day), DAILY_SHEET + "（by天汇总）") if complete else raw or (None, None)
+                values.append(value)
+                sources.append(source)
+            if any(v is not None for v in values):
+                rows.append([model, period, "阶段未知" if not launch or not finish else "首销前",
+                             datetime.combine(start, datetime.min.time()), datetime.combine(end, datetime.min.time()),
+                             *values, *sources, False])
             continue
         for stage, first, last in (("首销", launch, finish), ("平销", finish + timedelta(days=1), today)):
             start, end = max(bounds[0], first), min(bounds[1], last, today)
@@ -1363,7 +1399,7 @@ def append_forecast_views(path, as_of_date, workbook=None):
         if dashboard is None:
             raise ValueError("汇总未生成有效销量预测数据，请检查原始历史基准")
         mix_daily = {}
-        weekly_rows = forecast_weekly_orders(summary["store"], dashboard, module.as_of_date or date.today(), mix_daily)
+        weekly_rows = forecast_weekly_orders(summary["store"], dashboard, module.as_of_date or date.today(), mix_daily, collect_only=True)
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
     data["mix_daily"] = mix_daily
     data["reference_daily"] = {
@@ -1379,7 +1415,8 @@ def append_forecast_views(path, as_of_date, workbook=None):
         book[name].freeze_panes = "C2"
 
     compact_source_sheets(book)
-    public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today(), getattr(module, "summary_raw_profiles", None))
+    public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today(), getattr(module, "summary_raw_profiles", None),
+        weekly_builder=lambda rows: forecast_weekly_orders(None, dashboard, module.as_of_date or date.today(), resolved_daily=rows))
     normalize_public_names(book, data, emit)
     audit_final_forecast(book, module.as_of_date or date.today(), data)
     sheet_count = len(book.sheetnames)

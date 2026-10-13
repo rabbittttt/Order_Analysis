@@ -38,6 +38,7 @@ class ResolvedSummaryTests(TestCase):
     def test_temporal_keys_are_unique_and_intraday_is_not_a_daily_row(self):
         def customize(data):
             raw = data['actuals'][0]
+            data['targets'][0]['small_end_date'] = '2026-01-03'
             raw['small_daily_days'].append({'date': '2026-01-03', 'orders': 5})
             raw['hourly_days'] = [{'date': '2026-01-03', 'last_hour': 15,
                 'small_to_big': 2, 'direct': 3, 'hours': [{'hour': 15, 'gross': 5}, {'hour': 15, 'gross': 5}]}]
@@ -63,14 +64,14 @@ class ResolvedSummaryTests(TestCase):
             }
         book = test_public_forecast_tables.PublicForecastTablesTests().make_public(customize=customize, as_of=date(2026, 1, 5))
         metric = table_records(book, D12_SHEET)[0]
-        self.assertEqual((metric['D1小转大'], metric['D2小转大'], metric['D1+D2小转大']), (10, 8, 18))
-        self.assertEqual((metric['D1大定'], metric['D2大定']), (30, 40))
+        self.assertEqual((metric['D1小转大'], metric['D2小转大'], metric['D1+D2小转大']), (1, 8, 9))
+        self.assertEqual((metric['D1大定'], metric['D2大定']), (20, 40))
         self.assertIsNone(metric['D1+D2退订'])
         self.assertIsNone(metric['总大定'])  # The launch period has not ended.
         self.assertIsNone(metric['D1小转大/总小转大'])
-        self.assertEqual(table_records(book, '小转大当日数量')[0]['D1'], 10)
+        self.assertEqual(table_records(book, '小转大当日数量')[0]['D1'], 1)
         self.assertIsNone(table_records(book, '小转大累计完成度')[0]['D1'])
-        self.assertAlmostEqual(table_records(book, '累计小订转化率')[0]['D1'], .1)
+        self.assertAlmostEqual(table_records(book, '累计小订转化率')[0]['D1'], .01)
         self.assertIsNone(table_records(book, MASTER_SHEET)[0]['总小转大'])
         book.close()
 
@@ -113,7 +114,7 @@ class ResolvedSummaryTests(TestCase):
         days = {r['日期']: r for r in table_records(book, DAILY_SHEET)}
         self.assertEqual(days[datetime(2026, 1, 3)]['退订数量'], 38)
         self.assertEqual(days[datetime(2026, 1, 4)]['退订数量'], 0)
-        self.assertEqual(days[datetime(2026, 1, 5)]['退订数量'], 7)
+        self.assertIsNone(days.get(datetime(2026, 1, 5), {}).get('退订数量'))
         self.assertIn('小订退订分析.xlsx', days[datetime(2026, 1, 3)]['字段来源'])
         self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)
         self.assertEqual(table_records(book, D12_SHEET)[0]['D1退订'], 38)
@@ -126,7 +127,7 @@ class ResolvedSummaryTests(TestCase):
             raw['cancel_source'] = {'file': '小订退订分析.xlsx', 'sheet': '测试车日度退订'}
             data['reference_daily'] = {'退订当日数量': {'历史车': [32]}}
         book = self.make(customize)
-        self.assertEqual(table_records(book, D12_SHEET)[0]['D1退订'], 32)
+        self.assertIsNone(table_records(book, D12_SHEET)[0]['D1退订'])
         self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)
         book.close()
 
@@ -143,7 +144,7 @@ class ResolvedSummaryTests(TestCase):
                 candidates['cancel']['days'][0]['cancel'] = 0
                 self.assertEqual(_resolve_stage_candidate(candidates, stage)['days'][0]['cancel'], 0)
                 candidates['cancel']['days'][0]['cancel'] = None
-                self.assertEqual(_resolve_stage_candidate(candidates, stage)['days'][0]['cancel'], 32)
+                self.assertIsNone(_resolve_stage_candidate(candidates, stage)['days'][0]['cancel'])
                 candidates['cancel']['days'][0]['cancel'] = 38
 
     def test_raw_cancel_parser_keeps_explicit_daily_quantity(self):

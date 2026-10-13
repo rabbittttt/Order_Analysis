@@ -155,12 +155,12 @@ class SalesForecastStageTests(unittest.TestCase):
                 profiles, history, targets, SourceRef("历史整理.xlsx", "小订by天", "真实逐日"),
             )
         self.assertEqual(profiles[0]["small_daily_days"], [
-            {"date": "2026-09-01", "orders": 100},
-            {"date": "2026-09-02", "orders": 0},
+            {"date": "2026-09-01", "orders": 20},
+            {"date": "2026-09-02", "orders": 30},
             {"date": "2026-09-03", "orders": 40},
         ])
         self.assertEqual(profiles[0]["small_daily_sources"]["2026-09-03"]["sheet"], "小订by天")
-        self.assertEqual(profiles[0]["small_daily_sources"]["2026-09-02"]["file"], "鸿蒙智行小订选配比例分析.xlsx")
+        self.assertEqual(profiles[0]["small_daily_sources"]["2026-09-02"]["file"], "历史整理.xlsx")
         history[0]["daily_actual"] = False
         profiles[0]["small_daily_days"] = []
         with patch("modules.sales_forecast._read_model_mapping", return_value={}):
@@ -743,8 +743,8 @@ class SalesForecastStageTests(unittest.TestCase):
             targets.append({"name": name, "stage": stage, "small": 0})
 
         resolved = _resolve_actual_profiles(history, profiles, targets, SourceRef("整理.xlsx", "预测基准总表", "历史"))
-        self.assertEqual([item["selected_source"] for item in resolved], ["launch", "cancel", "launch"])
-        self.assertEqual([target["small"] for target in targets], [1100, 1100, 900])
+        self.assertEqual([item["selected_source"] for item in resolved], ["history"] * 3)
+        self.assertEqual([target["small"] for target in targets], [1000] * 3)
 
     def test_active_and_before_stages_do_not_use_a_third_out_of_stage_source(self):
         history = [{
@@ -825,14 +825,14 @@ class SalesForecastStageTests(unittest.TestCase):
             {"name": "车型A", "stage": "active", "small": 0},
         ]
         resolved = _resolve_actual_profiles(history, [profile], targets, SourceRef("整理.xlsx", "预测基准总表", "历史"))
-        self.assertEqual([target["small"] for target in targets], [1100, 1100, 1000])
+        self.assertEqual([target["small"] for target in targets], [1000] * 3)
         self.assertEqual(
             [target["field_sources"]["总小订"] for target in targets],
-            ["小订退订分析", "小订退订分析", "小订及首销数据整理"],
+            ["小订及首销数据整理"] * 3,
         )
-        self.assertEqual(resolved[0]["stage_profiles"]["ended"]["priority"], ("launch", "cancel", "history"))
-        self.assertEqual(resolved[1]["stage_profiles"]["before"]["priority"], ("cancel", "history"))
-        self.assertEqual(resolved[2]["selected_source"], "launch")
+        self.assertEqual(resolved[0]["stage_profiles"]["ended"]["priority"], ("history", "launch"))
+        self.assertEqual(resolved[1]["stage_profiles"]["before"]["priority"], ("history", "small_mix", "cancel"))
+        self.assertEqual(resolved[2]["selected_source"], "history")
 
     def test_blank_ended_history_day_fields_fall_back_to_launch_by_field(self):
         history = [{

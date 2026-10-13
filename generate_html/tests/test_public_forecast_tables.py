@@ -171,7 +171,7 @@ class PublicForecastTablesTests(TestCase):
                           '_field_sources': {'gross': owner, 'small_to_big': owner, 'direct': owner}}]}
         data = {'targets': [{'name': '测试车', 'history_model': '历史车', 'launch_date': target_start, 'end_date': '2026-01-09',
                             'small_start_date': '2026-01-01', 'small_end_date': '2026-01-02', 'days': 7}],
-                'actuals': [profile], 'history': [{'model': '历史车', 'generation': '测试车', 'launch_date': '2026-01-03', 'daily_orders': [20]}], 'steady_history': [],
+                'actuals': [profile], 'history': [{'model': '历史车', 'generation': '测试车', 'launch_date': '2026-01-03', 'daily_orders': [30]}], 'steady_history': [],
                 'small_order_history': [{'model': '历史车', 'generation': '测试车', 'event_id': 'event1',
                     'small_start_date': '2026-01-01', 'small_end_date': '2026-01-02', 'days': 2, 'total': 100,
                     'daily_actual': True, 'source_sheet': '小订by天', 'total_complete': True,
