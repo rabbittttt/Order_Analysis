@@ -6,6 +6,7 @@ from contextvars import ContextVar
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import math
+import logging
 
 from openpyxl import load_workbook
 
@@ -275,7 +276,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         for day in item.get("daily", []):
             add(item["model"], None, day, "平销", "平销锁单",
                 {"file": item.get("source_file"), "sheet": "、".join(item.get("daily_source_sheets", []))}, {"交车锁单": day.get("lock")})
-    rows = resolved_daily_rows(rows, data, master, history_file, as_of_date or date.today())
+    rows = resolved_daily_rows(rows, data, master, history_file, as_of_date or date.today(), raw_profiles)
     headers = ["订单分析代际名", "历史传播名", "日期", "订单阶段", "生命周期", "小订数量",
                *ORDER_FIELDS.values(), "退订数量", "字段来源", "首销分时核对"]
     for sheet, key, field, label, source_key in (
@@ -348,7 +349,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
     book._sheets = [book[name] for name in first] + [s for s in book.worksheets if s.title not in first]
 
 
-def resolved_daily_rows(candidates, data, masters, history_file, today):
+def resolved_daily_rows(candidates, data, masters, history_file, today, raw_profiles=None):
     """One model/date row, field-wise precedence, never sum overlapping sources."""
     targets = {r["name"]: r for r in [*data.get("targets", []), *data.get("steady_targets", [])]}
     references = data.get("reference_daily", {})
@@ -460,6 +461,8 @@ def resolved_daily_rows(candidates, data, masters, history_file, today):
             ranks[identity] = rank
             row[field] = value
             origins.setdefault(key, {})[field] = source.get("_origins", {}).get(field) or source_text({"file": source.get("来源文件"), "sheet": source.get("来源Sheet")})
+    backfill_launch_cumulative(rows, ranks, origins, data, targets,
+                               raw_profiles if raw_profiles is not None else data.get("actuals", []), today)
     result = []
     for key, row in sorted(rows.items()):
         model, day = key
@@ -486,6 +489,76 @@ def resolved_daily_rows(candidates, data, masters, history_file, today):
             by_origin.setdefault(origin, []).append(field)
         row["字段来源"] = "；".join(f"{'/'.join(fields)}={origin}" for origin, fields in by_origin.items())
         result.append(row)
+    return result
+
+
+def backfill_launch_cumulative(rows, ranks, origins, data, targets, profiles, today):
+    """Fill gaps from actual cumulative counts, never from reference percentages.
+
+    Daily history and launch facts win. Adjacent cumulative differences precede
+    generic mix fallback; non-adjacent snapshots can fill only cumulative fields.
+    A contradictory higher-priority interval invalidates that source curve.
+    """
+    resolved, conflicts = {}, []
+    for profile in profiles:
+        model = profile["model"]
+        target = targets.get(model, {})
+        start, finish = calendar_day(target.get("launch_date")), calendar_day(target.get("end_date"))
+        if not start or not finish or calendar_day(profile.get("cumulative_launch_date")) != start:
+            continue
+        source = source_text(profile.get("cumulative_source") or profile.get("day_source"))
+        for key, field in ORDER_FIELDS.items():
+            anchors = {calendar_day(r.get("date")): r[key] for r in profile.get("cumulative_days", [])
+                       if start <= calendar_day(r.get("date")) <= finish and calendar_day(r.get("date")) < today.isoformat()
+                       and isinstance(r.get(key), (int, float)) and not isinstance(r[key], bool)
+                       and math.isfinite(r[key]) and r[key] >= 0}
+            if not anchors:
+                continue
+            previous_day, previous_value = (date.fromisoformat(start)-timedelta(days=1)).isoformat(), 0
+            incompatible = False
+            for day, value in sorted(anchors.items()):
+                interval = (date.fromisoformat(day)-date.fromisoformat(previous_day)).days
+                known = [rows.get((model, stamp), {}).get(field)
+                         if ranks.get((model, stamp, field), 99) < 2 else None
+                         for stamp in ((date.fromisoformat(previous_day)+timedelta(days=i+1)).isoformat()
+                                       for i in range(interval))]
+                known_sum = sum(v for v in known if v is not None)
+                delta = value-previous_value
+                if delta < 0 or known_sum > delta or (all(v is not None for v in known) and known_sum != delta):
+                    incompatible = True
+                    break
+                previous_day, previous_value = day, value
+            if incompatible:
+                conflicts.append((model, source, field, day, delta, known_sum))
+                continue
+            resolved[(model, field)] = anchors
+            for day, value in sorted(anchors.items()):
+                previous = (date.fromisoformat(day)-timedelta(days=1)).isoformat()
+                base = 0 if day == start else anchors.get(previous)
+                if base is None or ranks.get((model, day, field), 99) < 2:
+                    continue
+                rows.setdefault((model, day), {"订单分析代际名": model, "日期": date_cell(day)})[field] = value-base
+                ranks[(model, day, field)] = 2
+                origins.setdefault((model, day), {})[field] = source + "（相邻日累计差分）"
+    data["resolved_launch_cumulative"] = resolved
+    if conflicts:
+        grouped = {}
+        for model, source, field, day, delta, known_sum in conflicts:
+            grouped.setdefault((model, source), []).append(f"{field}@{day}：累计增量{delta:g}/高优先级日量{known_sum:g}")
+        logging.getLogger(__name__).warning(
+            "[首销累计口径冲突] %d组 | 各字段首处冲突=%s | 保留高优先级真实日量，冲突累计量不用于补缺",
+            len(conflicts), "；".join(f"{model}（{source}）：{'、'.join(items)}" for (model, source), items in grouped.items()))
+
+
+def anchored_cumulative(values, dates, anchors=None, initial=0, prefer_anchor=False):
+    """Continue a known cumulative baseline; gaps stay blank until a real anchor."""
+    anchors = anchors or {}
+    running, result = initial, []
+    for day, value in zip(dates, values):
+        running = running+value if running is not None and value is not None else None
+        if day in anchors and (running is None or prefer_anchor):
+            running = anchors[day]
+        result.append(running)
     return result
 
 
@@ -585,96 +658,9 @@ def complete_master_fields(book, masters, headers):
                 f"D1首个正数订单小时：{evidence[1]}" if evidence else "缺少本阶段D1正数分时")
 
 
-def refresh_reference_tables(book, data, emit, daily, today):
-    """Rebuild reference features from the same resolved quantities as actuals."""
-    from tools.refresh_sales_forecast_data import safe_div, cumulative, day_structure_quality
-    masters = table_records(book, MASTER_SHEET)
-    headers = [c.value for c in book[MASTER_SHEET][1]]
-    if "首销阶段" not in headers:
-        headers.append("首销阶段")
-    lookup = {(r["订单分析代际名"], iso_day(r["日期"])): r for r in daily}
-    actuals = {p["model"]: p for p in data.get("actuals", [])}
-    mapping_status = {p["model"]: p.get("mapping_status") for p in data.get("history", [])}
-    targets = {p["name"]: p for p in data.get("targets", [])}
-    derived = {name: [] for name in ("小转大当日数量", "直接大定当日数量", "小转大累计完成度",
-        "直接大定累计完成度", "累计大定完成度", "累计小订转化率", "累计退订率", "累计直接大定占比", "每日直接大定占比")}
-    metric_rows = []
-    max_days = max((int(r.get("首销天数") or 0) for r in masters), default=0)
-    for r in masters:
-        model, name = r.get("订单分析代际名"), r.get("历史传播名")
-        start, finish = iso_day(r.get("首销开始")), iso_day(r.get("首销结束"))
-        if not model or not name or not start:
-            continue
-        count = int(r.get("首销天数") or ((date.fromisoformat(finish)-date.fromisoformat(start)).days+1 if finish else 0))
-        max_days = max(max_days, count)
-        dates = [(date.fromisoformat(start)+timedelta(days=i)).isoformat() for i in range(max(count, 0))]
-        selected = [lookup.get((model, d), {}) if d < today.isoformat() else {} for d in dates]
-        s, d, g, c = ([day.get(field) for day in selected] for field in ("小转大", "直接大定", "大定", "退订数量"))
-        ended = bool(finish and finish < today.isoformat())
-        r["首销阶段"] = "已结束" if ended else "未开始" if start > today.isoformat() else "进行中" if finish else "时间未维护"
-        for field, total in (("小转大", "总小转大"), ("直接大定", "总直接大定"), ("大定", "总大定"),
-                             ("留存大定", "首销期留存大定"), ("交车锁单", "首销期锁单"), ("退订数量", "总退订")):
-            values = [day.get(field) for day in selected]
-            if ended and values and all(v is not None for v in values):
-                r[total] = sum(values)
-            elif not ended or field == "退订数量" or r.get(total) in (None, ""):
-                r[total] = None
-        small_finish = iso_day(r.get("小订结束"))
-        profile = actuals.get(model, {})
-        if start == targets.get(model, {}).get("launch_date") and profile.get("total_small", 0) > 0:
-            r["总小订"] = profile["total_small"]
-        if small_finish and small_finish >= today.isoformat():
-            r["总小订"] = None
-        for output, numerator, denominator in (("小订转化率", "总小转大", "总小订"), ("直接大定占比", "总直接大定", "总大定"),
-            ("退订率", "总退订", "总小订"), ("留存大定率", "首销期留存大定", "总大定"),
-            ("留存大定到锁单率", "首销期锁单", "首销期留存大定"), ("大定到锁单率", "首销期锁单", "总大定")):
-            calculated = safe_div(r.get(numerator), r.get(denominator))
-            # Completed-source rates may be maintained without the quantities;
-            # the two lock-rate denominators are never interchangeable.
-            r[output] = (r.get(output) if ended and output.endswith("到锁单率") and calculated is None else calculated)
-        terminal_cancel = data.get("resolved_cancel_cumulative", {}).get((model, finish)) if ended else None
-        if terminal_cancel is not None:
-            r["总退订"] = terminal_cancel
-            r["退订率"] = safe_div(terminal_cancel, r.get("总小订"))
-        fields = ("总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率")
-        r["字段完整度"] = sum(r.get(k) is not None for k in fields)/len(fields)
-        derived["小转大当日数量"].append([name, *s])
-        derived["直接大定当日数量"].append([name, *d])
-        for title, values, denominator in (("小转大累计完成度", s, "总小转大"), ("直接大定累计完成度", d, "总直接大定"),
-            ("累计大定完成度", g, "总大定"), ("累计小订转化率", s, "总小订"), ("累计退订率", c, "总小订")):
-            progress = cumulative(values, r.get(denominator) or 0)
-            if title == "累计退订率":
-                progress = [safe_div(data["resolved_cancel_cumulative"][(model, day)], r.get(denominator))
-                            if (model, day) in data.get("resolved_cancel_cumulative", {}) else value
-                            for day, value in zip(dates, progress)]
-            derived[title].append([name, *progress])
-        cg, cd = cumulative(g), cumulative(d)
-        derived["累计直接大定占比"].append([name, *[safe_div(a, b) for a, b in zip(cd, cg)]])
-        derived["每日直接大定占比"].append([name, *[safe_div(a, b) for a, b in zip(d, g)]])
-        s1, s2 = (s+[None, None])[:2]
-        d1, d2 = (d+[None, None])[:2]
-        g1, g2 = (g+[None, None])[:2]
-        c1, c2 = (c+[None, None])[:2]
-        def pair(a, b):
-            return a+b if a is not None and b is not None else None
-        s12, d12, g12, c12 = pair(s1, s2), pair(d1, d2), pair(g1, g2), pair(c1, c2)
-        checks = [day_structure_quality(a, b, v, label) if all(x is not None for x in (a, b, v)) else (False, label+"数量未完整")
-                  for a, b, v, label in ((s1, d1, g1, "D1"), (s2, d2, g2, "D2"), (s12, d12, g12, "D1+D2"))]
-        valid = [(a, b, v) if check[0] else (None, None, None) for (a, b, v), check in zip(((s1, d1, g1), (s2, d2, g2), (s12, d12, g12)), checks)]
-        (vs1, vd1, vg1), (vs2, vd2, vg2), (vs12, vd12, vg12) = valid
-        status = mapping_status.get(name) or ("已映射" if model != name else "未映射·暂按传播名")
-        metric_rows.append([name, model, status, r.get("产品档位"), count, r.get("总小转大"), r.get("总直接大定"), r.get("总大定"), r.get("总小订"),
-            s1, safe_div(vs1, r.get("总小转大")), s2, safe_div(vs2, r.get("总小转大")), s12, safe_div(vs12, r.get("总小转大")), safe_div(vs2, vs1), safe_div(vs1, vs12),
-            d1, safe_div(vd1, r.get("总直接大定")), d2, safe_div(vd2, r.get("总直接大定")), d12, safe_div(vd12, r.get("总直接大定")), safe_div(vd2, vd1), safe_div(vd1, vd12),
-            g1, safe_div(vs1, vg1), safe_div(vd1, vg1), g2, safe_div(vs2, vg2), safe_div(vd2, vg2), g12, safe_div(vs12, vg12), safe_div(vd12, vg12),
-            c1, safe_div(c1, r.get("总小订")), c2, safe_div(c2, r.get("总小订")), c12, safe_div(c12, r.get("总小订")), safe_div(c2, c1), safe_div(c1, c12),
-            *["通过" if ok else "数据不足或异常" for ok, _ in checks], "；".join(issue for _, issue in checks if issue)])
-    emit(MASTER_SHEET, headers, [[r.get(k) for k in headers] for r in masters], {k for k in headers if k.endswith("率") or "占比" in k or k == "字段完整度"})
-    emit(D12_SHEET, D12_HEADERS, metric_rows, {k for k in D12_HEADERS if "/" in k or k.endswith("率")})
-    day_headers = [f"D{i+1}" for i in range(max_days)]
-    for title, records in derived.items():
-        padded = [row+[None]*(max_days+1-len(row)) for row in records]
-        emit(title, ["传播名", *day_headers], padded, set(day_headers) if "当日数量" not in title else set())
+def refresh_small_reference_tables(book, masters, headers, lookup, emit, today):
+    """Finalize reservation quantities once, before launch features consume them."""
+    from tools.refresh_sales_forecast_data import cumulative
     curves = table_records(book, SMALL_CURVE_SHEET)
     identities = {(r.get("订单分析代际名"), r.get("历史传播名"), iso_day(r.get("小订开始"))) for r in curves}
     for master in masters:
@@ -727,6 +713,113 @@ def refresh_reference_tables(book, data, emit, daily, today):
     for name, records in ((SMALL_CURVE_SHEET, small_curves), (SMALL_DAILY_SHEET, small_daily)):
         emit(name, small_headers, [r+[None]*(len(small_headers)-len(r)) for r in records],
              set(small_headers[2:]) if name == SMALL_CURVE_SHEET else set())
+
+
+def refresh_reference_tables(book, data, emit, daily, today):
+    """Rebuild reference features from the same resolved quantities as actuals."""
+    from tools.refresh_sales_forecast_data import safe_div, day_structure_quality
+    masters = table_records(book, MASTER_SHEET)
+    headers = [c.value for c in book[MASTER_SHEET][1]]
+    if "首销阶段" not in headers:
+        headers.append("首销阶段")
+    lookup = {(r["订单分析代际名"], iso_day(r["日期"])): r for r in daily}
+    actuals = {p["model"]: p for p in data.get("actuals", [])}
+    mapping_status = {p["model"]: p.get("mapping_status") for p in data.get("history", [])}
+    targets = {p["name"]: p for p in data.get("targets", [])}
+    # Resolve the denominator before any rates, D1/D2 features or curves.
+    for r in masters:
+        model = r.get("订单分析代际名")
+        profile = actuals.get(model, {})
+        if iso_day(r.get("首销开始")) == targets.get(model, {}).get("launch_date") and profile.get("total_small", 0) > 0:
+            r["总小订"] = profile["total_small"]
+        small_finish = iso_day(r.get("小订结束"))
+        if small_finish and small_finish >= today.isoformat():
+            r["总小订"] = None
+    refresh_small_reference_tables(book, masters, headers, lookup, emit, today)
+    derived = {name: [] for name in ("小转大当日数量", "直接大定当日数量", "小转大累计完成度",
+        "直接大定累计完成度", "累计大定完成度", "累计小订转化率", "累计退订率", "累计直接大定占比", "每日直接大定占比")}
+    metric_rows = []
+    max_days = max((int(r.get("首销天数") or 0) for r in masters), default=0)
+    for r in masters:
+        model, name = r.get("订单分析代际名"), r.get("历史传播名")
+        start, finish = iso_day(r.get("首销开始")), iso_day(r.get("首销结束"))
+        if not model or not name or not start:
+            continue
+        count = int(r.get("首销天数") or ((date.fromisoformat(finish)-date.fromisoformat(start)).days+1 if finish else 0))
+        max_days = max(max_days, count)
+        dates = [(date.fromisoformat(start)+timedelta(days=i)).isoformat() for i in range(max(count, 0))]
+        selected = [lookup.get((model, d), {}) if d < today.isoformat() else {} for d in dates]
+        s, d, g, c = ([day.get(field) for day in selected] for field in ("小转大", "直接大定", "大定", "退订数量"))
+        cumulative_counts = {field: anchored_cumulative([day.get(field) for day in selected], dates,
+            data.get("resolved_launch_cumulative", {}).get((model, field))) for field in ORDER_FIELDS.values()}
+        cancel_anchors = {day: value for (owner, day), value in data.get("resolved_cancel_cumulative", {}).items()
+                          if owner == model and start <= day <= (finish or day) and day < today.isoformat()}
+        prior_day = (date.fromisoformat(start)-timedelta(days=1)).isoformat()
+        cancel_base = data.get("resolved_cancel_cumulative", {}).get((model, prior_day), 0)
+        cumulative_counts["退订数量"] = anchored_cumulative(c, dates, cancel_anchors, cancel_base, prefer_anchor=True)
+        ended = bool(finish and finish < today.isoformat())
+        r["首销阶段"] = "已结束" if ended else "未开始" if start > today.isoformat() else "进行中" if finish else "时间未维护"
+        for field, total in (("小转大", "总小转大"), ("直接大定", "总直接大定"), ("大定", "总大定"),
+                             ("留存大定", "首销期留存大定"), ("交车锁单", "首销期锁单"), ("退订数量", "总退订")):
+            values = [day.get(field) for day in selected]
+            if ended and values and (all(v is not None for v in values) or field == "退订数量"):
+                r[total] = cumulative_counts[field][-1]
+            elif ended and r.get(total) in (None, "") and values:
+                r[total] = cumulative_counts[field][-1]
+            elif not ended or field == "退订数量" or r.get(total) in (None, ""):
+                r[total] = None
+        for output, numerator, denominator in (("小订转化率", "总小转大", "总小订"), ("直接大定占比", "总直接大定", "总大定"),
+            ("退订率", "总退订", "总小订"), ("留存大定率", "首销期留存大定", "总大定"),
+            ("留存大定到锁单率", "首销期锁单", "首销期留存大定"), ("大定到锁单率", "首销期锁单", "总大定")):
+            calculated = safe_div(r.get(numerator), r.get(denominator))
+            # Completed-source rates may be maintained without the quantities;
+            # the two lock-rate denominators are never interchangeable.
+            r[output] = (r.get(output) if ended and output.endswith("到锁单率") and calculated is None else calculated)
+        fields = ("总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率")
+        r["字段完整度"] = sum(r.get(k) is not None for k in fields)/len(fields)
+        derived["小转大当日数量"].append([name, *s])
+        derived["直接大定当日数量"].append([name, *d])
+        for title, field, denominator in (("小转大累计完成度", "小转大", "总小转大"), ("直接大定累计完成度", "直接大定", "总直接大定"),
+            ("累计大定完成度", "大定", "总大定"), ("累计小订转化率", "小转大", "总小订"), ("累计退订率", "退订数量", "总小订")):
+            progress = [safe_div(value, r.get(denominator)) for value in cumulative_counts[field]]
+            derived[title].append([name, *progress])
+        cg, cd = cumulative_counts["大定"], cumulative_counts["直接大定"]
+        derived["累计直接大定占比"].append([name, *[safe_div(a, b) for a, b in zip(cd, cg)]])
+        derived["每日直接大定占比"].append([name, *[safe_div(a, b) for a, b in zip(d, g)]])
+        s1, s2 = (s+[None, None])[:2]
+        d1, d2 = (d+[None, None])[:2]
+        g1, g2 = (g+[None, None])[:2]
+        c1, c2 = (c+[None, None])[:2]
+        def pair(a, b):
+            return a+b if a is not None and b is not None else None
+        s12, d12, g12, c12 = pair(s1, s2), pair(d1, d2), pair(g1, g2), pair(c1, c2)
+        triples = ((s1, d1, g1), (s2, d2, g2), (s12, d12, g12))
+        checks = []
+        for (a, b, v), label in zip(triples, ("D1", "D2", "D1+D2")):
+            if all(x is not None for x in (a, b, v)):
+                checks.append(day_structure_quality(a, b, v, label))
+            elif v is not None and any(x is not None and x > v*1.02 for x in (a, b)):
+                checks.append((False, label+"单项订单来源高于总大定"))
+            else:
+                checks.append((False, label+"数量未完整"))
+        statuses = ["通过" if ok else "部分字段有效" if issue.endswith("数量未完整") and any(x is not None for x in triple)
+                    else "数据不足或异常" for (ok, issue), triple in zip(checks, triples)]
+        # An unrelated missing component must not erase an independently valid
+        # D1/terminal or D2/D1 ratio. A proven structure conflict still rejects it.
+        valid = [triple if status != "数据不足或异常" else (None, None, None) for triple, status in zip(triples, statuses)]
+        (vs1, vd1, vg1), (vs2, vd2, vg2), (vs12, vd12, vg12) = valid
+        status = mapping_status.get(name) or ("已映射" if model != name else "未映射·暂按传播名")
+        metric_rows.append([name, model, status, r.get("产品档位"), count, r.get("总小转大"), r.get("总直接大定"), r.get("总大定"), r.get("总小订"),
+            s1, safe_div(vs1, r.get("总小转大")), s2, safe_div(vs2, r.get("总小转大")), s12, safe_div(vs12, r.get("总小转大")), safe_div(vs2, vs1), safe_div(vs1, vs12),
+            d1, safe_div(vd1, r.get("总直接大定")), d2, safe_div(vd2, r.get("总直接大定")), d12, safe_div(vd12, r.get("总直接大定")), safe_div(vd2, vd1), safe_div(vd1, vd12),
+            g1, safe_div(vs1, vg1), safe_div(vd1, vg1), g2, safe_div(vs2, vg2), safe_div(vd2, vg2), g12, safe_div(vs12, vg12), safe_div(vd12, vg12),
+            c1, safe_div(c1, r.get("总小订")), c2, safe_div(c2, r.get("总小订")), c12, safe_div(c12, r.get("总小订")), safe_div(c2, c1), safe_div(c1, c12),
+            *statuses, "；".join(issue for _, issue in checks if issue)])
+    emit(D12_SHEET, D12_HEADERS, metric_rows, {k for k in D12_HEADERS if "/" in k or k.endswith("率")})
+    day_headers = [f"D{i+1}" for i in range(max_days)]
+    for title, records in derived.items():
+        padded = [row+[None]*(max_days+1-len(row)) for row in records]
+        emit(title, ["传播名", *day_headers], padded, set(day_headers) if "当日数量" not in title else set())
     complete_master_fields(book, masters, headers)
     emit(MASTER_SHEET, headers, [[r.get(k) for k in headers] for r in masters],
          {k for k in headers if k.endswith("率") or "占比" in k or k == "字段完整度"})

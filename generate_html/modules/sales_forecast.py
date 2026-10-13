@@ -1472,8 +1472,8 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "d2_small_share": _optional_number(record.get("D2小转大/D2大定")),
         "d2_direct_share": _optional_number(record.get("D2直接大/D2大定")),
         "d12_gross": int(_number(record.get("D1+D2大定"))),
-        "d12_small_share": _number(record.get("D1+D2小转大/D1+D2大定")),
-        "d12_direct_share": _number(record.get("D1+D2直接大/D1+D2大定")),
+        "d12_small_share": _optional_number(record.get("D1+D2小转大/D1+D2大定")),
+        "d12_direct_share": _optional_number(record.get("D1+D2直接大/D1+D2大定")),
         "d1_cancel": int(_number(record.get("D1退订"))),
         "d1_cancel_rate": _optional_number(record.get("D1退订率")),
         "d2_cancel": int(_number(record.get("D2退订"))),
@@ -1486,9 +1486,9 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "consistency": _number(record.get("口径一致性")),
         "quality_status": str(record.get("质量状态") or "未校验"),
         "quality_issues": str(record.get("质量问题") or record.get("结构异常说明") or ""),
-        "d1_valid": str(record.get("D1口径状态") or "通过") == "通过",
-        "d2_valid": str(record.get("D2口径状态") or "通过") == "通过",
-        "d12_valid": str(record.get("D1+D2口径状态") or "通过") == "通过",
+        "d1_valid": str(record.get("D1口径状态") or "通过") in ("通过", "部分字段有效"),
+        "d2_valid": str(record.get("D2口径状态") or "通过") in ("通过", "部分字段有效"),
+        "d12_valid": str(record.get("D1+D2口径状态") or "通过") in ("通过", "部分字段有效"),
         "data_type": "二次处理基准" if processed else str(record.get("数据性质") or "历史原始数据"),
     }
     if not item["d1_valid"]:
@@ -1645,6 +1645,27 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 small = rows.get("当日小订转大定数量", [])
                 direct = rows.get("当日直接大定数量", [])
                 locks = rows.get("当日交车锁单数量", [])
+                # Keep source cumulative quantities as facts, not ratios to be
+                # inverted. The summary resolver checks their campaign anchor
+                # and source priority before filling any daily/terminal gaps.
+                cumulative_fields = {
+                    "gross": rows.get("累计大定数量", []),
+                    "net": rows.get("累计留存大定数量", rows.get("累计净大定数量", [])),
+                    "small_to_big": rows.get("累计小订转大定数量", []),
+                    "direct": rows.get("累计直接大定数量", []),
+                    "lock": rows.get("累计交车锁单数量", []),
+                }
+                cumulative_days = []
+                for index, stamp in enumerate(dates):
+                    day = _iso(stamp)
+                    values = {field: _optional_count(series, index) for field, series in cumulative_fields.items()}
+                    if day and any(v is not None for v in values.values()):
+                        cumulative_days.append({"date": day, **values})
+                d1_index = next((i for i, label in enumerate(rows.get("周期", []))
+                                 if str(label or "").strip().upper() == "D1"), None)
+                profile["cumulative_launch_date"] = _iso(dates[d1_index]) if d1_index is not None and d1_index < len(dates) else ""
+                profile["cumulative_days"] = cumulative_days
+                profile["cumulative_source"] = SourceRef(launch_item.path.name, sheet.title, "首销真实累计数量").to_dict()
                 actual_days = []
                 for index in range(len(dates)):
                     value = gross[index] if index < len(gross) else None
@@ -1689,7 +1710,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                         "direct": _optional_count(direct, index),
                         "lock": _optional_count(locks, index),
                     })
-                if not actual_days and (dates or gross):
+                if not actual_days and not cumulative_days and (dates or gross):
                     d1_date = dates[0] if dates else None
                     d1_gross = gross[0] if gross else None
                     LOGGER.warning(
