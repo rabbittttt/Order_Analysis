@@ -900,6 +900,10 @@ def read_public_forecast(book, history, today=None):
                 continue
             profile["days"].append({"date": order_date, "day": r.get("生命周期"),
                                     **{k: r.get(c) for k, c in ORDER_FIELDS.items()}})
+            if canonical:
+                # D1/D2 reference features use daily cancellations, while the
+                # cumulative curve can include cancellations before launch.
+                profile["days"][-1]["daily_cancel"] = r.get("退订数量")
             # Keep dated actuals when the launch window is missing, but do not
             # invent D1 or apply a relative cancellation curve to those rows.
             if canonical and launch_start:

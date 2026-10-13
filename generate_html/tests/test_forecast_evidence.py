@@ -31,12 +31,12 @@ console.log(JSON.stringify(calculate({ForecastMath:m},()=>({days,d1:days[0],d2:d
     def test_missing_reference_metrics_never_score_as_matching_zero(self):
         item = dict.fromkeys(('d1_small','d1_small_share','d2_small_share','small_d2_d1','small_d1_d12','d1_cancel_rate','d2_cancel_rate','d12_cancel_rate'))
         item['daily_small'] = [10, None, 10]
-        days = [{'gross':10, 'small_to_big':value, 'direct':10-value, 'cancel':0} for value in (0,0,10)]
+        days = [{'gross':10, 'small_to_big':value, 'direct':10-value, 'cancel':0, 'daily_cancel':0} for value in (0,0,10)]
         parts = self.score(item, days)
         self.assertTrue({'earlySmall','smallSlope','dnSmallShape','earlyCancel'}.isdisjoint(parts), parts)
 
     def test_missing_target_components_do_not_create_scoring_evidence(self):
-        days = [{'gross':10,'small_to_big':None,'direct':None,'cancel':None} for _ in range(3)]
+        days = [{'gross':10,'small_to_big':None,'direct':None,'cancel':None,'daily_cancel':None} for _ in range(3)]
         item = {'d1_small':0,'d1_small_share':0,'d2_small_share':0,'small_d2_d1':0,'small_d1_d12':0,
                 'd1_direct_share':0,'d2_direct_share':0,'direct_d2_d1':0,'direct_d1_d12':0,
                 'daily_small':[1,2,3],'daily_direct':[1,2,3]}
@@ -45,7 +45,7 @@ console.log(JSON.stringify(calculate({ForecastMath:m},()=>({days,d1:days[0],d2:d
             self.assertTrue(keys.isdisjoint(self.score(item, days, task)))
 
     def test_observed_zero_and_complete_curves_remain_valid_evidence(self):
-        days = [{'gross':10,'small_to_big':value,'direct':10-value,'cancel':0} for value in (0,5,10)]
+        days = [{'gross':10,'small_to_big':value,'direct':10-value,'cancel':0,'daily_cancel':0} for value in (0,5,10)]
         parts = self.score({'d1_small':0,'d1_small_share':0,'d1_cancel_rate':0,'d2_cancel_rate':0,
                             'd12_cancel_rate':0,'daily_small':[0,5,10],'conversion':0}, days)
         for key in ('earlySmall','earlyCancel','dnSmallShape','final'):
@@ -64,7 +64,7 @@ console.log(JSON.stringify(calculate({ForecastMath:m},()=>({days,d1:days[0],d2:d
             item = _history_item({'传播名':'reference','总小订':1000,'D1大定':10}, processed)
             for field in fields:
                 self.assertIsNone(item[field], field)
-            days = [{'gross':10,'small_to_big':0,'direct':10,'cancel':0} for _ in range(3)]
+            days = [{'gross':10,'small_to_big':0,'direct':10,'cancel':0,'daily_cancel':0} for _ in range(3)]
             self.assertTrue({'earlySmall','smallSlope','earlyCancel'}.isdisjoint(self.score(item, days)))
         zero = _history_item({'传播名':'reference','D1小转大':0,'D1大定':10,'D1退订率':0}, True)
         self.assertEqual(zero['d1_small'], 0)

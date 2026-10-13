@@ -1413,7 +1413,7 @@
       earlyDirect:'比较D1直接大定/D1大定，按3个百分点最小阈值计算相似度。',
       directSlope:'比较D2直接大/D2大定、D2/D1直接大、D1直接大占前两日，最小阈值分别为3、10、10个百分点，三个相似度取平均。',
       dnDirectShape:'至少3个完整真实日；双方累计直接大定各自归一到当前Dn=100%，按5个百分点最小阈值逐日比较（末日固定100%不计），再取平均。',
-      earlyCancel:'比较D1退订率、D2单日退订率、D1+D2累计退订率，最小阈值分别为2、2、3个百分点，三个相似度取平均。',
+      earlyCancel:'双方均按首销D1、D2当日退订及两日合计÷总小订比较，不含首销前退订；缺失值不参与。最小阈值分别为2、2、3个百分点，有效相似度取平均。',
       curve:'历史曲线存在且可用100%；缺失35%。',
       final:'历史最终指标在0–100%内且口径校验通过100%；否则不参与评分。',
       lock:'留存大定率和大定到锁单率每可用一项计50%，两项均可用100%。',
@@ -1434,7 +1434,7 @@
       const targetCalendar=calendarProfile(target.launchDate,target.days),itemCalendar=calendarProfile(item.launch_date,item.days);values.holiday=calendarSimilarity(targetCalendar,itemCalendar);
       const d1=signals.d1,d2=signals.d2,targetD1SmallRate=ratio(d1?.small_to_big,target.small),itemD1SmallRate=ratio(item.d1_small,item.small),targetD1SmallShare=ratio(d1?.small_to_big,d1?.gross),targetD2SmallShare=ratio(d2?.small_to_big,d2?.gross),targetD1DirectShare=ratio(d1?.direct,d1?.gross),targetD2DirectShare=ratio(d2?.direct,d2?.gross);
       const targetSmallD2D1=ratio(d2?.small_to_big,d1?.small_to_big),targetSmallD1D12=ratio(d1?.small_to_big,observed(d1?.small_to_big)+observed(d2?.small_to_big)),targetDirectD2D1=ratio(d2?.direct,d1?.direct),targetDirectD1D12=ratio(d1?.direct,observed(d1?.direct)+observed(d2?.direct));
-      const targetD1CancelRate=ratio(d1?.cancel,target.small),targetD2CancelRate=ratio(observed(d2?.cancel)-observed(d1?.cancel),target.small),targetD12CancelRate=ratio(d2?.cancel,target.small);
+      const targetD1CancelRate=ratio(d1?.daily_cancel,target.small),targetD2CancelRate=ratio(d2?.daily_cancel,target.small),targetD12CancelRate=ratio(observed(d1?.daily_cancel)+observed(d2?.daily_cancel),target.small);
       values.earlySmall=d1&&item.d1_valid!==false?averageCloseness([[targetD1SmallRate,itemD1SmallRate,.02],[targetD1SmallShare,observed(item.d1_small_share),.05]]):NaN;
       values.smallSlope=d2&&item.d1_valid!==false&&item.d2_valid!==false&&item.d12_valid!==false?averageCloseness([[targetD2SmallShare,observed(item.d2_small_share),.05],[targetSmallD2D1,observed(item.small_d2_d1),.1],[targetSmallD1D12,observed(item.small_d1_d12),.1]]):NaN;
       values.earlyDirect=d1&&item.d1_valid!==false?closeness(targetD1DirectShare,observed(item.d1_direct_share),.03):NaN;
