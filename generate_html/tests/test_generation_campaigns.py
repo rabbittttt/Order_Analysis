@@ -218,7 +218,7 @@ class GenerationCampaignTests(TestCase):
         self.assertEqual(merged[0]['name'], PARENT)
         self.assertEqual(merged[0]['steady_start_date'], '2024-05-04')
         self.assertEqual([r['gross'] for r in profiles[0]['days']], [100, 200])
-        self.assertEqual(history[0]['daily_direct'], [100, 200])
+        self.assertEqual(history[0]['daily_direct'], [100, None, 200])
         self.assertEqual(history[0]['gross'], 300)
         self.assertEqual(history[0]['direct'], 300)
         self.assertAlmostEqual(history[0]['lock_rate'], 110/300)

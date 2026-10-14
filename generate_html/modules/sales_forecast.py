@@ -2919,24 +2919,29 @@ def _combined_steady_inputs(targets, profiles, history):
             if not active:
                 continue  # Gaps between launch campaigns are not zero-sales launch days.
             values = [buckets[t["name"]].get(day, {}) for t in active]
-            row = {"date": day, "day": f"D{len(rows)+1}"}
+            row = {"date": day, "day": f"D{index+1}"}
             for field in ("gross", "small_to_big", "direct", "net", "lock"):
                 quantities = [r.get(field) for r in values]
                 row[field] = sum(quantities) if all(isinstance(v, (int, float)) for v in quantities) else None
             rows.append(row)
-        target["days"] = len(rows)
         profile = {"model": parent, "launch_date": start.isoformat(), "days": rows, "hourly_days": [], "aggregate": True}
+        by_date = {row["date"]: row for row in rows}
+        # Keep the calendar span for age/calendar comparisons. Between-campaign
+        # gaps are unknown curve positions, not invented zero-sales actual rows.
+        curve_rows = [by_date.get((start+timedelta(days=index)).isoformat(), {})
+                      for index in range(target["days"])]
         refs = [_history_record(history, t["name"]) for t in children]
         template = dict(next((r for r in refs if r), {}))
         template.update(model=parent, generation=parent, primary_generation=parent, secondary_generation="",
                         launch_date=start.isoformat(), end_date=finish.isoformat(), days=target["days"],
-                        energy=energy, daily_orders=[r["gross"] for r in rows], daily_direct=[r["direct"] for r in rows], aggregate=True)
+                        energy=energy, daily_orders=[r.get("gross") for r in curve_rows],
+                        daily_direct=[r.get("direct") for r in curve_rows], aggregate=True)
         gross = sum(r["gross"] for r in rows) if all(r["gross"] is not None for r in rows) else None
         locks = sum(r["lock"] for r in rows) if all(r["lock"] is not None for r in rows) else None
         for field in ("gross", "direct", "net", "lock", "small_to_big"):
             quantities = [r[field] for r in rows]
             template[field] = sum(quantities) if all(v is not None for v in quantities) else None
-        template["daily_small"] = [r["small_to_big"] for r in rows]
+        template["daily_small"] = [r.get("small_to_big") for r in curve_rows]
         template["lock_rate"] = locks/gross if gross and locks is not None else None
         merged_targets.append(target); merged_profiles.append(profile); merged_history.append(template)
     return merged_targets, merged_profiles, merged_history

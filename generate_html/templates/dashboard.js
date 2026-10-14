@@ -1113,9 +1113,9 @@
     ];
     const directFeature=(item,target=null)=>{
       const launch=target?targetLaunch(target):launchHistory.find(row=>sameModel(row.generation||row.model,item.generation||item.model));
-      const settings=context.factors('launch'),normal=(value,start,index)=>Number(value)/(settings[context.calendarType(start,index).type]||1);
-      const currentRows=target?(context.findStageActual(target.name,context.todayIso()>target.endDate?'ended':'active')?.days||[]):[];
-      const curve=target?window.ForecastMath.launchDirectObservations({rows:currentRows,launchDate:target.launchDate,endDate:target.endDate,days:target.days,today:context.todayIso(),factor:(_,index)=>settings[context.calendarType(target.launchDate,index).type]||1}):observedDailyPrefix(launch?.daily_direct||[]).map((value,index)=>normal(value,launch?.launch_date,index));
+      const settings=context.factors('launch'),launchDate=target?.launchDate||launch?.launch_date,endDate=target?.endDate||launch?.end_date,days=target?.days||launch?.days;
+      const currentRows=target?(context.findStageActual(target.name,context.todayIso()>target.endDate?'ended':'active')?.days||[]):launchDate?(launch?.daily_direct||[]).map((direct,index)=>({date:context.calendarType(launchDate,index).date,direct})):[];
+      const curve=window.ForecastMath.launchDirectObservations({rows:currentRows,launchDate,endDate,days,today:context.todayIso(),factor:(_,index)=>settings[context.calendarType(launchDate,index).type]||1});
       const releaseWeeks=window.ForecastMath.releaseWeeks({rows:item?.daily||[],launchDate:target?.launchDate||launch?.launch_date,today:context.todayIso(),factor:day=>context.factors('steady')[context.calendarType(day,0).type]||1});
       return {lock_rate:launch?.lock_rate,launch_days:target?.days||launch?.days,direct_curve:curve,release_weeks:releaseWeeks,launch};
     };
@@ -1842,18 +1842,18 @@
   let rawRowsCache=[],rawRowsKey=null,rawRenderRevision=0;
   async function loadRawRows(fileIndex,sheetIndex){
     const key=`${fileIndex}|${sheetIndex}`;
-    if(rawRowsKey!==key){
-      const b64=RAW_BLOCKS[key]||"";
-      rawRowsCache=b64?((await decompressJson(b64)).rows||[]):[];
-      rawRowsKey=key;
-    }
-    return rawRowsCache;
+    if(rawRowsKey===key)return rawRowsCache;
+    const b64=RAW_BLOCKS[key]||"";
+    return b64?((await decompressJson(b64)).rows||[]):[];
   }
   function visibleRawRows(rows,query){const header=rows.length?[rows[0]]:[];return[...header,...filterRawRows(rows.slice(1),query)]}
   async function renderRaw(){
     const revision=++rawRenderRevision,fileIndex=state.rawFile,sheetIndex=state.rawSheet,file=DATA.raw_files[fileIndex]||DATA.raw_files[0],sheet=file?.sheets[sheetIndex]||file?.sheets[0];
     const rows=await loadRawRows(fileIndex,sheetIndex);
     if(revision!==rawRenderRevision||state.module!=="raw"||fileIndex!==state.rawFile||sheetIndex!==state.rawSheet)return;
+    // Commit export data only with the matching visible sheet. A stale async
+    // read must not replace the current page's cache after its revision check.
+    rawRowsCache=rows;rawRowsKey=`${fileIndex}|${sheetIndex}`;
     const visibleRows=visibleRawRows(rows,state.rawQuery);
     $("#page").innerHTML=`<div class="raw-layout"><label class="raw-file-picker"><span>选择底表文件</span><select id="rawFile" aria-label="选择底表文件">${DATA.raw_files.map((item,index)=>`<option value="${index}"${index===state.rawFile?" selected":""}>${esc(item.name)}</option>`).join("")}</select></label><aside class="file-list">${DATA.raw_files.map((item,index)=>`<button data-file="${index}" class="${index===state.rawFile?"active":""}" title="${esc(item.name)}">${esc(item.name)}</button>`).join("")}</aside><section class="raw-main"><div class="raw-toolbar"><div class="raw-title"><strong>${esc(file?.name||"")}</strong><small>${sheet?.total_rows||0} 行 × ${sheet?.total_cols||0} 列 · <span id="rawMatchCount" role="status" aria-live="polite">${Math.max(visibleRows.length-1,0)} 条数据（不含表头）</span> · 横向滚动查看其余列</small></div><label><span>Sheet</span><select id="rawSheet">${(file?.sheets||[]).map((item,index)=>`<option value="${index}">${esc(item.name)}</option>`).join("")}</select></label><label><span>表内搜索</span><input id="rawSearch" type="search" value="${esc(state.rawQuery)}" placeholder="在当前 Sheet 中搜索" aria-controls="rawTable" aria-describedby="rawMatchCount"></label><button type="button" id="clearRawSearch" ${state.rawQuery?"":"disabled"}>清空搜索</button><div class="raw-freeze-controls" role="group" aria-label="锁窗格"><label class="raw-freeze-toggle"><input id="rawFreezeRow" type="checkbox" ${state.rawFreezeRow?"checked":""}><span>锁定首行</span></label><label class="raw-freeze-toggle" title="自动锁定左侧连续的文字标题列"><input id="rawFreezeColumn" type="checkbox" ${state.rawFreezeColumn?"checked":""}><span>锁定标题列</span></label></div><button class="export-button" id="exportRaw">导出当前数据</button></div><div class="raw-table ${state.rawFreezeRow?"freeze-row":""} ${state.rawFreezeColumn?"freeze-column":""}" id="rawTable">${renderRawTable(visibleRows)}</div><div class="raw-empty" id="rawEmpty" ${visibleRows.length>1?"hidden":""}><strong>没有匹配的数据</strong><p>请尝试其他关键词，或清空搜索查看当前 Sheet。</p></div></section></div>`;
     document.querySelectorAll("[data-file]").forEach(button=>button.onclick=async()=>{state.rawFile=Number(button.dataset.file);state.rawSheet=0;state.rawQuery="";await renderRaw();syncUrl('push')});
@@ -1874,8 +1874,9 @@
     if(!text)return false;
     return /^(?:[¥￥$€£]\s*)?[-+]?(?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?%?$/.test(text)||/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:\s+.*)?$/.test(text)||/^\d{1,2}:\d{2}(?::\d{2})?$/.test(text);
   }
+  function rawTableWidth(rows){return rows.reduce((width,row)=>Math.max(width,row.length),0)}
   function rawTitleColumnCount(rows){
-    const width=Math.max(...rows.map(row=>row.length),0),body=rows.slice(1,101);let count=0;
+    const width=rawTableWidth(rows),body=rows.slice(1,101);let count=0;
     for(let col=0;col<width;col+=1){
       const values=body.map(row=>row[col]).filter(value=>String(value??"").trim()!=="");
       if(!values.length){if(col===0&&width)count=1;break}
@@ -1899,7 +1900,7 @@
       }
     });
   }
-  function renderRawTable(rows){const width=Math.max(...rows.map(row=>row.length),0);return `<table class="data-table"><tbody>${rows.map((row,index)=>`<tr>${Array.from({length:width},(_,col)=>{const cell=row[col]??"";const title=String(cell)!==""?` title="${esc(cell)}"`:"";return `<${index===0?"th":"td"} data-raw-col="${col}"${title}>${fmt(cell)}</${index===0?"th":"td"}>`}).join("")}</tr>`).join("")}</tbody></table>`}
+  function renderRawTable(rows){const width=rawTableWidth(rows);return `<table class="data-table"><tbody>${rows.map((row,index)=>`<tr>${Array.from({length:width},(_,col)=>{const cell=row[col]??"";const title=String(cell)!==""?` title="${esc(cell)}"`:"";return `<${index===0?"th":"td"} data-raw-col="${col}"${title}>${fmt(cell)}</${index===0?"th":"td"}>`}).join("")}</tr>`).join("")}</tbody></table>`}
   function exportRaw(file,sheet){
     const rows=visibleRawRows(rawRowsCache,state.rawQuery),csv="\ufeff"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n"),blob=new Blob([csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),link=document.createElement("a"),base=(file?.name||"底表").replace(/\.xlsx?$/i,"").replace(/[\\/:*?\"<>|]/g,"_");
     link.href=url;link.download=`${base}_${(sheet?.name||"Sheet").replace(/[\\/:*?\"<>|]/g,"_")}.csv`;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),500);showToast(`已导出 ${rows.length} 行 CSV`);

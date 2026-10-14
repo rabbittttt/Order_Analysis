@@ -544,8 +544,8 @@
     add('lock', currentLockRate > 0 && itemLockRate > 0
       ? 1 - Math.min(Math.abs(currentLockRate - itemLockRate), 1) : NaN,
     `${(currentLockRate * 100 || 0).toFixed(1)}% ↔ ${(itemLockRate * 100 || 0).toFixed(1)}%`);
-    const source=item.direct_curve||[],horizon=current.launch_days||source.length;
-    const adapted=source.length&&(!item.launch_days||source.length===Number(item.launch_days))?stretchCompletion(source.reduce((out,v)=>{out.push((out.at(-1)||0)+v);return out;},[]),horizon):[];
+    const source=(item.direct_curve||[]).map(observedQuantity),horizon=current.launch_days||source.length;
+    const adapted=source.length&&source.every(Number.isFinite)&&(!item.launch_days||source.length===Number(item.launch_days))?stretchCompletion(source.reduce((out,v)=>{out.push((out.at(-1)||0)+v);return out;},[]),horizon):[];
     const reference=adapted.map((v,i)=>v-(i?adapted[i-1]:0)).slice(0,(current.direct_curve||[]).length);
     add('launch_shape',normalizedShapeSimilarity(current.direct_curve||[],reference),'全首销已观测段直接大定归一化形状；不比较绝对量');
     const aligned=alignedReleaseCurves(current.release_weeks||[],item.release_weeks||[]);
