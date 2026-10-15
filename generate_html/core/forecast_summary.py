@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 import math
 import logging
+import json
 
 from openpyxl import load_workbook
 
@@ -22,6 +23,34 @@ WEEKLY_SHEET = "首销平销by周"
 INDEX_SHEET = "数据来源目录"
 SNAPSHOT_SHEET = "_预测缓存"
 ACTIVE_SUMMARY = ContextVar("forecast_summary", default=None)
+
+
+G9_TRACE_MODEL = "享界 G9 2027款"
+
+
+def forecast_trace_enabled(model):
+    """Temporary, read-only diagnostics for the one intranet investigation."""
+    from core.model_identity import model_key
+    return model_key(model) == model_key(G9_TRACE_MODEL)
+
+
+def forecast_trace(model, step, **details):
+    if forecast_trace_enabled(model):
+        logging.getLogger('sales_forecast_refresh').info(
+            '[G9取数排查] 代际=%s | 环节=%s | %s', model, step,
+            json.dumps(details, ensure_ascii=False, default=str, allow_nan=True))
+
+
+def forecast_trace_series(values, labels=None):
+    """Describe values without coercing, filling or changing any business cell."""
+    from core.excel import compact_diagnostic_ranges
+    labels = list(labels) if labels is not None else [f'D{i+1}' for i in range(len(values))]
+    known = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+    probes = sorted(set(range(min(2, len(values)))) | set(range(max(0, len(values)-3), len(values))))
+    return {'数量': len(values), '有效数': sum(known(v) for v in values),
+            '零值数': sum(known(v) and v == 0 for v in values),
+            '空白或无效范围': compact_diagnostic_ranges(labels[i] for i, v in enumerate(values) if not known(v)),
+            '首尾样例': {str(labels[i]): values[i] for i in probes}}
 
 
 class SheetView:
@@ -502,6 +531,33 @@ def resolved_daily_rows(candidates, data, masters, history_file, today, raw_prof
             by_origin.setdefault(origin, []).append(field)
         row["字段来源"] = "；".join(f"{'/'.join(fields)}={origin}" for origin, fields in by_origin.items())
         result.append(row)
+    for model, target in targets.items():
+        if not forecast_trace_enabled(model):
+            continue
+        start, finish = calendar_day(target.get('launch_date')), calendar_day(target.get('end_date'))
+        dates = [(date.fromisoformat(start)+timedelta(days=i)).isoformat()
+                 for i in range((date.fromisoformat(finish)-date.fromisoformat(start)).days+1)] if start and finish and finish >= start else []
+        selected = {iso_day(r['日期']): r for r in result if r['订单分析代际名'] == model}
+        forecast_trace(model, '逐日选值概况', 首销窗口=[start, finish], 当前阶段=target.get('stage'),
+                       候选模型键=sorted({str(r.get('订单分析代际名')) for r in candidates if forecast_trace_enabled(r.get('订单分析代际名'))}),
+                       已选行数=len(selected), 各字段={field: forecast_trace_series(
+                           [selected.get(day, {}).get(field) for day in dates]) for field in fields})
+        focus = set(dates[:2]+dates[-3:])
+        for field in fields:
+            focus.update([day for day in dates if selected.get(day, {}).get(field) is None][:2])
+        observed = {}
+        for candidate in candidates:
+            day = iso_day(candidate.get('日期'))[:10]
+            if candidate.get('订单分析代际名') == model and day in focus:
+                observed.setdefault(day, []).append({
+                    '来源': source_text({'file': candidate.get('来源文件'), 'sheet': candidate.get('来源Sheet')}),
+                    '类型': candidate.get('来源类型'), '值': {f: candidate[f] for f in fields if f in candidate},
+                    '优先级': {f: rank_for(candidate, f, target, day) for f in fields if f in candidate}})
+        for day in sorted(focus):
+            forecast_trace(model, '逐日选值明细', 日期=day, 候选=observed.get(day, []),
+                           最终值={f: selected.get(day, {}).get(f) for f in fields},
+                           字段来源=selected.get(day, {}).get('字段来源'),
+                           说明='优先级数字越小越优先；空白、非法数及不适用窗口不采用；真实0有效')
     return result
 
 
@@ -518,6 +574,9 @@ def backfill_launch_cumulative(rows, ranks, origins, data, targets, profiles, to
         target = targets.get(model, {})
         start, finish = calendar_day(target.get("launch_date")), calendar_day(target.get("end_date"))
         if not start or not finish or calendar_day(profile.get("cumulative_launch_date")) != start:
+            forecast_trace(model, '累计源不参与补缺', 原因='首销窗口缺失或源D1未锚定维护起点',
+                           维护开始=start, 维护结束=finish, 源D1=profile.get('cumulative_launch_date'),
+                           源累计行数=len(profile.get('cumulative_days', [])))
             continue
         source = source_text(profile.get("cumulative_source") or profile.get("day_source"))
         for key, field in ORDER_FIELDS.items():
@@ -526,6 +585,7 @@ def backfill_launch_cumulative(rows, ranks, origins, data, targets, profiles, to
                        and isinstance(r.get(key), (int, float)) and not isinstance(r[key], bool)
                        and math.isfinite(r[key]) and r[key] >= 0}
             if not anchors:
+                forecast_trace(model, '累计源不参与补缺', 字段=field, 来源=source, 原因='维护窗口内没有有效累计数量')
                 continue
             previous_day, previous_value = (date.fromisoformat(start)-timedelta(days=1)).isoformat(), 0
             incompatible = False
@@ -542,8 +602,14 @@ def backfill_launch_cumulative(rows, ranks, origins, data, targets, profiles, to
                     break
                 previous_day, previous_value = day, value
             if incompatible:
+                forecast_trace(model, '累计源拒绝', 字段=field, 来源=source, 首冲突日期=day,
+                               前一锚点日期=previous_day, 前一累计=previous_value, 当前累计=value,
+                               累计增量=delta, 高优先级日量合计=known_sum, 高优先级区间日量=known,
+                               影响='本字段整条累计来源不用于补缺，不改变已选日量')
                 conflicts.append((model, source, field, day, delta, known_sum))
                 continue
+            forecast_trace(model, '累计源接受', 字段=field, 来源=source, 锚点数=len(anchors),
+                           首末锚点=[min(anchors), max(anchors)], 结束日=finish, 结束日累计=anchors.get(finish))
             resolved[(model, field)] = anchors
             for day, value in sorted(anchors.items()):
                 previous = (date.fromisoformat(day)-timedelta(days=1)).isoformat()
@@ -721,6 +787,10 @@ def refresh_small_reference_tables(book, masters, headers, lookup, emit, today):
         status = "未开始" if start and start > today.isoformat() else "进行中" if end and end >= today.isoformat() else "已结束" if end else "时间未维护"
         small_daily.append([name, status, *values])
         small_curves.append([name, status, *curve])
+        if forecast_trace_enabled(model):
+            forecast_trace(model, '小订参考计算', 历史键=name, 小订窗口=[start, end], 天数=count,
+                           总小订=total, 总量来源=row.get('总量来源'), 参考终值有效=master.get('小订参考总量有效'),
+                           当日数量=forecast_trace_series(values), 完成度=forecast_trace_series(curve))
         small_span = max(small_span, count, len(curve))
     small_headers = ["传播名", "小订阶段", *[f"D{i+1}" for i in range(small_span)]]
     for name, records in ((SMALL_CURVE_SHEET, small_curves), (SMALL_DAILY_SHEET, small_daily)):
@@ -752,6 +822,9 @@ def refresh_reference_tables(book, data, emit, daily, today):
     for r in masters:
         model, name = r.get("订单分析代际名"), r.get("历史传播名")
         start, finish = iso_day(r.get("首销开始")), iso_day(r.get("首销结束"))
+        forecast_trace(model, '参考基准进入计算', 历史键=name, 首销开始=start, 首销结束=finish,
+                       维护天数=r.get('首销天数'), 已有总量={k:r.get(k) for k in
+                           ('总小订','总小转大','总直接大定','总大定','总退订','首销期锁单','首销期留存大定')})
         if not model or not name:
             continue
         count = int(r.get("首销天数") or ((date.fromisoformat(finish)-date.fromisoformat(start)).days+1 if start and finish else 0))
@@ -778,6 +851,12 @@ def refresh_reference_tables(book, data, emit, daily, today):
         prior_day = (date.fromisoformat(start)-timedelta(days=1)).isoformat() if start else ""
         cancel_base = data.get("resolved_cancel_cumulative", {}).get((model, prior_day), 0)
         cumulative_counts["退订数量"] = anchored_cumulative(c, dates, cancel_anchors, cancel_base, prefer_anchor=True)
+        if forecast_trace_enabled(model):
+            forecast_trace(model, 'Dn映射及累计结果', 代际查找键=model, 历史查找键=name, 展开天数=count,
+                           首末日期=[dates[0], dates[-1]] if dates else [],
+                           命中日记录数=sum(bool(row) for row in selected),
+                           日量={f:forecast_trace_series([row.get(f) for row in selected]) for f in (*ORDER_FIELDS.values(), '退订数量')},
+                           累计={f:forecast_trace_series(v) for f,v in cumulative_counts.items()}, 退订期初基数=cancel_base)
         ended = bool(start and finish and finish < today.isoformat())
         r["首销阶段"] = "已结束" if ended else "未开始" if start > today.isoformat() else "进行中" if start and finish else "时间未维护"
         r["首销参考终值有效"] = ended
@@ -787,12 +866,21 @@ def refresh_reference_tables(book, data, emit, daily, today):
             # A missing terminal does not erase a maintained source value.
             # Completed cumulative facts fill gaps; an ongoing sum is not a final.
             terminal = cumulative_counts[field][terminal_index] if terminal_index >= 0 else None
+            forecast_trace(model, '终值判定', 字段=total, 结束日期=finish, 结束日索引=terminal_index,
+                           已有维护值=r.get(total), 结束日累计=terminal,
+                           动作=('首销结束日未落入Dn序列' if terminal_index < 0 else
+                                 '累计到结束日仍未知，保留已有值或留空' if terminal is None else
+                                 '写入末日累计' if r.get(total) in (None, '') or field == '退订数量' else '保留已有维护值'))
             if terminal is not None and (r.get(total) in (None, "") or field == "退订数量"):
                 r[total] = terminal
         for output, numerator, denominator in (("小订转化率", "总小转大", "总小订"), ("直接大定占比", "总直接大定", "总大定"),
             ("退订率", "总退订", "总小订"), ("留存大定率", "首销期留存大定", "总大定"),
             ("留存大定到锁单率", "首销期锁单", "首销期留存大定"), ("大定到锁单率", "首销期锁单", "总大定")):
             calculated = safe_div(r.get(numerator), r.get(denominator))
+            forecast_trace(model, '比例判定', 字段=output, 分子字段=numerator, 分子=r.get(numerator),
+                           分母字段=denominator, 分母=r.get(denominator), 已有值=r.get(output), 计算值=calculated,
+                           动作=('保留已有维护值' if r.get(output) not in (None, '') and output != '退订率' else
+                                 '分子未知、分母未知或非正数，保留原值或空白' if calculated is None else '写入计算值'))
             # Completed-source rates may be maintained without the quantities;
             # the two lock-rate denominators are never interchangeable.
             if r.get(output) in (None, "") or output == "退订率":
@@ -838,6 +926,10 @@ def refresh_reference_tables(book, data, emit, daily, today):
             elif day_index < len(dates) and dates[day_index] >= today.isoformat():
                 statuses[i] = "当日未结束" if dates[day_index] == today.isoformat() else "未来日期"
         status = mapping_status.get(name) or ("已映射" if model != name else "未映射·暂按传播名")
+        forecast_trace(model, 'D1D2计算', D1={'小转大':s1,'直接大定':d1,'大定':g1,'退订':c1},
+                       D2={'小转大':s2,'直接大定':d2,'大定':g2,'退订':c2},
+                       分母={k:r.get(k) for k in ('总小订','总小转大','总直接大定','总大定')},
+                       口径状态=statuses, 结构说明=checks)
         metric_rows.append([name, model, status, r.get("产品档位"), count, r.get("总小转大"), r.get("总直接大定"), r.get("总大定"), r.get("总小订"),
             s1, safe_div(vs1, r.get("总小转大")), s2, safe_div(vs2, r.get("总小转大")), s12, safe_div(vs12, r.get("总小转大")), safe_div(vs2, vs1), safe_div(vs1, vs12),
             d1, safe_div(vd1, r.get("总直接大定")), d2, safe_div(vd2, r.get("总直接大定")), d12, safe_div(vd12, r.get("总直接大定")), safe_div(vd2, vd1), safe_div(vd1, vd12),

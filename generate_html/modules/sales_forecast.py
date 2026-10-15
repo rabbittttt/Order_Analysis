@@ -15,7 +15,7 @@ from core.china_calendar import calendar_payload
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation, FORECAST_SOURCE_PATH
 from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type, compact_diagnostic_ranges
 from core.models import Dashboard, SourceRef, Subject
-from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, input_path, open_input, summary_scope, table_records
+from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, input_path, open_input, summary_scope, table_records, forecast_trace_enabled, forecast_trace, forecast_trace_series
 
 
 LOGGER = logging.getLogger(__name__)
@@ -1691,6 +1691,8 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             if not model or grain not in ("day", "hour"):
                 continue
             rows = _sheet_rows(sheet)
+            forecast_trace(model, '首销Sheet匹配', 文件=launch_item.path.name, Sheet=sheet.title,
+                           粒度=grain, 行数=sheet.max_row, 列数=sheet.max_column, A列指标=list(rows))
             profile = profiles.setdefault(model, {"model": model, "days": [], "hourly_days": []})
             if grain == "day":
                 dates = rows.get("时间", [])
@@ -1997,6 +1999,8 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             if header_row is None:
                 LOGGER.warning("[销量预测字段校验] 代际=%s | 文件=%s | Sheet=%s | 前10行未识别退订日期表头 | 处理=保留其他来源，请核对日期列名", model, cancel_item.path.name, sheet.title)
                 continue
+            forecast_trace(model, '退订表头匹配', 文件=cancel_item.path.name, Sheet=sheet.title,
+                           表头行=header_row, 列映射={name:i+1 for name,i in header_index.items()})
             cancel_by_date: dict[str, int] = {}
             cancel_rows = []
             cumulative_column = next((header_index[name] for name in ("累计小订退", "累计退订数", "累计总退订") if name in header_index), None)
@@ -2125,6 +2129,32 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 if day.get(field) is None and snapshot.get(field) is not None:
                     day[field] = snapshot[field]
                     day.setdefault("_hourly_backfill", []).append(field)
+    for profile in profiles.values():
+        model = profile['model']
+        if not forecast_trace_enabled(model):
+            continue
+        inputs = profile.get('_launch_day_inputs', {})
+        stamps, periods = inputs.get('dates', []), inputs.get('periods', [])
+        indices = sorted(set(range(min(2,len(stamps)))) | set(range(max(0,len(stamps)-5),len(stamps))))
+        forecast_trace(model, '首销日期解析', 原始时间列数=len(stamps),
+                       无法解析列=[{'列号':i+2, '周期':periods[i] if i<len(periods) else None,
+                                    '原值':v, '类型':type(v).__name__} for i,v in enumerate(stamps) if not _as_date(v)],
+                       首尾时间=[{'列号':i+2, '周期':periods[i] if i<len(periods) else None,
+                                 '原值':stamps[i], '类型':type(stamps[i]).__name__, '解析日期':_iso(stamps[i])} for i in indices])
+        for key, fields in (('days', ('gross','net','small_to_big','direct','lock')),
+                            ('cumulative_days', ('gross','small_to_big','direct','lock')),
+                            ('cancel_days', ('daily_cancel','cancel')),
+                            ('small_daily_days', ('orders',))):
+            records = profile.get(key, [])
+            labels = [r.get('date') or f'记录{i+1}' for i,r in enumerate(records)]
+            forecast_trace(model, '解析后候选', 类型=key, 行数=len(records),
+                           来源={k:profile.get(k) for k in ('day_source','hour_source','cancel_source')},
+                           字段={field:forecast_trace_series([r.get(field) for r in records], labels) for field in fields})
+        hours = profile.get('hourly_days', [])
+        forecast_trace(model, '首销分时解析', 天数=len(hours),
+                       首尾日=[{'日期':r.get('date'),'小时数':len(r.get('hours',[])),
+                               '大定':r.get('gross'),'小转大':r.get('small_to_big'), '直接大定':r.get('direct'),
+                               '完整字段':r.get('_complete_hour_fields')} for r in (hours[:2]+hours[-3:] if len(hours)>5 else hours)])
     return list(profiles.values()), sources
 
 

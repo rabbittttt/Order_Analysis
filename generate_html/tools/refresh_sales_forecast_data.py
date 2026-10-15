@@ -28,7 +28,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
     sys.path.insert(0, str(GENERATE_HTML_ROOT))
 
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
-from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records, iso_day
+from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records, iso_day, G9_TRACE_MODEL, forecast_trace_enabled, forecast_trace, forecast_trace_series
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook, compact_diagnostic_ranges, reset_conflict_diagnostics
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -544,6 +544,7 @@ def read_summary(workbook, header_index: dict[str, HeaderScan]) -> list[dict[str
             raise InputFormatError(f"汇总表传播名重名：{model} 同时出现在第{seen_models[key]}行和第{row_number}行")
         seen_models[key] = row_number
         record["车型"] = model
+        forecast_trace(model, '整理表读取', Sheet=sheet.title, 表头行=header_row, 数据行=row_number, 读取字段=record)
         result.append(record)
     if not result:
         raise InputFormatError(f"汇总表“{sheet.title}”第{header_row}行之后没有读取到传播名数据")
@@ -719,6 +720,10 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     started = perf_counter()
     timings = {}
     mapping, aliases = load_mapping(mapping_path)
+    forecast_trace(G9_TRACE_MODEL, '刷新启动', 诊断版本='G9-20261015-v1', 执行脚本=str(Path(__file__).resolve()),
+                   整理表=str(source.resolve()), 映射文件=str(mapping_path.resolve()), 输出=str(output.resolve()),
+                   订单目录=str(orders_dir.resolve()) if orders_dir else None, 判定日期=as_of_date or date.today().isoformat(),
+                   订单来源文件=[p.name for p in forecast_order_files(orders_dir)] if orders_dir else [])
     for record in mapping.values():
         missing_attributes = [field for field in ("产品档位", "能源类型", "发布类型", "首销发布时段")
                               if usable_attribute(record.get(field)) == "未维护"]
@@ -864,6 +869,10 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         direct_curve = pad_curve(curve_for(model, raw_curves["direct"], mapping, aliases, "直接大定"), day_count)
         gross_curve = pad_curve(curve_for(model, raw_curves["gross"], mapping, aliases, "总大定"), day_count)
         cancel_curve = pad_curve(curve_for(model, raw_curves["cancel"], mapping, aliases, "退订"), day_count)
+        if forecast_trace_enabled(model):
+            forecast_trace(model, '整理表初读Dn数量', 小转大=forecast_trace_series(small_curve),
+                           直接大定=forecast_trace_series(direct_curve), 大定=forecast_trace_series(gross_curve),
+                           退订=forecast_trace_series(cancel_curve))
         # Fill by day only when BOTH observed components are present.
         combined = combine_daily(small_curve, direct_curve)
         gross_curve = [value if value not in (None, "") else combined[index]
@@ -1021,6 +1030,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         os.replace(temporary, output)
     except PermissionError as exc:
         raise PermissionError(f"无法覆盖 {output}，请确认 Excel 中没有打开该文件") from exc
+    forecast_trace(G9_TRACE_MODEL, '正式文件已保存', 输出=str(output.resolve()), Sheet数=sheet_count)
     timings['最终保存'] = perf_counter() - stage_started
     LOGGER.info('[销量汇总耗时] %s | 总计 %.2fs',
                 ' | '.join(f'{name} {seconds:.2f}s' for name, seconds in timings.items()),
@@ -1031,6 +1041,93 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
 def forecast_order_files(directory: Path) -> list[Path]:
     keywords = ("首销期订单节奏", "小订退订分析", "小订选配比例", "锁单选配比例", "大定选配比例")
     return sorted(path for path in directory.glob("*.xlsx") if not path.name.startswith("~$") and any(key in path.name for key in keywords))
+
+
+def trace_g9_source(path, sheet, focus_dates=(), focus_periods=()):
+    """Read selected physical cells and their formula caches; never recalculate."""
+    from core.excel import sheet_subject
+    if not forecast_trace_enabled(sheet_subject(sheet.title)):
+        return
+    from modules.sales_forecast import _as_date
+    import posixpath
+    from openpyxl.utils.cell import coordinate_to_tuple
+    from zipfile import ZipFile, BadZipFile
+    from xml.etree import ElementTree as ET
+    ns = '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
+    selected = {}
+    horizontal = grain_from_sheet(sheet.title) in {'day', 'hour', 'week'}
+    if horizontal:
+        cols = sorted(set(range(1, min(3,sheet.max_column)+1)) |
+                      set(range(max(1,sheet.max_column-4),sheet.max_column+1)))
+        # Keep source metric labels and key date/quantity rows, not SKU details.
+        rows = [r for r in range(1,min(sheet.max_row,30)+1) if r <= 2 or
+                any(word in str(sheet.cell(r,1).value or '') for word in
+                    ('当日大定','当日小订转','累计小订转','当日直接','累计直接','当日交车','累计大定')) or
+                (str(sheet.cell(r,1).value or '').strip() in {'小订','大定','留存大定','净大定','交车锁单'} and
+                 str(sheet.cell(r,2).value or '').strip() == '数量')]
+        time_row = next((r for r in rows if str(sheet.cell(r,1).value or '').strip() == '时间'), 1)
+        matched = {}
+        for c in range(2,sheet.max_column+1):
+            day = _as_date(sheet.cell(time_row,c).value)
+            if day in focus_dates or str(sheet.cell(1,c).value or '').strip().upper() in focus_periods:
+                matched.setdefault(day,[]).append(c)
+        extra = [c for group in matched.values() for c in
+                 (group[:2]+group[-2:] if grain_from_sheet(sheet.title)=='hour' else group)]
+        cols = sorted(set(cols) | set(extra))
+    else:
+        rows = sorted(set(range(1,min(4,sheet.max_row)+1)) |
+                      set(range(max(1,sheet.max_row-2),sheet.max_row+1)))
+        cols = range(1,min(sheet.max_column,8)+1)
+        date_col = next((cell.column for row in sheet.iter_rows(min_row=1,max_row=min(sheet.max_row,10))
+                         for cell in row if str(cell.value or '').strip() in {'取消日期','退订日期','日期','小订日期','下单日期'}), None)
+        if date_col:
+            rows = sorted(set(rows) | {r for r in range(1,sheet.max_row+1)
+                                      if _as_date(sheet.cell(r,date_col).value) in focus_dates})
+    for r in rows:
+        for c in cols:
+            cell = sheet.cell(r,c)
+            selected[cell.coordinate] = {'值':cell.value, '类型':type(cell.value).__name__, '格式':cell.number_format}
+    forecast_trace(G9_TRACE_MODEL, '原始Sheet缓存值', 文件=str(path.resolve()), Sheet=sheet.title,
+                   行数=sheet.max_row, 列数=sheet.max_column, 采样单元格=selected)
+    try:
+        with ZipFile(path) as archive:
+            wb = ET.fromstring(archive.read('xl/workbook.xml'))
+            entry = next(n for n in wb.iter(ns+'sheet') if n.get('name') == sheet.title)
+            rel_id = entry.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+            rels = ET.fromstring(archive.read('xl/_rels/workbook.xml.rels'))
+            target = next(n.get('Target') for n in rels if n.get('Id') == rel_id and n.get('TargetMode') != 'External')
+            member = target.lstrip('/') if target.startswith('/') else posixpath.normpath(posixpath.join('xl',target))
+            formulas, outside, outside_count, dimension = {}, {}, 0, None
+            with archive.open(member) as stream:
+                for _, node in ET.iterparse(stream, events=('end',)):
+                    if node.tag == ns+'dimension':
+                        dimension = node.get('ref')
+                    elif node.tag == ns+'c':
+                        if (formula := node.find(ns+'f')) is not None:
+                            cached = node.find(ns+'v')
+                            detail = {'公式':formula.text, '公式属性':formula.attrib,
+                                '缓存原值':cached.text if cached is not None else None,
+                                '状态':'无缓存结果' if cached is None or cached.text is None else '有缓存结果'}
+                            if node.get('r') in selected:
+                                formulas[node.get('r')] = detail
+                            else:
+                                r,c = coordinate_to_tuple(node.get('r'))
+                                if r in rows and c > sheet.max_column:
+                                    outside_count += 1
+                                    if len(outside)<8:
+                                        outside[node.get('r')] = detail
+                        node.clear()
+                    elif node.tag == ns+'row':
+                        row_number = int(node.get('r','0'))
+                        node.clear()
+                        if rows and row_number >= max(rows):
+                            break
+            forecast_trace(G9_TRACE_MODEL, '原始公式缓存', 文件=path.name, Sheet=sheet.title,
+                           采样内公式=formulas, 原始声明范围=dimension, 缓存可见列数=sheet.max_column,
+                           缓存范围外公式数=outside_count, 缓存范围外公式样例=outside,
+                           说明='检查关键坐标及其行缓存范围外公式；不重算公式，null与0严格区分')
+    except (OSError, KeyError, ValueError, StopIteration, BadZipFile, ET.ParseError) as exc:
+        forecast_trace(G9_TRACE_MODEL, '原始公式缓存检查受限', 文件=path.name, Sheet=sheet.title, 原因=str(exc))
 
 
 def fit_summary_columns(sheet):
@@ -1059,6 +1156,17 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
     directory = []
     source_ranges = {}
     source_counters = {"小订": 0, "首销": 0, "平销": 0, "其他": 0}
+    from modules.sales_forecast import _as_date
+    focus_dates, focus_periods = set(), set()
+    for record in stage_records(source):
+        if not forecast_trace_enabled(record.get('代际名')):
+            continue
+        for stage in ('小订','首销'):
+            first = _as_date(record.get(stage+'开始日期') or record.get(stage+'开始'))
+            last = _as_date(record.get(stage+'结束日期') or record.get(stage+'结束'))
+            if first and last and last >= first:
+                focus_dates.update([first, min(first+timedelta(days=1),last), *[max(first,last-timedelta(days=i)) for i in range(3)]])
+                focus_periods.update(f'D{(day-first).days+1}' for day in focus_dates if first <= day <= last)
 
     def source_group(kind, filename):
         if kind == "历史":
@@ -1158,6 +1266,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
                         continue
                     if "小订选配比例" in path.name and grain_from_sheet(sheet.title) != "day":
                         continue
+                    trace_g9_source(path, sheet, focus_dates, focus_periods)
                 import_sheet(sheet, kind, path.name, sheet.title if kind != "订单" else None)
         finally:
             book.close()
@@ -1544,6 +1653,43 @@ def audit_final_forecast(workbook, today, data=None, raw_profiles=None):
     return messages
 
 
+def trace_g9_workbook(book, context='保存前Sheet核对'):
+    """Report final G9 rows once, after all tables and identities are finalized."""
+    identity = ('代际名','二级代际名','订单分析代际名','历史传播名','传播名')
+    masters = table_records(book, '车型基本信息')
+    if not any(any(forecast_trace_enabled(r.get(k)) for k in identity) for r in masters):
+        forecast_trace(G9_TRACE_MODEL, context, 结果='车型基本信息未匹配到目标代际',
+                       已识别代际数=len(masters), 说明='不会展开其他车型；请核对原始代际名与映射')
+        return
+    for sheet in book:
+        headers = [str(c.value or '') for c in sheet[1]]
+        if not set(headers) & set(identity):
+            continue
+        identity_columns = [i for i,k in enumerate(headers) if k in identity]
+        records = [dict(zip(headers, values)) for values in sheet.iter_rows(min_row=2, values_only=True)
+                   if any(i < len(values) and forecast_trace_enabled(values[i]) for i in identity_columns)]
+        if not records:
+            forecast_trace(G9_TRACE_MODEL, context, Sheet=sheet.title, 匹配行数=0, 结果='未写入该代际行')
+            continue
+        day_fields = [k for k in headers if re.fullmatch(r'D\d+', k)]
+        if day_fields:
+            for row in records:
+                forecast_trace(G9_TRACE_MODEL, context, Sheet=sheet.title, 匹配行数=len(records),
+                               代际键={k:row.get(k) for k in identity if k in row},
+                               Dn=forecast_trace_series([row.get(k) for k in day_fields], day_fields))
+        elif sheet.title in {'车型基本信息', D12_SHEET}:
+            for row in records:
+                forecast_trace(G9_TRACE_MODEL, context, Sheet=sheet.title, 匹配行数=len(records), 值=row)
+        else:
+            labels = [iso_day(r.get('日期')) + (f" {r['小时']}时" if r.get('小时') is not None else '')
+                      if r.get('日期') is not None else str(r.get('周期') or '') for r in records]
+            quantities = [k for k in headers if k in {'小订数量','大定','留存大定','小转大','直接大定','交车锁单','退订数量',
+                                                      '小时小订','小时大定','小时小转大','小时直接大定','小时交车锁单'}]
+            forecast_trace(G9_TRACE_MODEL, context, Sheet=sheet.title, 匹配行数=len(records),
+                           日期或周期范围=[min(labels),max(labels)],
+                           字段={k:forecast_trace_series([r.get(k) for r in records], labels) for k in quantities})
+
+
 def append_forecast_views(path, as_of_date, workbook=None):
     """Resolve sources once, then write only the visible forecast domain tables."""
     from modules.sales_forecast import SalesForecastModule
@@ -1578,6 +1724,7 @@ def append_forecast_views(path, as_of_date, workbook=None):
     public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today(), getattr(module, "summary_raw_profiles", None),
         weekly_builder=lambda rows: forecast_weekly_orders(None, dashboard, module.as_of_date or date.today(), resolved_daily=rows))
     normalize_public_names(book, data, emit)
+    trace_g9_workbook(book)
     raw_profiles = getattr(module, "summary_raw_profiles", [])
     retention_errors = audit_source_retention(book, raw_profiles)
     if retention_errors:
@@ -1808,6 +1955,10 @@ def main() -> int:
             LOGGER.info("销量数据汇总已是最新，跳过刷新：%s", args.output)
             book = load_workbook(args.output, read_only=True, data_only=True)
             try:
+                forecast_trace(G9_TRACE_MODEL, '复用汇总', 执行脚本=str(Path(__file__).resolve()),
+                               输出=str(args.output.resolve()),
+                               说明='本次未重放原始解析；如需完整追踪，可给刷新脚本添加--force，网页main的刷新策略不变')
+                trace_g9_workbook(book, '复用Sheet核对')
                 audit_final_forecast(book, date.fromisoformat(args.as_of_date) if args.as_of_date else date.today())
             finally:
                 book.close()
