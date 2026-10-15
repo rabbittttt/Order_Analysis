@@ -97,6 +97,8 @@ def _optional_count(values: list[Any], index: int) -> int | None:
 
 
 def _as_date(value: Any) -> date | None:
+    if isinstance(value, bool):
+        return None
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
@@ -104,7 +106,11 @@ def _as_date(value: Any) -> date | None:
     if isinstance(value, (int, float)):
         try:
             converted = from_excel(value)
-            return converted.date() if isinstance(converted, datetime) else converted
+            # Excel serials below one can be time-only values, not dates.
+            # Never let a datetime.time escape into calendar comparisons.
+            if isinstance(converted, datetime):
+                return converted.date()
+            return converted if isinstance(converted, date) else None
         except (TypeError, ValueError, OverflowError):
             return None
     text = str(value or "").strip()
@@ -135,6 +141,8 @@ def _as_date(value: Any) -> date | None:
 
 
 def _as_datetime(value: Any) -> datetime | None:
+    if isinstance(value, bool):
+        return None
     if isinstance(value, datetime):
         return value
     if isinstance(value, date):
@@ -2688,6 +2696,11 @@ def _completed_hourly_curve(bucket, field, daily_total=None):
                 or isinstance(raw, bool) or value is None or not math.isfinite(value) or value < 0):
             return []
         by_hour[hour] += value
+    if daily_total is None and (len(hours) != 24 or {row['hour'] for row in hours} != set(range(24))):
+        # An ended date alone cannot prove a partial export covers its full D1.
+        # Sparse zero hours are valid when an independent daily total agrees;
+        # without that total only an explicit, unique 0-23 grid proves coverage.
+        return []
     total = sum(by_hour)
     if total <= 0:
         return []

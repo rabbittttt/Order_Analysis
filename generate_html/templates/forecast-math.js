@@ -624,6 +624,9 @@
     const anchored = anchor!==null && Number.isFinite(anchor) && anchor>=0 && anchorFactor>0 && anchorShape>0;
     const shape = shapes.map((value,i)=>value*factors[i]);
     const shapeSum = shape.reduce((a,b)=>a+b,0);
+    // A verified zero remainder needs no positive mass in the future tail.
+    // Missing/invalid shapes and calendar controls were still checked above.
+    if (!shapeSum && total === 0) return {values:Array(n).fill(0),base:Array(n).fill(0),weights:Array(n).fill(0),warnings,error:'',difference:0};
     if (!shapeSum) return fail('参考自然日曲线没有有效量');
     const base = anchored ? shape.map(value=>anchor/anchorFactor*value/anchorShape) : shape.map(value=>total*value/shapeSum);
     if (!anchored) warnings.push('无前一天完整真实值，按日历调整后的参考曲线分配');
