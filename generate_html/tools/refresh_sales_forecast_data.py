@@ -1366,10 +1366,12 @@ def audit_source_retention(workbook, raw_profiles):
     a known in-window field disappear. Derived quantity tables must match the
     selected day facts, independently of their eligibility for web prediction.
     """
-    from core.forecast_summary import MASTER_SHEET, D12_SHEET, ORDER_FIELDS, iso_day, calendar_day
+    from core.forecast_summary import MASTER_SHEET, D12_SHEET, LAUNCH_HOURLY_SHEET, ORDER_FIELDS, iso_day, calendar_day
     valid = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
     masters = {r.get("订单分析代际名"): r for r in table_records(workbook, MASTER_SHEET)}
     daily = {(r.get("订单分析代际名"), iso_day(r.get("日期"))): r for r in table_records(workbook, DAILY_SHEET)}
+    hourly = {(r.get("订单分析代际名"), iso_day(r.get("日期")), r.get("小时")): r
+              for r in table_records(workbook, LAUNCH_HOURLY_SHEET)}
     issues = {}
     def missing(model, sheet, field, day):
         issues.setdefault((model, sheet, field), set()).add(day)
@@ -1378,6 +1380,14 @@ def audit_source_retention(workbook, raw_profiles):
         master = masters.get(model)
         if master is None:
             continue
+        for day in profile.get("hourly_days", []):
+            for hour in day.get("hours", []):
+                stamp = iso_day(day.get("date"))
+                saved = hourly.get((model, stamp, hour.get("hour")), {})
+                for field, label in (("gross", "小时大定"), ("small_to_big", "小时小转大"),
+                                     ("direct", "小时直接大定"), ("lock", "小时交车锁单")):
+                    if valid(hour.get(field)) and not valid(saved.get(label)):
+                        missing(model, LAUNCH_HOURLY_SHEET, label, f"{stamp} {hour.get('hour'):02d}时")
         start, end = iso_day(master.get("首销开始")), iso_day(master.get("首销结束"))
         for row in profile.get("days", []):
             day = iso_day(row.get("date"))

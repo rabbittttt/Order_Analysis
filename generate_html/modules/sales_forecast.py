@@ -1762,33 +1762,30 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 for index, timestamp in enumerate(timestamps):
                     parsed_timestamp = _as_datetime(timestamp)
                     quantity = _optional_count(gross, index)
+                    components = {field: _optional_count(values, index)
+                                  for field, values in (("small_to_big", small), ("direct", direct), ("lock", locks))}
                     if parsed_timestamp is None:
                         continue
                     raw_quantity = gross[index] if index < len(gross) else None
                     if quantity is None and raw_quantity in (None, ""):
-                        components = [_optional_count(values, index) for values in (small, direct)]
-                        if all(value is not None for value in components):
-                            quantity = sum(components)  # Known hourly components, not a ratio estimate.
+                        if all(components[field] is not None for field in ("small_to_big", "direct")):
+                            quantity = components["small_to_big"] + components["direct"]
                     if quantity is None:
-                        if raw_quantity in (None, ""):
+                        if raw_quantity not in (None, ""):
+                            LOGGER.warning(
+                                "[销量预测字段校验] 代际=%s | Sheet=%s | 时间=%s | "
+                                "分时大定=%r | 处理=非数量、负数或非有限数已拒绝，已知分项保留",
+                                model, sheet.title, timestamp, raw_quantity,
+                            )
+                        if all(value is None for value in components.values()):
                             continue
-                        LOGGER.warning(
-                            "[销量预测字段校验] 代际=%s | Sheet=%s | 时间=%s | "
-                            "分时大定=%r | 处理=非数量、负数或非有限数已拒绝",
-                            model,
-                            sheet.title,
-                            timestamp,
-                            raw_quantity,
-                        )
-                        continue
                     day = parsed_timestamp.date().isoformat()
                     bucket = grouped.setdefault(day, {"date": day, "last_hour": -1, "gross": 0, "small_to_big": 0, "direct": 0, "lock": 0, "hours": []})
                     bucket["last_hour"] = max(bucket["last_hour"], parsed_timestamp.hour)
-                    bucket["gross"] += quantity
-                    for field, values in (("small_to_big", small), ("direct", direct), ("lock", locks)):
-                        value = _optional_count(values, index)
+                    bucket["gross"] = bucket["gross"] + quantity if bucket["gross"] is not None and quantity is not None else None
+                    for field, value in components.items():
                         bucket[field] = bucket[field] + value if bucket[field] is not None and value is not None else None
-                    bucket["hours"].append({"hour": parsed_timestamp.hour, "gross": quantity})
+                    bucket["hours"].append({"hour": parsed_timestamp.hour, "gross": quantity, **components})
                 if not grouped and (timestamps or gross):
                     first_time = timestamps[0] if timestamps else None
                     first_gross = gross[0] if gross else None
@@ -2032,6 +2029,32 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             sources.append(source)
     for profile in profiles.values():
         snapshots = {row["date"]: row for row in profile.get("hourly_days", [])}
+        days_by_date = {}
+        for row in profile.get("days", []):
+            days_by_date.setdefault(row.get("date"), row)
+        for stamp, snapshot in snapshots.items():
+            hours = snapshot.get("hours", [])
+            if len(hours) != 24 or {row.get("hour") for row in hours} != set(range(24)):
+                continue
+            # Explicitly known 0..23h is independently a complete day. Preserve
+            # each fully known field, even when another hourly field is absent.
+            complete = {field: sum(row[field] for row in hours)
+                        for field in ("gross", "small_to_big", "direct", "lock")
+                        if all(row.get(field) is not None for row in hours)}
+            if not complete:
+                continue
+            day = days_by_date.get(stamp)
+            if day is None:
+                day = {"date": stamp}
+                profile.setdefault("days", []).append(day)
+                days_by_date[stamp] = day
+                if not profile.get("day_source"):
+                    profile["day_source"] = profile.get("hour_source")
+            for field, value in complete.items():
+                if day.get(field) is None:
+                    day[field] = value
+                    day.setdefault("_hourly_backfill", []).append(field)
+                    day.setdefault("_complete_hour_fields", []).append(field)
         for day in profile.get("days", []):
             snapshot = snapshots.get(day.get("date"), {})
             gross, hourly_gross = day.get("gross"), snapshot.get("gross")

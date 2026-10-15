@@ -369,8 +369,10 @@ class PublicForecastTablesTests(TestCase):
         headers = [c.value for c in book[MASTER_SHEET][1]]
         self.assertEqual(headers.index('小订天数') + 1, headers.index('首销天数'))
         for name in (SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET):
-            self.assertEqual(book[name].max_column, 5)
+            self.assertEqual(book[name].max_column, 5 if name == SMALL_HOURLY_SHEET else 8)
             self.assertEqual(book[name].cell(1, 5).value, '来源文件')
+        self.assertEqual([c.value for c in book[LAUNCH_HOURLY_SHEET][1]][5:],
+                         ['小时小转大', '小时直接大定', '小时交车锁单'])
         book.close()
 
     def test_partial_small_data_preserves_blanks_without_inventing_terminal(self):

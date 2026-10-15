@@ -243,7 +243,9 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
             add(model, target.get("history_model"), day, stage, "首销订单", raw.get("day_source"),
                 {c: day.get(k) for k, c in ORDER_FIELDS.items()})
             if day.get("_hourly_backfill"):
-                rows[-1]["_origins"] = {ORDER_FIELDS[field]: source_text(raw.get("hour_source")) + "（日/时大定一致，分时补缺）"
+                rows[-1]["_origins"] = {ORDER_FIELDS[field]: source_text(raw.get("hour_source")) + (
+                                           "（完整24小时汇总，分时补缺）" if field in day.get("_complete_hour_fields", [])
+                                           else "（日/时大定一致，分时补缺）")
                                        for field in day["_hourly_backfill"]}
         for day in raw.get("small_daily_days", []):
             add(model, target.get("history_model"), day, "小订", "逐日小订", raw.get("small_daily_sources", {}).get(day.get("date")),
@@ -293,12 +295,15 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
                 for hour in hours:
                     record = [raw["model"], date_cell(day.get("date")), hour.get("hour"), hour.get(field),
                               _source_parts(raw.get(source_key))[0]]
+                    if key == "hourly_days":
+                        record.extend(hour.get(metric) for metric in ("small_to_big", "direct", "lock"))
                     identity = (raw["model"], iso_day(day.get("date")), hour.get("hour"))
                     if identity not in records:
                         records[identity] = record
                     else:
                         records[identity] = [a if a is not None else b for a, b in zip(records[identity], record)]
-        emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件"], [records[k] for k in sorted(records)])
+        component_headers = ["小时小转大", "小时直接大定", "小时交车锁单"] if key == "hourly_days" else []
+        emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件", *component_headers], [records[k] for k in sorted(records)])
         if key == "hourly_days":
             reconcile_intraday_fields(rows, data.get("actuals", []), records)
     emit(DAILY_SHEET, headers, [[r.get(k) for k in headers] for r in rows])
@@ -322,7 +327,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
          small_records, {f"D{i+1}" for i in range(max_curve)})
     guide = [
         ["口径", "数量与空值", "单位：单；0是已知无销量，空白是未知。未来日期不视为真实完成日。", None, None],
-        ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。by时只存小时数量；by天的首销分时核对列记录可用于分时快照的分项，不重复存数量。", None, None],
+        ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。by时保存小时数量及已知小时分项，不存累计列；by天的首销分时核对列记录可用于完整日核对的分项。", None, None],
         ["口径", "参考曲线", "小订累计完成度、小订当日数量按小订窗口排列D1、D2；已有日量和可计算比例均保留，分母未知才留空。进行中、当日或未来数据不作为完整终局参考；参考来源与终值资格见车型基本信息，D1/D2另标口径状态。", None, None],
         ["口径", "退订", "退订只取小订退订分析；真实0有效，日量不从缺少前一日基数的累计值猜算。", None, None],
         ["口径", "小订及首销前", "整理表真实小订by天 → 小订选配比例by天 → 小订退订分析分时按日汇总；整理表须同一小订开始日期及维护窗口。D1分时只取小订分时退订。", None, None],
@@ -1005,9 +1010,12 @@ def read_public_forecast(book, history, today=None):
             profile = by_model.get(model)
             if profile is None or d > current.isoformat():
                 continue
+            value = row.get(label)
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
+                continue  # Keep partial source components in Excel; an unknown gross is not zero.
             profile[source_key] = {"file": row.get("来源文件"), "sheet": sheet}
             bucket = buckets.setdefault((model, d), {"date": d, "last_hour": 0, field: 0, "hours": []})
-            hour, value = int(row["小时"]), row.get(label)
+            hour = int(row["小时"])
             bucket["last_hour"] = max(bucket["last_hour"], hour)
             bucket["hours"].append({"hour": hour, field: value})
             if isinstance(value, (int, float)):
