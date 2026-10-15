@@ -84,7 +84,14 @@ def _optional_number(value: Any) -> float | None:
 
 def _optional_count(values: list[Any], index: int) -> int | None:
     value = values[index] if index < len(values) else None
-    if not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0:
+    if isinstance(value, str):
+        text = value.strip().replace("，", ",")
+        # Exported quantities may be text. Accept numeric text and correctly
+        # grouped thousands, but never percentages, units or placeholder labels.
+        if not re.fullmatch(r"[+]?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?", text):
+            return None
+        value = float(text.replace(",", ""))
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) or float(value) < 0:
         return None
     return int(round(float(value)))
 
@@ -1754,12 +1761,15 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 grouped: dict[str, dict[str, Any]] = {}
                 for index, timestamp in enumerate(timestamps):
                     parsed_timestamp = _as_datetime(timestamp)
-                    if parsed_timestamp is None or index >= len(gross) or not isinstance(gross[index], (int, float)):
+                    quantity = _optional_count(gross, index)
+                    if parsed_timestamp is None or index >= len(gross):
                         continue
-                    if not math.isfinite(float(gross[index])) or float(gross[index]) < 0:
+                    if quantity is None:
+                        if gross[index] in (None, ""):
+                            continue
                         LOGGER.warning(
                             "[销量预测字段校验] 代际=%s | Sheet=%s | 时间=%s | "
-                            "分时大定=%r | 处理=负数或非有限数已拒绝",
+                            "分时大定=%r | 处理=非数量、负数或非有限数已拒绝",
                             model,
                             sheet.title,
                             timestamp,
@@ -1769,11 +1779,11 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                     day = parsed_timestamp.date().isoformat()
                     bucket = grouped.setdefault(day, {"date": day, "last_hour": -1, "gross": 0, "small_to_big": 0, "direct": 0, "lock": 0, "hours": []})
                     bucket["last_hour"] = max(bucket["last_hour"], parsed_timestamp.hour)
-                    bucket["gross"] += int(round(_number(gross[index])))
+                    bucket["gross"] += quantity
                     for field, values in (("small_to_big", small), ("direct", direct), ("lock", locks)):
                         value = _optional_count(values, index)
                         bucket[field] = bucket[field] + value if bucket[field] is not None and value is not None else None
-                    bucket["hours"].append({"hour": parsed_timestamp.hour, "gross": int(round(_number(gross[index])))})
+                    bucket["hours"].append({"hour": parsed_timestamp.hour, "gross": quantity})
                 if not grouped and (timestamps or gross):
                     first_time = timestamps[0] if timestamps else None
                     first_gross = gross[0] if gross else None
@@ -1813,7 +1823,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             daily_rows = []
             for column in range(4, sheet.max_column + 1):
                 date_key = _iso(sheet.cell(1, column).value)
-                orders = _optional_number(sheet.cell(quantity_row, column).value)
+                orders = _optional_count([sheet.cell(quantity_row, column).value], 0)
                 if not date_key:
                     continue
                 if orders is None:
@@ -2562,7 +2572,8 @@ def _attach_actual_shapes(history: list[dict[str, Any]], profiles: list[dict[str
             item["hourly_curve"] = []
             continue
         if not item.get("daily_orders"):
-            item["daily_orders"] = [row["gross"] for row in profile.get("days", [])]
+            item["daily_orders"] = [row["gross"] for row in profile.get("days", [])
+                                    if row.get("date", "") < (today or date.today()).isoformat()]
         first_hourly = next((row for row in profile.get("hourly_days", [])
                              if row.get("date") == item.get("launch_date")
                              and row.get("date", "") < (today or date.today()).isoformat()), {})

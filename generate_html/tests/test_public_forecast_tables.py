@@ -362,7 +362,7 @@ class PublicForecastTablesTests(TestCase):
                       '累计小转大', '累计直接大定', '累计交车锁单'}
         for sheet in book:
             self.assertFalse(prohibited.intersection(c.value for c in sheet[1]), sheet.title)
-        self.assertEqual(book[MASTER_SHEET].max_column, 39 + len(SMALL_REFERENCE_FIELDS))
+        self.assertEqual(book[MASTER_SHEET].max_column, 40 + len(SMALL_REFERENCE_FIELDS))
         self.assertIn('小订发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn('首销发布时段', [c.value for c in book[MASTER_SHEET][1]])
         self.assertIn("有小订", [c.value for c in book[MASTER_SHEET][1]])
@@ -382,8 +382,12 @@ class PublicForecastTablesTests(TestCase):
         book = self.make_public(customize=customize)
         item = read_public_forecast(book, [])[2][0]
         self.assertEqual(item['daily_orders'], [0, None])
-        self.assertEqual(item['small_progress'], [None, None])
-        self.assertFalse(item['total_complete'])
+        self.assertEqual(item['small_progress'], [0, None])
+        self.assertTrue(item['total_complete'])  # Explicit maintained total 100 is not erased by a partial source.
+        self.assertEqual(item['total'], 100)
+        # The known standard curve remains usable; it must not be materialized
+        # as a fabricated quantity for the missing real day.
+        self.assertIsNone(table_records(book, SMALL_DAILY_SHEET)[0]['D2'])
         self.assertEqual(len(item['standard_progress']), 4)
         book.close()
 

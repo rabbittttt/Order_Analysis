@@ -1,7 +1,7 @@
 from datetime import date
 from unittest import TestCase
 
-from core.forecast_summary import SMALL_CURVE_SHEET, SMALL_DAILY_SHEET, D12_SHEET, table_records, read_public_forecast
+from core.forecast_summary import SMALL_CURVE_SHEET, SMALL_DAILY_SHEET, D12_SHEET, table_records, read_public_forecast, restrict_launch_reference
 from modules.sales_forecast import _history_item, _attach_small_hourly_curves
 from tools.refresh_sales_forecast_data import normalize_public_names, write_rows, SUMMARY_HEADER_ALIASES
 from tests import test_public_forecast_tables
@@ -25,14 +25,15 @@ class SummaryLifecycleTests(TestCase):
         book = test_public_forecast_tables.PublicForecastTablesTests().make_public(
             customize=customize, as_of=date(2026, 1, 5))
         small = table_records(book, SMALL_DAILY_SHEET)[0]
-        self.assertEqual([small[f'D{i}'] for i in range(1, 6)], [20, 0, 12, 9, None])
-        for title, expected in [('小转大当日数量', [10, 8, None]),
-                                ('直接大定当日数量', [20, 32, None])]:
+        self.assertEqual([small[f'D{i}'] for i in range(1, 6)], [20, 0, 12, 9, 999])
+        for title, expected in [('小转大当日数量', [10, 8, 999]),
+                                ('直接大定当日数量', [20, 32, 999])]:
             row = table_records(book, title)[0]
             self.assertEqual([row[f'D{i}'] for i in range(1, 4)], expected)
         metric = table_records(book, D12_SHEET)[0]
         self.assertEqual((metric['D1小转大'], metric['D2小转大'], metric['D1+D2小转大']), (10, 8, 18))
         self.assertIsNone(metric['D1小转大/总小转大'])
+        self.assertEqual(read_public_forecast(book, [], today=date(2026, 1, 5))[2][0]['daily_orders'], [20, 0, 12, 9])
         book.close()
 
     def test_explicit_small_publication_synonym_does_not_borrow_launch_period(self):
@@ -67,20 +68,23 @@ class SummaryLifecycleTests(TestCase):
         daily = table_records(book, SMALL_DAILY_SHEET)[0]
         curve = table_records(book, SMALL_CURVE_SHEET)[0]
         self.assertEqual(daily['小订阶段'], '进行中')
-        self.assertEqual((daily['D1'], daily['D2'], daily['D4']), (0, 10, None))
-        self.assertTrue(all(v is None for k, v in curve.items() if k.startswith('D')))
+        self.assertEqual((daily['D1'], daily['D2'], daily['D4']), (0, 10, 999))
+        self.assertEqual(curve['D2'], .1)
         profiles, _, small, _ = read_public_forecast(book, [], today=date(2026, 1, 4))
         self.assertFalse(small[0]['total_complete'])
+        self.assertEqual(small[0]['daily_orders'], [0, 10])
         self.assertEqual(small[0]['days'], 7)
         book.close()
 
-    def test_unfinished_launch_keeps_d1_but_not_today_or_terminal_progress(self):
+    def test_unfinished_launch_saves_today_with_ineligible_reference_status(self):
         def customize(data):
             data['reference_daily'] = {'小转大当日数量': {'历史车': [10, 8]}, '直接大定当日数量': {'历史车': [20, 9]}}
         book = test_public_forecast_tables.PublicForecastTablesTests().make_public(customize=customize)
         row = table_records(book, D12_SHEET)[0]
         self.assertEqual(row['D1小转大'], 10)
-        self.assertIsNone(row['D2小转大'])
+        self.assertEqual(row['D2小转大'], 8)
+        self.assertEqual(row['D2口径状态'], '当日未结束')
+        self.assertFalse(_history_item(row, True)['d2_valid'])
         self.assertIsNone(row['D1小转大/总小转大'])
         book.close()
 
@@ -104,13 +108,16 @@ class SummaryLifecycleTests(TestCase):
         self.assertEqual(item['end_date'], '2026-01-09')
         self.assertEqual(item['lock_rate'], .6)
 
-    def test_maintained_lock_rates_are_preserved_only_after_launch_end(self):
+    def test_maintained_lock_rates_are_saved_but_only_used_after_launch_end(self):
         for today, expected in ((date(2026, 1, 4), None), (date(2026, 1, 10), .6)):
             book = test_public_forecast_tables.PublicForecastTablesTests().make_public(as_of=today,
                 master_periods={'留存大定到锁单率': .9, '大定到锁单率': .6})
             row = table_records(book, '车型基本信息')[0]
-            self.assertEqual(row['大定到锁单率'], expected)
-            self.assertEqual(row['留存大定到锁单率'], .9 if expected is not None else None)
+            self.assertEqual(row['大定到锁单率'], .6)
+            self.assertEqual(row['留存大定到锁单率'], .9)
+            item = _history_item(row, True)
+            restrict_launch_reference(item, row, today)
+            self.assertEqual(item['lock_rate'], expected)
             book.close()
 
 

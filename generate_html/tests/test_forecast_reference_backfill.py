@@ -8,7 +8,7 @@ from openpyxl import Workbook
 
 from core.excel import WorkbookItem
 from core.forecast_summary import (MASTER_SHEET, DAILY_SHEET, D12_SHEET, public_forecast_tables,
-                                   table_records)
+                                   table_records, restrict_launch_reference)
 from modules.sales_forecast import _read_actual_profiles, _history_item
 from tools.refresh_sales_forecast_data import write_rows
 
@@ -104,14 +104,19 @@ class ForecastReferenceBackfillTests(TestCase):
         self.assertEqual((daily['D1'], daily['D2'], daily['D3']), (2, None, None))
         self.assertIsNone(self.record(book, D12_SHEET)['D1+D2小转大'])
 
-    def test_ongoing_stage_retains_elapsed_days_without_a_terminal_denominator(self):
+    def test_ongoing_stage_saves_observed_snapshot_but_excludes_terminal_reference(self):
         book = self.build(cumulative=self.anchors(), as_of=date(2026, 1, 5))
-        self.assertIsNone(self.record(book)['总小转大'])
-        self.assertIsNone(self.record(book)['小订转化率'])
+        self.assertEqual(self.record(book)['总小转大'], 10)
+        self.assertEqual(self.record(book)['小订转化率'], .5)
         self.assertEqual(self.record(book, D12_SHEET)['D2小转大'], 3)
-        self.assertIsNone(self.record(book, D12_SHEET)['D1小转大/总小转大'])
+        self.assertEqual(self.record(book, D12_SHEET)['D1小转大/总小转大'], .2)
         self.assertEqual(self.record(book, '累计小订转化率')['D2'], .25)
-        self.assertIsNone(self.record(book, '累计小订转化率')['D3'])
+        self.assertEqual(self.record(book, '累计小订转化率')['D3'], .5)
+        item = _history_item(self.record(book, D12_SHEET), True)
+        restrict_launch_reference(item, self.record(book), date(2026, 1, 5))
+        self.assertIsNone(item['small_to_big'])
+        self.assertIsNone(item['d1_small_completion'])
+        self.assertEqual(item['small_d2_d1'], 1.5)
 
     def test_wrong_campaign_cumulative_is_not_borrowed(self):
         book = self.build(cumulative=self.anchors(), cumulative_start='2025-01-03')
@@ -137,9 +142,10 @@ class ForecastReferenceBackfillTests(TestCase):
         book = self.build(daily=[{'date': '2026-01-03', 'small_to_big': 9, 'gross': 4}],
                           maintained={'总小转大': 10})
         metric = self.record(book, D12_SHEET)
-        self.assertIsNone(metric['D1小转大/总小转大'])
+        self.assertEqual(metric['D1小转大/总小转大'], .9)
         self.assertEqual(metric['D1口径状态'], '数据不足或异常')
         self.assertFalse(_history_item(metric, True)['d1_valid'])
+        self.assertEqual(_history_item(metric, True)['d1_small_completion'], 0)
 
     def test_real_zero_cumulative_is_preserved_and_never_divided_by_zero(self):
         book = self.build(cumulative=[dict(date=r['date'], small_to_big=0) for r in self.anchors()])

@@ -566,6 +566,7 @@ def extract_quantity_table(
     header_index: dict[str, HeaderScan],
     role: str,
 ) -> tuple[dict[str, list[Any]], int, str, int]:
+    from modules.sales_forecast import _optional_count
     sheet, header_row, headers, day_column_pairs = find_progress_sheet(workbook, role, header_index)
     model_column = headers.index("车型")
     # 缺失的中间天数保留空列，防止D1、D3被误当成连续两天。
@@ -600,7 +601,7 @@ def extract_quantity_table(
         if any(normalize(existing) == key for existing in result):
             raise InputFormatError(f"{sheet.title}首个数量表传播名重名：{model}（第{row_number}行）")
         result[model] = [
-            values[day_columns[number]] if number in day_columns and day_columns[number] < len(values) else None
+            _optional_count(values, day_columns[number]) if number in day_columns else None
             for number in range(1, day_count + 1)
         ]
     if not result:
@@ -748,6 +749,23 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     day_count = max(day_counts) if day_counts else 0
     day_headers = [f"D{index}" for index in range(1, day_count + 1)]
 
+    # Quantity-only rows are still source facts. Missing roster metadata limits
+    # forecasting, not export; keep their D-indexed observations without dates.
+    known = set()
+    for record in summary:
+        name = str(record["车型"]).strip()
+        known.add(normalize(name))
+        mapped = mapping_record_for(name, mapping, aliases)
+        if mapped:
+            key = normalize(mapped.get("历史传播名"))
+            known.update(aliases.get(key, {key}))
+            known.add(normalize(mapped.get("订单分析代际名")))
+    for curves in raw_curves.values():
+        for name in curves:
+            if normalize(name) not in known:
+                summary.append({"车型": name, "代际名": name})
+                known.add(normalize(name))
+                LOGGER.warning("[汇总身份补缺] 代际=%s | 原因=数量表有记录、车型汇总未维护 | 处理=保留D序号真实值，日期未明确前不参与预测", name)
     models = [str(record["车型"]).strip() for record in summary]
     for model in models:
         if not mapping_record_for(model, mapping, aliases):
@@ -825,15 +843,19 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         quality_status = "需复核" if quality_issues else "通过" if field_completeness >= 0.75 and consistency >= 0.8 else "数据不足"
         base_rows.append([
             model, generation, mapping_status, brand, tier, energy, launch_date, release_type, end_date,
-            int(as_number(record.get("首销期天数"), 35)),
+            int(as_number(record.get("首销期天数"), 0)),
             int(total_small) if record.get("总小订") not in (None, "") else None,
-            int(small_to_big) if record.get("小订转大定量") not in (None, "") else None, conversion,
+            int(small_to_big) if record.get("小订转大定量") not in (None, "") else None,
+            as_number(raw_conversion) if raw_conversion not in (None, "") else safe_div(record.get("小订转大定量"), record.get("总小订")),
             int(gross) if record.get("大定量") not in (None, "") else None,
-            int(direct) if record.get("直接大定量") not in (None, "") else None, direct_share,
-            int(cancel) if record.get("小订后退定") not in (None, "") else None, cancel_rate,
+            int(direct) if record.get("直接大定量") not in (None, "") else None,
+            as_number(raw_direct_share) if raw_direct_share not in (None, "") else safe_div(record.get("直接大定量"), record.get("大定量")),
+            int(cancel) if record.get("小订后退定") not in (None, "") else None,
+            as_number(raw_cancel_rate) if raw_cancel_rate not in (None, "") else safe_div(record.get("小订后退定"), record.get("总小订")),
             field_completeness, consistency, quality_status, "；".join(quality_issues),
             "历史首销参考数量汇总；映射与车型属性来自车型基本信息.xlsx单表", weekday_name(launch_date),
-            release_period, int(as_number(net)) if record.get("首销期留存大定") not in (None, "") else None, as_number(net_rate),
+            release_period, int(as_number(net)) if record.get("首销期留存大定") not in (None, "") else None,
+            as_number(raw_net_rate) if raw_net_rate not in (None, "") else safe_div(record.get("首销期留存大定"), record.get("大定量")),
             int(as_number(lock)) if record.get("首销期锁单") not in (None, "") else None, lock_rate,
             safe_div(record.get("首销期锁单"), record.get("首销期留存大定")) if record.get("首销期锁单") not in (None, "") and as_number(record.get("首销期留存大定")) > 0 else record.get("留存大定到锁单率"),
         ])
@@ -851,7 +873,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         daily_gross_rows.append([model, *gross_curve])
         daily_cancel_rows.append([model, *cancel_curve])
         model_data.append({
-            "model": model, "generation": generation, "mapping_status": mapping_status, "tier": tier, "days": int(as_number(record.get("首销期天数"), 35)),
+            "model": model, "generation": generation, "mapping_status": mapping_status, "tier": tier, "days": int(as_number(record.get("首销期天数"), 0)),
             "total_small": total_small, "small_to_big": small_to_big, "gross": gross, "direct": direct,
             "cancel": cancel, "small_curve": small_curve, "direct_curve": direct_curve, "gross_curve": gross_curve, "cancel_curve": cancel_curve,
             "quality_status": quality_status, "quality_issues": quality_issues,
@@ -1172,7 +1194,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
 def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collect_only=False, resolved_daily=None):
     """Collect quantities after file-boundary merging, split stage-boundary weeks by day."""
     from modules.sales_forecast import (_iso_week_bounds, _as_date, _canonical_model,
-        _read_model_mapping, _fill_sparse_dates)
+        _read_model_mapping, _fill_sparse_dates, _optional_count)
     from core.excel import sheet_subject, display_period, _source_date_ranges, subject_type
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
     targets = {r["name"]: r for r in [*data.get("targets", []), *data.get("steady_targets", [])]}
@@ -1214,8 +1236,7 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
                 observed = []
                 for cell in row[3:]:
                     header = sheet.cell(1, cell.column)
-                    value = cell.value
-                    value = value if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value >= 0 else None
+                    value = _optional_count([cell.value], 0)
                     if grain == "day":
                         day = _as_date(header.value)
                         if day:
@@ -1260,7 +1281,18 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
         target = targets.get(model, {})
         launch, finish = _as_date(target.get("launch_date")), _as_date(target.get("end_date"))
         bounds = _iso_week_bounds(period)
-        if not bounds or bounds[0] > today:
+        if not bounds:
+            continue
+        if bounds[0] > today:
+            # Preserve explicit future source observations, without filling
+            # unobserved days or making them eligible completed-week references.
+            stage = ("阶段未知" if not launch or not finish else "首销前" if bounds[1] < launch else
+                     "平销" if bounds[0] > finish else "首销" if launch <= bounds[0] <= bounds[1] <= finish else "首销/平销")
+            entries = [weekly.get((model, period, field), (None, None)) for field in ("gross", "net", "lock")]
+            if any(entry[0] is not None for entry in entries):
+                rows.append([model, period, stage, datetime.combine(bounds[0], datetime.min.time()),
+                             datetime.combine(bounds[1], datetime.min.time()),
+                             *[e[0] for e in entries], *[e[1] for e in entries], False])
             continue
         if not launch or not finish or bounds[1] < launch:
             start, end = bounds[0], min(bounds[1], today)
@@ -1303,7 +1335,7 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
                     values_by_day.append(next((c for c in candidates if c is not None and c[0] is not None), None))
                     current += timedelta(days=1)
                 valid_days = all(c is not None for c in values_by_day)
-                raw_week = weekly.get((model, period, field)) if whole else None
+                raw_week = weekly.get((model, period, field)) if whole or (stage == "平销" and not stage_split) else None
                 if stage == "平销" and raw_week is not None and raw_week[0] is not None:
                     value, source = raw_week
                 elif valid_days:
@@ -1376,9 +1408,12 @@ def audit_final_forecast(workbook, today, data=None):
                 elif small_end < today and values and valid(master.get("总小订")) and abs(sum(values)-master["总小订"]) > 1:
                     messages.append(f"[销量预测口径差异] 代际={model} | 范围={small_start}~{small_end} | 最终总小订={master['总小订']}，多来源逐日合计={sum(values)} | 处理=保留既有优先级，请核对原始来源的统计口径")
         if end and end < today:
-            missing = [field for field in ("首销期留存大定", "首销期锁单") if not valid(master.get(field))]
+            required = ["首销期留存大定", "首销期锁单"]
+            if target["has_small"]:
+                required += ["总小转大", "小订转化率", "总直接大定", "直接大定占比", "总退订", "退订率"]
+            missing = [field for field in required if not valid(master.get(field))]
             if missing:
-                messages.append(f"[预测历史参考缺项] 代际={model} | 阶段=首销已结束 | 缺失字段={'、'.join(missing)} | 影响=对应历史留存或锁单率参考不可用，不停止其他有效预测")
+                messages.append(f"[预测历史参考缺项] 代际={model} | 阶段=首销已结束 | 首销窗口={iso_day(start)}~{iso_day(end)} | 缺失字段={'、'.join(missing)} | 已检查来源={master.get('订单来源文件') or '未匹配'} | 影响=仅对应历史指标不可用，保留已知数量，不停止其他有效预测")
     for message in messages:
         LOGGER.warning("%s", message)
     return messages

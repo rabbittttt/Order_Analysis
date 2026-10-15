@@ -67,7 +67,8 @@ class ResolvedSummaryTests(TestCase):
         self.assertEqual((metric['D1小转大'], metric['D2小转大'], metric['D1+D2小转大']), (1, 8, 9))
         self.assertEqual((metric['D1大定'], metric['D2大定']), (20, 40))
         self.assertIsNone(metric['D1+D2退订'])
-        self.assertIsNone(metric['总大定'])  # The launch period has not ended.
+        self.assertEqual(metric['总大定'], 20)  # Preserve the maintained snapshot, not a terminal reference.
+        self.assertFalse(table_records(book, MASTER_SHEET)[0]['首销参考终值有效'])
         self.assertIsNone(metric['D1小转大/总小转大'])
         self.assertEqual(table_records(book, '小转大当日数量')[0]['D1'], 1)
         self.assertIsNone(table_records(book, '小转大累计完成度')[0]['D1'])
