@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from openpyxl import Workbook, load_workbook
 
@@ -10,7 +11,7 @@ from core.forecast_summary import (MASTER_SHEET, D12_SHEET, DAILY_SHEET, SMALL_D
                                   SMALL_CURVE_SHEET, LAUNCH_HOURLY_SHEET, WEEKLY_SHEET,
                                   table_records, summary_scope, read_public_forecast)
 from modules.sales_forecast import _read_history, _optional_count
-from tools.refresh_sales_forecast_data import build_secondary
+from tools.refresh_sales_forecast_data import build_secondary, audit_source_retention
 
 
 class SourceBackfillEndToEndTests(TestCase):
@@ -168,6 +169,118 @@ class SourceBackfillEndToEndTests(TestCase):
 
     def test_daily_source_alone_is_sufficient(self):
         self.assert_complete(self.build(hourly=False))
+
+    def test_chart_sheets_cannot_overwrite_actual_day_and_hour_sheets(self):
+        def add_sources(folder):
+            path = folder/'鸿蒙智行首销期订单节奏.xlsx'
+            book = load_workbook(path)
+            for grain in ('天', '时'):
+                sheet = book.create_sheet(self.model+'by'+grain+'图表')
+                sheet.append(['图表展示'])
+            book.save(path)
+            book.close()
+        book = self.build(add_sources=add_sources)
+        self.assert_complete(book)
+        self.assertEqual(len(table_records(book, LAUNCH_HOURLY_SHEET)), 3)
+
+    def test_matching_hourly_snapshot_fills_missing_day_components(self):
+        def add_sources(folder):
+            path = folder/'鸿蒙智行首销期订单节奏.xlsx'
+            book = load_workbook(path)
+            sheet = book[self.model+'by天']
+            for row in (4, 5, 6, 7):
+                for col in range(2, 5):
+                    sheet.cell(row, col).value = None
+            book.save(path)
+            book.close()
+        self.assert_complete(self.build(add_sources=add_sources))
+
+    def test_hourly_components_work_without_explicit_gross_and_provenance_is_saved(self):
+        def add_sources(folder):
+            path = folder/'鸿蒙智行首销期订单节奏.xlsx'
+            book = load_workbook(path)
+            for col in range(2, 5):
+                for row in (4, 5, 6, 7):
+                    book[self.model+'by天'].cell(row, col).value = None
+                book[self.model+'by时'].cell(3, col).value = None
+            book.save(path)
+            book.close()
+        book = self.build(add_sources=add_sources)
+        self.assert_complete(book)
+        row = next(r for r in table_records(book, DAILY_SHEET) if r.get('小转大') == 10)
+        self.assertIn('分时补缺', row['字段来源'])
+        self.assertIn('by时', row['字段来源'])
+
+    def test_partial_hour_snapshot_cannot_fill_full_day_or_replace_zero(self):
+        def add_sources(folder):
+            path = folder/'鸿蒙智行首销期订单节奏.xlsx'
+            book = load_workbook(path)
+            day, hour = book[self.model+'by天'], book[self.model+'by时']
+            for col in range(2, 5):
+                for row in (4, 5, 6, 7):
+                    day.cell(row, col).value = None
+            day['C4'] = 0
+            hour['B3'] = 20  # only part of D1's independent 50 orders
+            hour['B4'] = 2
+            hour['B6'] = 18
+            hour['D4'] = None  # known gross alone must not fabricate a component
+            book.save(path)
+            book.close()
+        book = self.build(add_sources=add_sources)
+        rows = table_records(book, '小转大当日数量')[0]
+        self.assertEqual([rows[f'D{i}'] for i in (1, 2, 3)], [None, 0, None])
+        self.assertIsNone(table_records(book, MASTER_SHEET)[0]['总小转大'])
+
+    def test_retention_audit_detects_dropped_source_and_corrupted_related_cells(self):
+        book = self.build()
+        raw = [{'model': self.model, 'days': [{'date': '2026-09-01', 'small_to_big': 10}]}]
+        self.assertEqual(audit_source_retention(book, raw), [])
+        def clear(sheet, field, row=2):
+            headers = [c.value for c in book[sheet][1]]
+            book[sheet].cell(row, headers.index(field)+1).value = None
+        clear('小转大当日数量', 'D1')
+        clear(D12_SHEET, 'D2直接大')
+        clear('累计退订率', 'D2')
+        clear(MASTER_SHEET, '总直接大定')
+        details = '\n'.join(audit_source_retention(book, raw))
+        for label in ('小转大当日数量', 'D2', '累计退订率', '总直接大定'):
+            self.assertIn(label, details)
+        headers = [c.value for c in book[DAILY_SHEET][1]]
+        for cells in book[DAILY_SHEET].iter_rows(min_row=2):
+            if cells[headers.index('日期')].value == datetime(2026, 9, 1):
+                cells[headers.index('小转大')].value = None
+        self.assertIn(DAILY_SHEET, '\n'.join(audit_source_retention(book, raw)))
+
+    def test_retention_failure_aborts_refresh_before_publishing(self):
+        saved = []
+        def seed_previous_output(path):
+            output = path.parent/'汇总.xlsx'
+            book = Workbook()
+            book.active['A1'] = '上次可用汇总'
+            book.save(output)
+            book.close()
+            saved.append(output)
+        with patch('tools.refresh_sales_forecast_data.audit_source_retention', return_value=['模拟检测到落值遗漏']):
+            with self.assertRaisesRegex(ValueError, '已阻止覆盖正式文件'):
+                self.build(source_edit=seed_previous_output)
+        book = load_workbook(saved[0], data_only=True)
+        try:
+            self.assertEqual(book.active['A1'].value, '上次可用汇总')
+        finally:
+            book.close()
+
+    def test_cancellation_header_is_located_by_fields_not_fixed_row_or_column(self):
+        def add_sources(folder):
+            path = folder/'鸿蒙智行小订退订分析.xlsx'
+            book = Workbook()
+            sheet = book.active
+            sheet.title = self.model+'_日度退订'
+            sheet.append(['当日小订退', '累计小订退', '取消日期'])
+            for i, cumulative in enumerate((1, 3, 6), 1):
+                sheet.append([i, cumulative, datetime(2026, 9, i)])
+            book.save(path)
+            book.close()
+        self.assert_complete(self.build(add_sources=add_sources))
 
     def test_missing_end_and_duration_does_not_invent_a_35_day_window(self):
         book = self.build(maintained={'首销结束日期': None, '首销天数': None})

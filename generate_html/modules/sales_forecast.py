@@ -1762,10 +1762,15 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 for index, timestamp in enumerate(timestamps):
                     parsed_timestamp = _as_datetime(timestamp)
                     quantity = _optional_count(gross, index)
-                    if parsed_timestamp is None or index >= len(gross):
+                    if parsed_timestamp is None:
                         continue
+                    raw_quantity = gross[index] if index < len(gross) else None
+                    if quantity is None and raw_quantity in (None, ""):
+                        components = [_optional_count(values, index) for values in (small, direct)]
+                        if all(value is not None for value in components):
+                            quantity = sum(components)  # Known hourly components, not a ratio estimate.
                     if quantity is None:
-                        if gross[index] in (None, ""):
+                        if raw_quantity in (None, ""):
                             continue
                         LOGGER.warning(
                             "[销量预测字段校验] 代际=%s | Sheet=%s | 时间=%s | "
@@ -1773,7 +1778,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                             model,
                             sheet.title,
                             timestamp,
-                            gross[index],
+                            raw_quantity,
                         )
                         continue
                     day = parsed_timestamp.date().isoformat()
@@ -1926,20 +1931,28 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             model = _canonical_model(sheet.title.split("_", 1)[0], model_mapping)
             profile_name = next((name for name in profiles if _same_model(name, model)), model)
             profile = profiles.setdefault(profile_name, {"model": profile_name, "days": [], "hourly_days": []})
-            headers = [str(sheet.cell(row=2, column=column).value or "").strip() for column in range(1, sheet.max_column + 1)]
-            header_index = {header: index for index, header in enumerate(headers)}
+            header_index, header_row, date_column = {}, None, None
+            for row_number, values in enumerate(sheet.iter_rows(min_row=1, max_row=min(sheet.max_row, 10), values_only=True), 1):
+                candidate = {str(value or "").strip(): i for i, value in enumerate(values)}
+                column = next((candidate[name] for name in ("取消日期", "退订日期", "日期") if name in candidate), None)
+                if column is not None:
+                    header_index, header_row, date_column = candidate, row_number, column
+                    break
+            if header_row is None:
+                LOGGER.warning("[销量预测字段校验] 代际=%s | 文件=%s | Sheet=%s | 前10行未识别退订日期表头 | 处理=保留其他来源，请核对日期列名", model, cancel_item.path.name, sheet.title)
+                continue
             cancel_by_date: dict[str, int] = {}
             cancel_rows = []
-            cumulative_column = next((header_index[name] for name in ("累计小订退", "累计退订数", "累计总退订") if name in header_index), 2)
+            cumulative_column = next((header_index[name] for name in ("累计小订退", "累计退订数", "累计总退订") if name in header_index), None)
             daily_column = next((header_index[name] for name in ("当日小订退", "当日退订数", "当日总退订") if name in header_index), None)
             rate_column = next((header_index[name] for name in ("整体 - 小订退 %", "小订后退订比例", "小订退订率") if name in header_index), None)
-            for values in sheet.iter_rows(min_row=3, values_only=True):
-                if not values or not values[0]:
+            for values in sheet.iter_rows(min_row=header_row+1, values_only=True):
+                if not values or date_column >= len(values):
                     continue
-                date_key = _iso(values[0])
+                date_key = _iso(values[date_column])
                 if not date_key:
                     continue
-                cumulative = _optional_count(values, cumulative_column)
+                cumulative = _optional_count(values, cumulative_column) if cumulative_column is not None else None
                 rate = _optional_number(values[rate_column]) if rate_column is not None and rate_column < len(values) else None
                 cancel_by_date[date_key] = cumulative
                 daily_cancel = _optional_count(values, daily_column) if daily_column is not None else None
@@ -1948,6 +1961,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             for row in profile.get("days", []):
                 row["cancel"] = cancel_by_date.get(row["date"])
             if cancel_rows:
+                cancel_rows.sort(key=lambda row: row["date"])
                 latest = cancel_rows[-1]
                 # Rates are not raw quantities: never reconstruct a missing total.
                 profile["cancel_total_small"] = 0
@@ -2016,6 +2030,19 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             source = SourceRef(order_item.path.name, matched[0].title, "无小订车型的真实大定；直接大定等于大定")
             profile["day_source"] = source.to_dict()
             sources.append(source)
+    for profile in profiles.values():
+        snapshots = {row["date"]: row for row in profile.get("hourly_days", [])}
+        for day in profile.get("days", []):
+            snapshot = snapshots.get(day.get("date"), {})
+            gross, hourly_gross = day.get("gross"), snapshot.get("gross")
+            # An intraday snapshot is not a complete day merely because the
+            # calendar date has ended. Require a matching independent day total.
+            if gross is None or hourly_gross is None or gross != hourly_gross:
+                continue
+            for field in ("small_to_big", "direct", "lock"):
+                if day.get(field) is None and snapshot.get(field) is not None:
+                    day[field] = snapshot[field]
+                    day.setdefault("_hourly_backfill", []).append(field)
     return list(profiles.values()), sources
 
 

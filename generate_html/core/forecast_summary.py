@@ -242,6 +242,9 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
             stage = "平销" if day.get("date") and target.get("end_date") and day["date"] > target["end_date"] else "首销"
             add(model, target.get("history_model"), day, stage, "首销订单", raw.get("day_source"),
                 {c: day.get(k) for k, c in ORDER_FIELDS.items()})
+            if day.get("_hourly_backfill"):
+                rows[-1]["_origins"] = {ORDER_FIELDS[field]: source_text(raw.get("hour_source")) + "（日/时大定一致，分时补缺）"
+                                       for field in day["_hourly_backfill"]}
         for day in raw.get("small_daily_days", []):
             add(model, target.get("history_model"), day, "小订", "逐日小订", raw.get("small_daily_sources", {}).get(day.get("date")),
                 {"小订数量": day.get("orders")})

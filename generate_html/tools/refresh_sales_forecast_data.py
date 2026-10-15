@@ -1359,7 +1359,80 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
     return rows
 
 
-def audit_final_forecast(workbook, today, data=None):
+def audit_source_retention(workbook, raw_profiles):
+    """Check source facts survived writing, without reselecting source priority.
+
+    Lower-priority conflicts may legitimately change a value, but cannot make
+    a known in-window field disappear. Derived quantity tables must match the
+    selected day facts, independently of their eligibility for web prediction.
+    """
+    from core.forecast_summary import MASTER_SHEET, D12_SHEET, ORDER_FIELDS, iso_day, calendar_day
+    valid = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+    masters = {r.get("订单分析代际名"): r for r in table_records(workbook, MASTER_SHEET)}
+    daily = {(r.get("订单分析代际名"), iso_day(r.get("日期"))): r for r in table_records(workbook, DAILY_SHEET)}
+    issues = {}
+    def missing(model, sheet, field, day):
+        issues.setdefault((model, sheet, field), set()).add(day)
+    for profile in raw_profiles or []:
+        model = profile["model"]
+        master = masters.get(model)
+        if master is None:
+            continue
+        start, end = iso_day(master.get("首销开始")), iso_day(master.get("首销结束"))
+        for row in profile.get("days", []):
+            day = iso_day(row.get("date"))
+            if not calendar_day(day) or (start and end and not start <= day <= end):
+                continue  # Launch facts do not own post-launch order quantities.
+            saved = daily.get((model, day), {})
+            for field, label in ORDER_FIELDS.items():
+                if valid(row.get(field)) and not valid(saved.get(label)):
+                    missing(model, DAILY_SHEET, label, day)
+        for row in profile.get("cancel_days", []):
+            day = iso_day(row.get("date"))
+            if calendar_day(day) and valid(row.get("daily_cancel")) and not valid(daily.get((model, day), {}).get("退订数量")):
+                missing(model, DAILY_SHEET, "退订数量", day)
+    quantities = {name: {r.get("订单分析代际名") or r.get("传播名"): r for r in table_records(workbook, name)}
+                  for name in ("小转大当日数量", "直接大定当日数量")}
+    metrics = {r.get("订单分析代际名"): r for r in table_records(workbook, D12_SHEET)}
+    curves = {name: {r.get("订单分析代际名") or r.get("传播名"): r for r in table_records(workbook, name)}
+              for name in ("小转大累计完成度", "直接大定累计完成度", "累计小订转化率", "累计退订率")}
+    for model, master in masters.items():
+        start, end = calendar_day(master.get("首销开始")), calendar_day(master.get("首销结束"))
+        if not start or not end or end < start:
+            continue
+        start, end = date.fromisoformat(start), date.fromisoformat(end)
+        selected = [daily.get((model, (start+timedelta(days=i)).isoformat()), {}) for i in range((end-start).days+1)]
+        for i, row in enumerate(selected, 1):
+            for label, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量")):
+                if valid(row.get(label)) and quantities[sheet].get(model, {}).get(f"D{i}") != row[label]:
+                    missing(model, sheet, "日数量未同步", f"D{i}")
+            if i <= 2:
+                for label, suffix in (("小转大", "小转大"), ("直接大定", "直接大"), ("大定", "大定"), ("退订数量", "退订")):
+                    if valid(row.get(label)) and metrics.get(model, {}).get(f"D{i}{suffix}") != row[label]:
+                        missing(model, D12_SHEET, f"{suffix}未同步", f"D{i}")
+        for label, total in (("小转大", "总小转大"), ("直接大定", "总直接大定"), ("大定", "总大定"),
+                             ("留存大定", "首销期留存大定"), ("交车锁单", "首销期锁单"), ("退订数量", "总退订")):
+            if all(valid(row.get(label)) for row in selected) and not valid(master.get(total)):
+                missing(model, MASTER_SHEET, total, end.isoformat())
+        for ratio, numerator, denominator in (("小订转化率", "总小转大", "总小订"),
+                ("直接大定占比", "总直接大定", "总大定"), ("退订率", "总退订", "总小订")):
+            if valid(master.get(numerator)) and valid(master.get(denominator)) and master[denominator] > 0 and not valid(master.get(ratio)):
+                missing(model, MASTER_SHEET, ratio, end.isoformat())
+        for sheet, label, denominator in (("小转大累计完成度", "小转大", "总小转大"),
+                ("直接大定累计完成度", "直接大定", "总直接大定"),
+                ("累计小订转化率", "小转大", "总小订"), ("累计退订率", "退订数量", "总小订")):
+            if not valid(master.get(denominator)) or master[denominator] <= 0:
+                continue
+            for i, row in enumerate(selected, 1):
+                if not valid(row.get(label)):
+                    break  # No invented cumulative value across an unknown gap.
+                if not valid(curves[sheet].get(model, {}).get(f"D{i}")):
+                    missing(model, sheet, "已有日量和分母但比例为空", f"D{i}")
+    return [f"[汇总完整性校验失败] 代际={model} | Sheet={sheet} | 字段={field} | 范围={compact_diagnostic_ranges(sorted(days))} | 原因=已识别真实数未保留或关联表未同步"
+            for (model, sheet, field), days in issues.items()]
+
+
+def audit_final_forecast(workbook, today, data=None, raw_profiles=None):
     """Diagnose the selected visible values, not gaps in one preliminary source."""
     from core.forecast_summary import MASTER_SHEET, ORDER_FIELDS, iso_day
     from core.model_identity import has_reservation
@@ -1413,7 +1486,20 @@ def audit_final_forecast(workbook, today, data=None):
                 required += ["总小转大", "小订转化率", "总直接大定", "直接大定占比", "总退订", "退订率"]
             missing = [field for field in required if not valid(master.get(field))]
             if missing:
-                messages.append(f"[预测历史参考缺项] 代际={model} | 阶段=首销已结束 | 首销窗口={iso_day(start)}~{iso_day(end)} | 缺失字段={'、'.join(missing)} | 已检查来源={master.get('订单来源文件') or '未匹配'} | 影响=仅对应历史指标不可用，保留已知数量，不停止其他有效预测")
+                locations = []
+                raw = next((p for p in (raw_profiles or []) if p.get("model") == model), {})
+                for key, label in (("day_source", "by天"), ("hour_source", "by时"), ("cancel_source", "退订")):
+                    source = raw.get(key) or {}
+                    if source:
+                        locations.append(f"{label}={source.get('file')}/{source.get('sheet')}")
+                for field, label, terminal in (("small_to_big", "小转大", "总小转大"), ("direct", "直接大定", "总直接大定"), ("lock", "交车锁单", "首销期锁单")):
+                    if terminal not in missing or not start:
+                        continue
+                    absent = [f"D{i+1}" for i in range((end-start).days+1)
+                              if not valid(lookup.get((model, (start+timedelta(days=i)).isoformat()), {}).get(label))]
+                    locations.append(f"{label}缺日={compact_diagnostic_ranges(absent) or '无'}")
+                detail = f" | 取数定位={'；'.join(locations)}" if locations else ""
+                messages.append(f"[预测历史参考缺项] 代际={model} | 阶段=首销已结束 | 首销窗口={iso_day(start)}~{iso_day(end)} | 缺失字段={'、'.join(missing)} | 已检查来源={master.get('订单来源文件') or '未匹配'}{detail} | 影响=仅对应历史指标不可用，保留已知数量，不停止其他有效预测")
     for message in messages:
         LOGGER.warning("%s", message)
     return messages
@@ -1453,7 +1539,14 @@ def append_forecast_views(path, as_of_date, workbook=None):
     public_forecast_tables(book, data, emit, weekly_rows, module.as_of_date or date.today(), getattr(module, "summary_raw_profiles", None),
         weekly_builder=lambda rows: forecast_weekly_orders(None, dashboard, module.as_of_date or date.today(), resolved_daily=rows))
     normalize_public_names(book, data, emit)
-    audit_final_forecast(book, module.as_of_date or date.today(), data)
+    raw_profiles = getattr(module, "summary_raw_profiles", [])
+    retention_errors = audit_source_retention(book, raw_profiles)
+    if retention_errors:
+        for message in retention_errors:
+            LOGGER.error("%s", message)
+        raise ValueError(f"销量汇总完整性校验失败（{len(retention_errors)}组），已阻止覆盖正式文件；请查看上方定位")
+    LOGGER.info("[汇总完整性校验] 已通过：首销源日量保留、Dn/D1D2同步及可计算终值/比例无漏写；参考资格不影响已知值保存")
+    audit_final_forecast(book, module.as_of_date or date.today(), data, raw_profiles)
     sheet_count = len(book.sheetnames)
     if owns_workbook:
         book.save(path)
