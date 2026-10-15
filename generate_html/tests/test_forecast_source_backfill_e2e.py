@@ -114,6 +114,146 @@ class SourceBackfillEndToEndTests(TestCase):
     def test_only_small_total_with_both_launch_sheets_fills_saved_workbook(self):
         self.assert_complete(self.build())
 
+    def test_fifty_day_window_keeps_october_8_across_duplicate_model_sheets(self):
+        """A later incomplete alias must not replace the complete source event."""
+        from datetime import timedelta
+        start = datetime(2026, 8, 20)
+        def source_edit(path):
+            book = load_workbook(path)
+            sheet = book['车型汇总']
+            headers = [c.value for c in sheet[1]]
+            for key, value in {'小订开始日期': datetime(2026, 8, 18),
+                               '小订结束日期': datetime(2026, 8, 19),
+                               '首销开始日期': start, '首销天数': 50}.items():
+                sheet.cell(2, headers.index(key)+1, value)
+            book['小订by天']['B1'] = datetime(2026, 8, 18)
+            book['小订by天']['C1'] = datetime(2026, 8, 19)
+            book.save(path)
+            book.close()
+        def sources(folder):
+            book = Workbook(); book.remove(book.active)
+            for name, count in ((self.model, 50), (self.model.replace(' ', '  '), 49)):
+                for grain in ('天', '时'):
+                    sheet = book.create_sheet(name+'by'+grain)
+                    sheet.append(['周期', *[f'D{i+1}' for i in range(count)]])
+                    sheet.append(['时间', *[start+timedelta(days=i, hours=20 if grain == '时' else 0) for i in range(count)]])
+                    for label, scale in (('当日大定数量', 3), ('当日小订转大定数量', 1),
+                            ('当日直接大定数量', 2), ('当日交车锁单数量', 1),
+                            ('累计小订转大定数量', 1), ('累计直接大定数量', 2)):
+                        sheet.append([label, *[scale*(i+1) if label.startswith('累计') else scale for i in range(count)]])
+            book.save(folder/'鸿蒙智行首销期订单节奏.xlsx'); book.close()
+            book = Workbook(); book.remove(book.active)
+            for name, count in ((self.model, 50), (self.model.replace(' ', '  '), 49)):
+                sheet = book.create_sheet(name+'_日度退订')
+                sheet.append(['取消日期', '当日小订退', '累计小订退'])
+                for i in range(count):
+                    sheet.append([start+timedelta(days=i), 1, i+1])
+            book.save(folder/'鸿蒙智行小订退订分析.xlsx'); book.close()
+        book = self.build(end='2026-10-08', as_of='2026-10-15', source_edit=source_edit, add_sources=sources)
+        master = table_records(book, MASTER_SHEET)[0]
+        for field, value in {'总小转大':50, '总直接大定':100, '总退订':50,
+                             '小订转化率':.5, '直接大定占比':2/3, '退订率':.5}.items():
+            self.assertAlmostEqual(master[field], value, msg=field)
+        days = {str(r['日期'])[:10]: r for r in table_records(book, DAILY_SHEET)}
+        self.assertEqual((days['2026-10-08']['小转大'], days['2026-10-08']['直接大定']), (1, 2))
+        for sheet in ('小转大累计完成度', '直接大定累计完成度'):
+            self.assertEqual(table_records(book, sheet)[0]['D50'], 1)
+        self.assertEqual(table_records(book, '累计退订率')[0]['D50'], .5)
+
+    def test_generation_date_padding_never_starts_at_other_models_2021_coverage(self):
+        def sources(folder):
+            book = Workbook()
+            sheet = book.active; sheet.title = self.model+'by天'
+            sheet.append(['指标', '统计类型', '分类', datetime(2026, 9, 4), datetime(2026, 9, 6)])
+            sheet.append(['大定', '数量', '数量', 4, 6])
+            older = book.create_sheet('问界 M5 2021款by天')
+            older.append(['指标', '统计类型', '分类', datetime(2021, 1, 1), datetime(2026, 9, 8)])
+            older.append(['大定', '数量', '数量', 1, 2])
+            book.save(folder/'鸿蒙智行大定选配比例分析.xlsx'); book.close()
+        book = self.build(add_sources=sources, as_of='2026-09-10')
+        rows = [r for r in table_records(book, DAILY_SHEET) if r['订单分析代际名'] == self.model]
+        self.assertEqual(min(str(r['日期'])[:10] for r in rows), '2026-08-30')
+        self.assertEqual(next(r for r in rows if str(r['日期'])[:10] == '2026-09-05')['大定'], 0)
+        self.assertNotIn('2026-09-09', [str(r['日期'])[:10] for r in rows])
+        weeks = [r for r in table_records(book, WEEKLY_SHEET) if r['订单分析代际名'] == self.model]
+        self.assertTrue(weeks)
+        self.assertTrue(all(str(r['统计开始'])[:10] >= '2026-08-24' for r in weeks))
+
+    def test_alias_merge_keeps_zero_and_fills_only_blank_cells(self):
+        def sources(folder):
+            path = folder/'鸿蒙智行首销期订单节奏.xlsx'
+            book = load_workbook(path)
+            for original in list(book):
+                alias = book.copy_worksheet(original)
+                alias.title = original.title.replace(' ', '')
+                for cell in alias[2][1:]:
+                    cell.value = cell.value.strftime('%y/%m/%d %H:%M')
+                alias['B4'] = 99
+                alias['C4'] = 20
+            book.save(path); book.close()
+            path = folder/'鸿蒙智行小订退订分析.xlsx'
+            book = load_workbook(path)
+            alias = book.copy_worksheet(book.active)
+            alias.title = alias.title.replace(' ', '')
+            for row in alias.iter_rows(min_row=3):
+                row[0].value = row[0].value.strftime('%y/%m/%d')
+                row[1].value = 99
+                row[2].value = 99
+            book.save(path); book.close()
+        book = self.build(add_sources=sources, launch_quantities={
+            '当日大定数量': [40, 50, 30], '当日小订转大定数量': [0, None, 10],
+            '累计小订转大定数量': [0, 20, 30]})
+        row = table_records(book, '小转大当日数量')[0]
+        self.assertEqual([row[f'D{i}'] for i in (1, 2, 3)], [0, 20, 10])
+        self.assertEqual(table_records(book, MASTER_SHEET)[0]['总小转大'], 30)
+        self.assertEqual(table_records(book, MASTER_SHEET)[0]['总退订'], 6)
+        daily = {str(r['日期'])[:10]: r for r in table_records(book, DAILY_SHEET)}
+        self.assertEqual([daily[f'2026-09-0{i}']['退订数量'] for i in (1,2,3)], [1,2,3])
+
+    def test_event_alias_merge_does_not_combine_secondary_or_legacy_periods(self):
+        from core.excel import WorkbookItem
+        from modules.sales_forecast import _forecast_event_sheets
+        book = Workbook(); book.remove(book.active)
+        names = [self.model+'by天第1期', self.model+'by天第2期',
+                 self.model+' Ultra版by天', self.model+' Pro版by天']
+        for title in names:
+            sheet = book.create_sheet(title)
+            sheet.append(['周期', 'D1']); sheet.append(['时间', datetime(2026,9,1)])
+            sheet.append(['当日大定数量', 1])
+        item = WorkbookItem(Path('首销期订单节奏.xlsx'), book)
+        mapping = {name.lower().replace(' ', '').replace('款', ''): name
+                   for name in (self.model, self.model+' Ultra版', self.model+' Pro版')}
+        with patch('modules.sales_forecast.generation_records', return_value=[]):
+            self.assertEqual([sheet.title for sheet in _forecast_event_sheets(item, mapping)], names)
+        book.close()
+
+    def test_end_day_diagnostic_locates_real_blank_without_inventing_zero(self):
+        from tools.refresh_sales_forecast_data import audit_final_forecast
+        def sources(folder):
+            path = folder/'鸿蒙智行首销期订单节奏.xlsx'
+            book = load_workbook(path)
+            for sheet in book:
+                for row in (4, 5, 6, 7):
+                    sheet.cell(row, 4).value = None
+            book.save(path); book.close()
+        book = self.build(add_sources=sources)
+        self.assertIsNone(table_records(book, MASTER_SHEET)[0]['总小转大'])
+        # Exercise raw-column evidence separately: one compact final-object
+        # diagnostic rather than one warning per historical day.
+        raw = {'model': self.model, 'day_source': {'file': '原文件.xlsx', 'sheet': self.model+'by天'},
+               '_launch_day_inputs': {'dates': [date(2026,9,i) for i in (1,2,3)],
+                   'periods': ['D1','D2','D3'], 'small_to_big': [10,20,None],
+                   'direct': [40,30,None], 'lock': [25,25,15], 'date_row': 2,
+                   'field_rows': {'small_to_big': 4, 'direct': 6}},
+               'cancel_days': [{'date': '2026-09-03', 'cancel': 6, 'daily_cancel': 3}]}
+        with self.assertLogs('sales_forecast_refresh', level='WARNING'):
+            messages = audit_final_forecast(book, date(2026,9,5), raw_profiles=[raw])
+        detail = next(m for m in messages if '[预测历史参考缺项]' in m)
+        self.assertIn('小转大缺日=D3', detail)
+        self.assertIn('D2日期=', detail)
+        self.assertIn('D4原值=None→解析值=None', detail)
+        self.assertIn('源表最后可解析日期=2026-09-03', detail)
+
     def test_text_quantities_in_both_launch_and_cancel_sheets_fill_saved_workbook(self):
         self.assert_complete(self.build(text_counts=True))
 

@@ -1246,7 +1246,11 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
                         if _iso_week_bounds(period):
                             keep(weekly, (model, period, field), value)
                 if grain == "day":
-                    filled = _fill_sparse_dates(observed, (field,), coverage, end=today)
+                    # File-wide bounds prove the update cutoff, not when this
+                    # generation first existed. Do not pad new models to 2021.
+                    first = min((_as_date(r['date']) for r in observed), default=None)
+                    filled = (_fill_sparse_dates(observed, (field,), coverage, start=first, end=today)
+                              if first else observed)
                     for entry in filled:
                         keep(daily, (model, entry["date"], field), entry.get(field))
     data["mix_daily"], data["mix_weekly"] = daily, weekly
@@ -1446,7 +1450,7 @@ def audit_final_forecast(workbook, today, data=None, raw_profiles=None):
     """Diagnose the selected visible values, not gaps in one preliminary source."""
     from core.forecast_summary import MASTER_SHEET, ORDER_FIELDS, iso_day
     from core.model_identity import has_reservation
-    from modules.sales_forecast import _profile_hard_errors, _forecast_stage, _as_date
+    from modules.sales_forecast import _profile_hard_errors, _forecast_stage, _as_date, _optional_count
     masters = table_records(workbook, MASTER_SHEET)
     lookup = {(row.get("订单分析代际名"), iso_day(row.get("日期"))): row
               for row in table_records(workbook, DAILY_SHEET) if row.get("订单分析代际名") and row.get("日期")}
@@ -1508,6 +1512,31 @@ def audit_final_forecast(workbook, today, data=None, raw_profiles=None):
                     absent = [f"D{i+1}" for i in range((end-start).days+1)
                               if not valid(lookup.get((model, (start+timedelta(days=i)).isoformat()), {}).get(label))]
                     locations.append(f"{label}缺日={compact_diagnostic_ranges(absent) or '无'}")
+                    if f'D{(end-start).days+1}' in absent:
+                        inputs = raw.get('_launch_day_inputs', {})
+                        stamps, periods = inputs.get('dates', []), inputs.get('periods', [])
+                        final_label = f'D{(end-start).days+1}'
+                        indices = [i for i in range(max(len(stamps), len(periods)))
+                                   if (i < len(stamps) and _as_date(stamps[i]) == end)
+                                   or (i < len(periods) and str(periods[i]).strip().upper() == final_label)]
+                        probes = []
+                        values = inputs.get(field, [])
+                        for i in indices:
+                            col = get_column_letter(i+2)
+                            stamp = stamps[i] if i < len(stamps) else None
+                            value = values[i] if i < len(values) else None
+                            probes.append(f"{col}{inputs.get('date_row') or '?'}日期={stamp!r}→{iso_day(_as_date(stamp)) or '不可解析'}，"
+                                          f"{col}{inputs.get('field_rows', {}).get(field) or '?'}原值={value!r}→解析值={_optional_count(values, i)!r}")
+                        if inputs:
+                            latest = max((d for stamp in stamps if (d := _as_date(stamp))), default=None)
+                            locations.append(f"{label}末日源列={'；'.join(probes) if probes else '未找到末日日期或'+final_label+'列'}"
+                                             f"（源表最后可解析日期={iso_day(latest) or '无'}）")
+                if '总退订' in missing:
+                    cancellations = raw.get('cancel_days', [])
+                    last = max(cancellations, key=lambda r: r.get('date') or '', default={})
+                    terminal = next((r for r in cancellations if r.get('date') == iso_day(end)), {})
+                    locations.append(f"退订末日={iso_day(end)}：当日={terminal.get('daily_cancel')!r}，累计={terminal.get('cancel')!r}"
+                                     f"（源表最后可解析日期={last.get('date') or '无'}）")
                 detail = f" | 取数定位={'；'.join(locations)}" if locations else ""
                 messages.append(f"[预测历史参考缺项] 代际={model} | 阶段=首销已结束 | 首销窗口={iso_day(start)}~{iso_day(end)} | 缺失字段={'、'.join(missing)} | 已检查来源={master.get('订单来源文件') or '未匹配'}{detail} | 影响=仅对应历史指标不可用，保留已知数量，不停止其他有效预测")
     for message in messages:

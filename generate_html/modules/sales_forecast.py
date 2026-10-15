@@ -1632,13 +1632,60 @@ def _small_campaign_rows(model, rows, windows):
     return owned, overlap
 
 
+def _forecast_event_sheets(item, mapping):
+    """Merge aliases before parsing; never replace a complete event by its alias.
+
+    Reuse physical-source merging so duplicate dates keep the first nonblank
+    cell (including zero), conflicts are diagnosed, and distinct events keep
+    their secondary-generation identities.
+    """
+    from core.excel import merge_source_sheets, _merge_matrix, _merge_records
+    groups = {}
+    for index, sheet in enumerate(item.workbook.worksheets):
+        grain = grain_from_sheet(sheet.title)
+        kind = ('cancel' if '日度退订' in sheet.title else
+                'small_hour' if '小订分时退订' in sheet.title else grain)
+        model = _canonical_model(sheet_subject(sheet.title), mapping)
+        legacy = re.search(r'by[时天](第\s*\d+\s*期)', sheet.title)
+        event = re.sub(r'\s+', '', legacy[1]) if legacy else ''
+        key = (model, kind, event) if model and kind and '图表' not in sheet.title else (index,)
+        groups.setdefault(key, []).append(sheet)
+    for sheets in groups.values():
+        if len(sheets) == 1:
+            yield sheets[0]
+            continue
+        matches = [match for sheet in sheets for match in
+                   getattr(sheet, '_source_matches', [(item, sheet)])]
+        if all('首销期订单节奏' in source.path.name for source, _ in matches):
+            # Same calendar timestamp can be an Excel date or exported text.
+            # Normalize join keys before sorting; otherwise a lower-priority
+            # text-date column may precede and overwrite the real zero.
+            parse_time = _as_date if grain_from_sheet(sheets[0].title) == 'day' else _as_datetime
+            merged = (matches[0][0], _merge_matrix(matches, 2, 1, time_row=2, time_key=parse_time))
+        elif '日度退订' in sheets[0].title:
+            merged = (matches[0][0], _merge_records(matches, ({'取消日期', '退订日期', '日期'},),
+                                                    key_parsers=(_as_date,)))
+        elif '小订分时退订' in sheets[0].title:
+            merged = (matches[0][0], _merge_records(matches,
+                ({'小订日期', '下单日期', '日期'}, {'小订小时', '小时', '时段'}), key_parsers=(_as_date,)))
+        else:
+            merged = merge_source_sheets(matches)
+        if merged is None:
+            yield from sheets
+            continue
+        LOGGER.info('[预测同代际来源合并] 代际=%s | Sheet=%s | 处理=按日期逐字段补缺，首个非空值优先，不覆盖整段',
+                    _canonical_model(sheet_subject(sheets[0].title), mapping),
+                    '、'.join(sheet.title for sheet in sheets))
+        yield merged[1]
+
+
 def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[dict[str, Any]], list[SourceRef]]:
     profiles: dict[str, dict[str, Any]] = {}
     sources: list[SourceRef] = []
     model_mapping = _read_model_mapping()
     launch_item = store.find("首销期订单节奏")
     if launch_item:
-        for sheet in launch_item.workbook.worksheets:
+        for sheet in _forecast_event_sheets(launch_item, model_mapping):
             model = _canonical_model(sheet_subject(sheet.title), model_mapping)
             grain = grain_from_sheet(sheet.title)
             if not model or grain not in ("day", "hour"):
@@ -1652,6 +1699,18 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 small = rows.get("当日小订转大定数量", [])
                 direct = rows.get("当日直接大定数量", [])
                 locks = rows.get("当日交车锁单数量", [])
+                # Retain lightweight raw-column evidence until the final audit.
+                # It is not an Excel cache and is never sent to the web payload.
+                profile['_launch_day_inputs'] = {
+                    'dates': dates, 'periods': rows.get('周期', []),
+                    'small_to_big': small, 'direct': direct, 'lock': locks,
+                    'date_row': next((r for r in range(1, sheet.max_row+1)
+                                      if str(sheet.cell(r, 1).value or '').strip() == '时间'), None),
+                    'field_rows': {field: next((r for r in range(1, sheet.max_row+1)
+                                      if str(sheet.cell(r, 1).value or '').strip() == label), None)
+                                   for field, label in (('small_to_big', '当日小订转大定数量'),
+                                                       ('direct', '当日直接大定数量'), ('lock', '当日交车锁单数量'))},
+                }
                 # Keep source cumulative quantities as facts, not ratios to be
                 # inverted. The summary resolver checks their campaign anchor
                 # and source priority before filling any daily/terminal gaps.
@@ -1862,7 +1921,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
 
     cancel_item = store.find("小订退订分析")
     if cancel_item:
-        for sheet in cancel_item.workbook.worksheets:
+        for sheet in _forecast_event_sheets(cancel_item, model_mapping):
             if "小订分时退订" in sheet.title:
                 model = _canonical_model(sheet.title.split("_", 1)[0], model_mapping)
                 profile_name = next((name for name in profiles if _same_model(name, model)), model)

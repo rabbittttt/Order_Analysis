@@ -753,7 +753,7 @@ class _OverlapDiagnostics:
         self.notes.clear()
 
 
-def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward_headers=(), time_row=None,
+def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward_headers=(), time_row=None, time_key=None,
                   column_group_row=None, sparse_headers=(), quantity_columns=False,
                   diagnostics=None, diagnostic_metric=None):
     """Union an identified table by business labels; first nonblank value wins.
@@ -825,6 +825,8 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 if isinstance(value, (int, float)) and 20000 < value < 100000:
                     from openpyxl.utils.datetime import from_excel
                     value = from_excel(value)
+                if time_key is not None:
+                    value = time_key(value) or value
                 key = (_source_key(value),)
             else:
                 key = tuple(_source_key(value) for value, _ in labels)
@@ -987,7 +989,7 @@ def _conflict_location(previous, current, key):
     return kind, example
 
 
-def _merge_records(matches, key_aliases, *, header_depth=1):
+def _merge_records(matches, key_aliases, *, header_depth=1, key_parsers=()):
     """Union records by named date/hour/period fields, not physical positions."""
     aliases = [{compact_identifier(value) for value in group} for group in key_aliases]
     columns, records = {}, {}
@@ -1035,7 +1037,9 @@ def _merge_records(matches, key_aliases, *, header_depth=1):
             keys = [sheet.cell(row, col).value for col in key_cols]
             if any(value in (None, "") for value in keys):
                 continue
-            row_key = tuple(_source_key(value) for value in keys)
+            row_key = tuple(_source_key((key_parsers[i](value) or value)
+                                       if i < len(key_parsers) and key_parsers[i] else value)
+                            for i, value in enumerate(keys))
             record = records.setdefault(row_key, {})
             for col, field in by_column.items():
                 cell = sheet.cell(row, col)
