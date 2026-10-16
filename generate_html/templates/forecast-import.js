@@ -53,7 +53,7 @@
       for(const [field,column] of (small>=0||gross>=0?[['small',small],['gross',gross]]:[['quantity',quantity]])){
         if(column<0)continue;
         const raw=row[column];if(raw==null||String(raw).trim()==='')continue;
-        const value=Number(raw);if(!Number.isSafeInteger(value)||value<0)throw Error('第'+(i+2)+'行数量须为非负整数');
+        const value=Number(raw);if(typeof raw==='boolean'||!Number.isSafeInteger(value)||value<0)throw Error('第'+(i+2)+'行数量须为非负整数');
         result[field]=value;
       }
       if(Object.keys(result).length===2)throw Error('第'+(i+2)+'行至少填写一种预测数量');
@@ -110,7 +110,9 @@
         const column=[...letters].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0)-1;
         if(column>100)throw Error('请仅保留预测数据列');
         const type=cell.getAttribute('t'),value=cell.getElementsByTagName('v')[0]?.textContent;
-        row[column]=type==='s'?strings[Number(value)]:type==='inlineStr'?[...cell.getElementsByTagName('t')].map(t=>t.textContent).join(''):value==null?'':(!type||type==='n')?Number(value):value;
+        // Empty formula caches are unknown, not numeric zero. Preserve Excel's
+        // boolean type so quantity validation cannot coerce TRUE/FALSE to 1/0.
+        row[column]=type==='s'?strings[Number(value)]:type==='inlineStr'?[...cell.getElementsByTagName('t')].map(t=>t.textContent).join(''):value==null||!value.trim()?'':type==='b'?value==='1':(!type||type==='n')?Number(value):value;
       }
       rows.push(row);
     }
