@@ -372,7 +372,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         ["口径", "数量与空值", "单位：单；0是已知无销量，空白是未知。未来日期不视为真实完成日。", None, None],
         ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。by时保存小时数量及已知小时分项，不存累计列；by天的首销分时核对列记录可用于完整日核对的分项。", None, None],
         ["口径", "参考曲线", "小订累计完成度、小订当日数量按小订窗口排列D1、D2；已有日量和可计算比例均保留，分母未知才留空。进行中、当日或未来数据不作为完整终局参考；参考来源与终值资格见车型基本信息，D1/D2另标口径状态。", None, None],
-        ["口径", "退订", "首销日小订退订逐日按整理表退订当日数量→小订退订分析日度退订的当日小订退补缺，真实0优先保留。累计沿用已知首销前基数；日度累计小订退只补可兼容的累计点，不覆盖优先日量，不混入大定退订。累计退订率仅截首销日期，D1为首销开始日。", None, None],
+        ["口径", "退订", "退订当日数量的D1为截至首销D1的累计小订退订（含首销前），D2起为当日新增；by天和D1/D2指标仍保存真实当日量。日量按整理表→小订退订分析的当日小订退补缺，真实0有效；累计只用兼容的真实累计，不混入大定退订。累计退订率仅截首销日期，分母为总小订。", None, None],
         ["口径", "小订及首销前", "整理表真实小订by天 → 小订选配比例by天 → 小订退订分析分时按日汇总；整理表须同一小订开始日期及维护窗口。D1分时只取小订分时退订。", None, None],
         ["口径", "首销窗口", "整理表 → 首销期订单节奏 → 对应大定/锁单选配比例表补缺；退订独立取数。进入平销不改变历史首销日的优先级。", None, None],
         ["口径", "首销结束后的日期", "大定、留存大定取大定选配比例，交车锁单取锁单选配比例；整理表不延伸到首销后，小订/小转大/直接大定不延伸各自维护窗口。", None, None],
@@ -898,7 +898,7 @@ def refresh_reference_tables(book, data, emit, daily, today):
         prior_day = (date.fromisoformat(start)-timedelta(days=1)).isoformat() if start else ""
         cancel_base = data.get("resolved_cancel_cumulative", {}).get((model, prior_day), 0)
         if (model, prior_day) not in data.get("resolved_cancel_cumulative", {}) and start in cancel_anchors:
-            raw_start = next((day for day in profile.get("cancel_days", []) if iso_day(day.get("date")) == start), {})
+            raw_start = next((day for day in actuals.get(model, {}).get("cancel_days", []) if iso_day(day.get("date")) == start), {})
             raw_daily = raw_start.get("daily_cancel")
             cancel_base = (cancel_anchors[start]-raw_daily if valid_quantity(raw_daily) and cancel_anchors[start] >= raw_daily else None)
         history_days = {day for owner, day in data.get("resolved_cancel_history_days", ()) if owner == model}
@@ -944,7 +944,12 @@ def refresh_reference_tables(book, data, emit, daily, today):
         derived["小转大当日数量"].append([name, *s])
         derived["直接大定当日数量"].append([name, *d])
         derived[GROSS_DAILY_SHEET].append([name, *g])
-        derived["退订当日数量"].append([name, *c])
+        # Seed the exported roll-forward at launch D1, not at the latest date.
+        # Keep c unchanged: by-day facts and D1/D2 features are actual daily counts.
+        cancel_export = list(c)
+        if cancel_export:
+            cancel_export[0] = cumulative_counts["退订数量"][0]
+        derived["退订当日数量"].append([name, *cancel_export])
         for title, field, denominator in (("小转大累计完成度", "小转大", "总小转大"), ("直接大定累计完成度", "直接大定", "总直接大定"),
             (GROSS_PROGRESS_SHEET, "大定", "总大定"), ("累计小订转化率", "小转大", "总小订"), ("累计退订率", "退订数量", "总小订")):
             progress = [safe_div(value, r.get(denominator)) for value in cumulative_counts[field]]
