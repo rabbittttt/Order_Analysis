@@ -318,7 +318,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
                 {"file": item.get("source_file"), "sheet": "、".join(item.get("daily_source_sheets", []))}, {"交车锁单": day.get("lock")})
     rows = resolved_daily_rows(rows, data, master, history_file, as_of_date or date.today(), raw_profiles)
     headers = ["订单分析代际名", "历史传播名", "日期", "订单阶段", "生命周期", "日期状态", "小订数量", "退订数量",
-               *ORDER_FIELDS.values(), "字段来源", "首销分时核对"]
+               "小转大", "直接大定", "大定", "留存大定", "交车锁单", "字段来源", "首销分时核对"]
     for sheet, key, field, label, source_key in (
         (SMALL_HOURLY_SHEET, "small_hourly_days", "orders", "小时小订", "small_hour_source"),
         (LAUNCH_HOURLY_SHEET, "hourly_days", "gross", "小时大定", "hour_source")):

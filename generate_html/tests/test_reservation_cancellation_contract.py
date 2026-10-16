@@ -31,7 +31,7 @@ class ReservationCancellationContractTests(TestCase):
     def test_daily_export_has_small_and_small_cancellation_adjacent(self):
         book = self.public_book()
         headers = [cell.value for cell in book[DAILY_SHEET][1]]
-        self.assertEqual(headers[6:13], ['小订', '小订退订', '大定', '留存大定', '小转大', '直接大定', '交车锁单'])
+        self.assertEqual(headers[6:13], ['小订', '小订退订', '小转大', '直接大定', '大定', '留存大定', '交车锁单'])
         self.assertNotIn('小订数量', headers)
         self.assertNotIn('退订数量', headers)
         self.assertEqual(headers[:2], ['代际名', '二级代际名'])
@@ -40,6 +40,8 @@ class ReservationCancellationContractTests(TestCase):
         launch = next(row for row in raw if row['日期'] == datetime(2026, 1, 3))
         self.assertEqual(first_small['小订'], 0)
         self.assertEqual(launch['小订退订'], 4)
+        self.assertEqual(launch['小转大'], 10)
+        self.assertEqual(launch['直接大定'], 20)
         self.assertEqual(launch['大定'], 30)
 
     def test_web_reads_new_and_legacy_headers_identically(self):
