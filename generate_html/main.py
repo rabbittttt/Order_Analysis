@@ -191,11 +191,17 @@ def configure_runtime(output_dir: Path, debug: bool = False) -> Path:
     duplicate_filter = DuplicateDiagnosticFilter()
     for handler in (console, file_handler, diagnostic_handler):
         handler.addFilter(duplicate_filter)
+    level = logging.DEBUG if debug else logging.INFO
+    logging.disable(logging.NOTSET)
     logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
+        level=level,
         handlers=[console, file_handler, diagnostic_handler],
         force=True,
     )
+    # force=True resets root handlers, not a named logger's level/disabled flag.
+    LOGGER.setLevel(level)
+    LOGGER.disabled = False
+    LOGGER.propagate = True
     return log_file
 
 

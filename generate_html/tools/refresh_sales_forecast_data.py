@@ -22,6 +22,7 @@ from openpyxl.utils import get_column_letter
 
 
 LOGGER = logging.getLogger("sales_forecast_refresh")
+G9_TRACE_VERSION = "G9-20261016-v2"
 ROOT = Path(__file__).resolve().parent
 GENERATE_HTML_ROOT = ROOT.parent
 if str(GENERATE_HTML_ROOT) not in sys.path:
@@ -720,7 +721,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     started = perf_counter()
     timings = {}
     mapping, aliases = load_mapping(mapping_path)
-    forecast_trace(G9_TRACE_MODEL, '刷新启动', 诊断版本='G9-20261015-v1', 执行脚本=str(Path(__file__).resolve()),
+    forecast_trace(G9_TRACE_MODEL, '刷新启动', 诊断版本=G9_TRACE_VERSION, 执行脚本=str(Path(__file__).resolve()),
                    整理表=str(source.resolve()), 映射文件=str(mapping_path.resolve()), 输出=str(output.resolve()),
                    订单目录=str(orders_dir.resolve()) if orders_dir else None, 判定日期=as_of_date or date.today().isoformat(),
                    订单来源文件=[p.name for p in forecast_order_files(orders_dir)] if orders_dir else [])
@@ -1938,10 +1939,35 @@ def resolve_mapping_path(requested: Path) -> Path:
     return requested
 
 
+def configure_refresh_logging(debug: bool = False) -> None:
+    """The CLI owns its process logging, even when a launcher configured it first."""
+    root = logging.getLogger()
+    previous = {"根级别": logging.getLevelName(root.level),
+                "刷新级别": logging.getLevelName(LOGGER.level),
+                "刷新已禁用": LOGGER.disabled, "向上传递": LOGGER.propagate,
+                "全局禁用阈值": logging.getLevelName(root.manager.disable),
+                "处理器级别": [logging.getLevelName(handler.level) for handler in root.handlers]}
+    level = logging.DEBUG if debug else logging.INFO
+    logging.disable(logging.NOTSET)
+    logging.basicConfig(level=level, format="[%(levelname)s] %(message)s", stream=sys.stdout, force=True)
+    LOGGER.setLevel(level)
+    LOGGER.disabled = False
+    LOGGER.propagate = True
+    # Deliberately bypass forecast_trace/model matching: this must be visible
+    # before any workbook is read, including reuse and input-failure paths.
+    LOGGER.info("[G9取数排查] 环节=入口日志自检 | %s", json.dumps({
+        "诊断版本": G9_TRACE_VERSION, "执行脚本": str(Path(__file__).resolve()),
+        "核心模块": getattr(sys.modules.get(forecast_trace.__module__), "__file__", None),
+        "Python": sys.executable, "初始化前": previous,
+        "当前有效级别": logging.getLevelName(LOGGER.getEffectiveLevel()),
+        "说明": "本行不依赖代际匹配；详细取数仍只跟踪目标G9，不改变任何取数规则",
+    }, ensure_ascii=False))
+
+
 def main() -> int:
     reset_conflict_diagnostics()
     args = parse_args()
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO, format="[%(levelname)s] %(message)s", stream=sys.stdout)
+    configure_refresh_logging(args.debug)
     try:
         args.source = resolve_source_path(args.source)
         if args.mapping == DEFAULT_MAPPING:
