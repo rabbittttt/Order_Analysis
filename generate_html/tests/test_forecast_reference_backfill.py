@@ -21,7 +21,8 @@ class ForecastReferenceBackfillTests(TestCase):
         book.active.title = MASTER_SHEET
         fields = ['历史传播名', '订单分析代际名', '首销开始', '首销结束', '首销天数',
                   '小订开始', '小订结束', '总小订', '总小转大', '小订转化率', '总直接大定',
-                  '直接大定占比', '总大定', '总退订', '退订率', '首销期留存大定', '首销期锁单']
+                  '直接大定占比', '总大定', '总退订', '退订率', '首销期留存大定', '首销期锁单',
+                  '留存大定率', '留存大定到锁单率', '大定到锁单率']
         row = dict(zip(fields[:8], ['测试车', '测试车', '2026-01-03', '2026-01-05', 3,
                                    '2026-01-01', '2026-01-02', small_total]))
         row.update(maintained or {})
@@ -74,6 +75,83 @@ class ForecastReferenceBackfillTests(TestCase):
         self.assertEqual(self.record(book, '累计小订转化率')['D1'], .1)
         self.assertEqual(self.record(book, '累计退订率')['D3'], .25)
         self.assertEqual(self.record(book, D12_SHEET)['D1退订率'], .05)
+
+    def test_g9_available_totals_recalculate_rates_despite_missing_final_breakdown(self):
+        book = self.build(daily=[
+            dict(date='2026-01-03', small_to_big=2412, direct=140, gross=2552, net=2318, lock=2263),
+            dict(date='2026-01-04', small_to_big=4886, direct=3497, gross=8383, net=7569, lock=7394),
+            dict(date='2026-01-05', gross=378, net=313, lock=211),
+        ], maintained={'留存大定率': 0, '留存大定到锁单率': '#DIV/0!', '大定到锁单率': 0})
+        row = self.record(book)
+        self.assertEqual((row['总大定'], row['首销期留存大定'], row['首销期锁单']), (11313, 10200, 9868))
+        for field, expected in (('留存大定率', 10200/11313),
+                                ('留存大定到锁单率', 9868/10200), ('大定到锁单率', 9868/11313)):
+            self.assertAlmostEqual(row[field], expected)
+        self.assertIsNone(row['总小转大'])
+        self.assertIsNone(row['总直接大定'])
+        item = _history_item(row, True)
+        self.assertAlmostEqual(item['net_rate'], 10200/11313)
+        self.assertAlmostEqual(item['lock_rate'], 9868/11313)
+
+    def test_all_derived_rates_follow_final_quantities_not_stale_maintained_ratios(self):
+        expected = {'小订转化率': .5, '直接大定占比': .75, '退订率': .25,
+                    '留存大定率': .9, '留存大定到锁单率': 32/36, '大定到锁单率': .8}
+        daily = [dict(r, net=r['gross']*.9, lock=r['gross']*.8) for r in self.quantities()]
+        cancel = [dict(date=f'2026-01-0{i+3}', daily_cancel=n, cancel=c)
+                  for i, (n, c) in enumerate(((1, 1), (1, 2), (3, 5)))]
+        for old in (0, '#DIV/0!', .123):
+            with self.subTest(old=old):
+                book = self.build(daily=daily, cancel=cancel, maintained=dict.fromkeys(expected, old))
+                row = self.record(book)
+                for field, value in expected.items():
+                    self.assertAlmostEqual(row[field], value, msg=field)
+                self.assertEqual(row['总大定'], 40)
+                self.assertEqual(row['总小转大'], 10)
+                self.assertEqual(row['总直接大定'], 30)
+
+    def test_missing_quantities_preserve_only_valid_maintained_ratios(self):
+        fields = ('小订转化率', '直接大定占比', '退订率', '留存大定率',
+                  '留存大定到锁单率', '大定到锁单率')
+        for value in (0, .6, 1, None, '', '#DIV/0!', '#N/A', -1, 1.2, True, False,
+                      float('nan'), float('inf')):
+            with self.subTest(value=value):
+                book = self.build(maintained=dict.fromkeys(fields, value))
+                row = self.record(book)
+                expected = value if type(value) in (int, float) and 0 <= value <= 1 else None
+                for field in fields:
+                    self.assertEqual(row[field], expected, field)
+
+    def test_real_zero_numerators_recalculate_zero_rates(self):
+        book = self.build(daily=[dict(r, net=0, lock=0) for r in self.quantities()],
+                          maintained={'留存大定率': .9, '大定到锁单率': .8,
+                                      '留存大定到锁单率': .6})
+        row = self.record(book)
+        self.assertEqual(row['留存大定率'], 0)
+        self.assertEqual(row['大定到锁单率'], 0)
+        self.assertEqual(row['留存大定到锁单率'], .6)  # 0/0 cannot replace an independent maintained rate.
+
+    def test_zero_denominator_does_not_invent_a_rate(self):
+        book = self.build(maintained={'总大定': 0, '首销期留存大定': 0, '首销期锁单': 0,
+                                      '留存大定率': '#DIV/0!', '大定到锁单率': None,
+                                      '留存大定到锁单率': '#DIV/0!'})
+        row = self.record(book)
+        for field in ('留存大定率', '大定到锁单率', '留存大定到锁单率'):
+            self.assertIsNone(row[field], field)
+
+    def test_invalid_quantity_cannot_be_coerced_to_zero_to_overwrite_valid_rate(self):
+        for value in ('#DIV/0!', -1, True, float('nan'), float('inf')):
+            with self.subTest(value=value):
+                book = self.build(maintained={'总大定': 40, '首销期留存大定': value, '留存大定率': .9})
+                self.assertEqual(self.record(book)['留存大定率'], .9)
+
+    def test_recalculation_uses_selected_maintained_totals_without_changing_priority(self):
+        book = self.build(daily=[dict(r, net=r['gross']*.9, lock=r['gross']*.8)
+                                 for r in self.quantities()], maintained={
+            '总大定': 100, '首销期留存大定': 80, '首销期锁单': 60,
+            '留存大定率': 0, '留存大定到锁单率': 0, '大定到锁单率': 0})
+        row = self.record(book)
+        self.assertEqual((row['总大定'], row['首销期留存大定'], row['首销期锁单']), (100, 80, 60))
+        self.assertEqual((row['留存大定率'], row['留存大定到锁单率'], row['大定到锁单率']), (.8, .75, .6))
 
     def test_partial_history_fills_each_field_from_real_launch_days(self):
         book = self.build(daily=self.quantities(), history={

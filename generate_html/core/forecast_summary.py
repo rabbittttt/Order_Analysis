@@ -801,6 +801,8 @@ def refresh_small_reference_tables(book, masters, headers, lookup, emit, today):
 def refresh_reference_tables(book, data, emit, daily, today):
     """Rebuild reference features from the same resolved quantities as actuals."""
     from tools.refresh_sales_forecast_data import safe_div, day_structure_quality
+    valid_quantity = lambda value: (isinstance(value, (int, float)) and not isinstance(value, bool)
+                                    and math.isfinite(value) and value >= 0)
     masters = table_records(book, MASTER_SHEET)
     headers = [c.value for c in book[MASTER_SHEET][1]]
     headers.extend(k for k in ("首销阶段", "首销参考终值有效") if k not in headers)
@@ -876,16 +878,17 @@ def refresh_reference_tables(book, data, emit, daily, today):
         for output, numerator, denominator in (("小订转化率", "总小转大", "总小订"), ("直接大定占比", "总直接大定", "总大定"),
             ("退订率", "总退订", "总小订"), ("留存大定率", "首销期留存大定", "总大定"),
             ("留存大定到锁单率", "首销期锁单", "首销期留存大定"), ("大定到锁单率", "首销期锁单", "总大定")):
-            calculated = safe_div(r.get(numerator), r.get(denominator))
+            top, bottom, previous = r.get(numerator), r.get(denominator), r.get(output)
+            calculated = safe_div(top, bottom) if valid_quantity(top) and valid_quantity(bottom) and bottom > 0 else None
+            maintained_valid = valid_quantity(previous) and previous <= 1
             forecast_trace(model, '比例判定', 字段=output, 分子字段=numerator, 分子=r.get(numerator),
                            分母字段=denominator, 分母=r.get(denominator), 已有值=r.get(output), 计算值=calculated,
-                           动作=('保留已有维护值' if r.get(output) not in (None, '') and output != '退订率' else
-                                 '分子未知、分母未知或非正数，保留原值或空白' if calculated is None else '写入计算值'))
-            # Completed-source rates may be maintained without the quantities;
-            # the two lock-rate denominators are never interchangeable.
-            if r.get(output) in (None, "") or output == "退订率":
-                if calculated is not None:
-                    r[output] = calculated
+                           动作=('按最终选定数量重算' if calculated is not None else
+                                 '数量不足，保留有效维护比例' if maintained_valid else '数量不足且维护比例无效，留空'))
+            # Derive rates after quantity resolution, even when an old rate is nonempty.
+            # Without quantities keep only a valid independently maintained rate;
+            # never replace unknown inputs with zero or swap lock-rate denominators.
+            r[output] = calculated if calculated is not None else previous if maintained_valid else None
         fields = ("总小订", "总小转大", "小订转化率", "总大定", "总直接大定", "直接大定占比", "总退订", "退订率", "首销期留存大定", "留存大定率", "首销期锁单", "大定到锁单率")
         r["字段完整度"] = sum(r.get(k) is not None for k in fields)/len(fields)
         derived["小转大当日数量"].append([name, *s])

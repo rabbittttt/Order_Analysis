@@ -114,6 +114,43 @@ class SourceBackfillEndToEndTests(TestCase):
     def test_only_small_total_with_both_launch_sheets_fills_saved_workbook(self):
         self.assert_complete(self.build())
 
+    def test_stale_source_rates_are_recalculated_after_multi_source_quantity_backfill(self):
+        def source_edit(path):
+            book = load_workbook(path)
+            sheet = book['车型汇总']
+            for key, value in {'小订转化率': 0, '直接大定占比': 0, '退订率': 0,
+                               '留存大定率': 0, '留存大定到锁单率': '#DIV/0!', '大定到锁单率': 0}.items():
+                headers = [c.value for c in sheet[1]]
+                col = headers.index(key)+1 if key in headers else sheet.max_column+1
+                sheet.cell(1, col, key)
+                sheet.cell(2, col, value)
+            book.save(path)
+            book.close()
+        def add_sources(folder):
+            for kind, metrics in (
+                ('大定', [('大定', [50, 50, 30]), ('留存大定', [45, 45, 27])]),
+                ('锁单', [('交车锁单', [25, 25, 15])]),
+            ):
+                book = Workbook()
+                sheet = book.active
+                sheet.title = self.model+' by天'
+                sheet.append(['指标', '统计类型', '分类', *[datetime(2026, 9, i) for i in (1, 2, 3)]])
+                for metric, values in metrics:
+                    sheet.append([metric, '数量', '数量', *values])
+                book.save(folder/f'鸿蒙智行{kind}选配比例分析.xlsx')
+                book.close()
+        for stamp, ended in (('2026-09-03', False), ('2026-09-05', True)):
+            with self.subTest(stamp=stamp):
+                book = self.build(source_edit=source_edit, add_sources=add_sources, as_of=stamp)
+                self.assert_complete(book)
+                master = table_records(book, MASTER_SHEET)[0]
+                self.assertEqual((master['总大定'], master['首销期留存大定'], master['首销期锁单']), (130, 117, 65))
+                for field, value in (('留存大定率', .9), ('留存大定到锁单率', 65/117), ('大定到锁单率', .5)):
+                    self.assertAlmostEqual(master[field], value, msg=field)
+                history, *_ = self.web_inputs(book, date.fromisoformat(stamp))
+                self.assertEqual(history[0]['net_rate'], .9 if ended else None)
+                self.assertEqual(history[0]['lock_rate'], .5 if ended else None)
+
     def test_fifty_day_window_keeps_october_8_across_duplicate_model_sheets(self):
         """A later incomplete alias must not replace the complete source event."""
         from datetime import timedelta
