@@ -95,13 +95,13 @@ class ResolvedSummaryTests(TestCase):
             data['reference_daily'] = {'退订当日数量': {'历史车': [1]}}
         book = self.make(customize)
         metric = table_records(book, D12_SHEET)[0]
-        self.assertEqual(metric['D1退订'], 4)
-        self.assertAlmostEqual(metric['D1退订率'], .04)
+        self.assertEqual(metric['D1退订'], 1)  # Maintained daily quantity now has priority.
+        self.assertAlmostEqual(metric['D1退订率'], .01)
         # Cumulative includes the 16 cancellations already known before launch.
-        self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .2)
+        self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .17)
         book.close()
 
-    def test_explicit_cancel_daily_wins_first_day_and_zero_falls_back_per_field(self):
+    def test_maintained_cancel_daily_wins_each_day_before_source_fallback(self):
         def customize(data):
             raw = data['actuals'][0]
             raw['cancel_days'] = [
@@ -113,12 +113,12 @@ class ResolvedSummaryTests(TestCase):
             data['reference_daily'] = {'退订当日数量': {'历史车': [32, 5, 7]}}
         book = test_public_forecast_tables.PublicForecastTablesTests().make_public(customize=customize, as_of=date(2026, 1, 6))
         days = {r['日期']: r for r in table_records(book, DAILY_SHEET)}
-        self.assertEqual(days[datetime(2026, 1, 3)]['退订数量'], 38)
-        self.assertEqual(days[datetime(2026, 1, 4)]['退订数量'], 0)
-        self.assertIsNone(days.get(datetime(2026, 1, 5), {}).get('退订数量'))
-        self.assertIn('小订退订分析.xlsx', days[datetime(2026, 1, 3)]['字段来源'])
-        self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)
-        self.assertEqual(table_records(book, D12_SHEET)[0]['D1退订'], 38)
+        self.assertEqual(days[datetime(2026, 1, 3)]['退订数量'], 32)
+        self.assertEqual(days[datetime(2026, 1, 4)]['退订数量'], 5)
+        self.assertEqual(days[datetime(2026, 1, 5)]['退订数量'], 7)
+        self.assertIn('小订及首销数据整理.xlsx', days[datetime(2026, 1, 3)]['字段来源'])
+        self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .32)
+        self.assertEqual(table_records(book, D12_SHEET)[0]['D1退订'], 32)
         book.close()
 
     def test_cancel_missing_prior_day_does_not_invent_daily_quantity(self):
@@ -126,7 +126,6 @@ class ResolvedSummaryTests(TestCase):
             raw = data['actuals'][0]
             raw['cancel_days'] = [{'date': '2026-01-03', 'cancel': 38}]
             raw['cancel_source'] = {'file': '小订退订分析.xlsx', 'sheet': '测试车日度退订'}
-            data['reference_daily'] = {'退订当日数量': {'历史车': [32]}}
         book = self.make(customize)
         self.assertIsNone(table_records(book, D12_SHEET)[0]['D1退订'])
         self.assertAlmostEqual(table_records(book, '累计退订率')[0]['D1'], .38)

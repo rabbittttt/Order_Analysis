@@ -1374,7 +1374,8 @@ def _read_steady_history(
     return result, sources
 
 
-def _progress_rows(workbook, sheet_name: str) -> dict[str, list[float | None]]:
+def _progress_rows(workbook, sheet_name: str, *legacy_names: str) -> dict[str, list[float | None]]:
+    sheet_name = next((name for name in (sheet_name, *legacy_names) if name in workbook.sheetnames), sheet_name)
     if sheet_name not in workbook.sheetnames:
         return {}
     sheet = workbook[sheet_name]
@@ -1540,8 +1541,8 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
             "direct_progress": _progress_rows(workbook, "直接大定累计完成度" if processed else "直接大定进度"),
             "direct_share_progress": _progress_rows(workbook, "累计直接大定占比" if processed else "大定进度"),
             "cancel_progress": _progress_rows(workbook, "累计退订率" if processed else "退订进度"),
-            "gross_progress": _progress_rows(workbook, "累计大定完成度"),
-            "daily_orders": _progress_rows(workbook, "总大定当日数量"),
+            "gross_progress": _progress_rows(workbook, "大定累计完成度", "累计大定完成度"),
+            "daily_orders": _progress_rows(workbook, "大定当日数量", "总大定当日数量"),
             "daily_small": _progress_rows(workbook, "小转大当日数量"),
             "daily_direct": _progress_rows(workbook, "直接大定当日数量"),
         }
@@ -3343,7 +3344,7 @@ class SalesForecastModule:
                 "首销结束且真实数据完整时，两种方法均以真实累计收口，不依赖预测参考或分配参数，也不再分配剩余量；真实日期缺失仍停止预测。今天早于D1为首销期未开始；位于D1至首销截止之间（含首尾日期）为首销期进行中；晚于首销截止为首销期已结束。当前Dn按今天与D1的自然日差计算，不按已读取的数据行数计算。",
                 "小订及首销前：真实小订按整理表小订by天→小订选配比例by天→小订退订分析分时按日汇总；要求同一小订开始日期和维护窗口。",
                 "首销结束后的日期：大定、留存大定优先大定选配比例，交车锁单优先锁单选配比例；不延伸整理表、小转大和直接大定。引用过去小订/首销数据仍按当时窗口取值。",
-                "首销窗口内：整理表→首销期订单节奏→对应选配比例表补缺。退订只取小订退订分析；阶段未知保留实际数量但不能正常预测。",
+                "首销窗口内：整理表→首销期订单节奏→对应选配比例表补缺。小订退订逐日按整理表→小订退订分析补缺，真实0保留；阶段未知保留实际数量但不能正常预测。",
                 "by天中早于今天、有日期且大定为数值的行视为已结束真实日期；今天的数据不直接当作完整日冻结。",
                 "今天优先取匹配的by时 Sheet，并按最后一个已采集小时反推当日终值；没有by时时，今天的by天行只作为当日快照。",
                 "汇总先按字段优先级保留实际数量，未知才补缺，真实0不覆盖。分项结构不一致会限制相应预测指标，不在汇总中删除已知数量；日合计不冒充分时快照。",

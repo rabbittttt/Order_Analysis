@@ -34,7 +34,7 @@ class SalesForecastQualityTests(unittest.TestCase):
                     return list(next(result[name].iter_rows(min_row=2, max_row=2, values_only=True)))[1:]
                 self.assertEqual(values("小转大当日数量"), [10, 20, None, None])
                 self.assertEqual(values("直接大定当日数量"), [5, 0, None, None])
-                self.assertEqual(values("总大定当日数量"), [15, 20, None, None])
+                self.assertEqual(values("大定当日数量"), [15, 20, None, None])
                 self.assertEqual(values("小转大累计完成度"), [None] * 4)
                 self.assertEqual(values("累计小订转化率"), [.01, .03, None, None])
                 for actual, expected in zip(values("累计直接大定占比")[:2], [1 / 3, 1 / 7]):
