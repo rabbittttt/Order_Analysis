@@ -1849,7 +1849,7 @@ def reorder_summary_sheets(workbook):
         "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时",
         "预测基准总表",
         "小转大当日数量", "直接大定当日数量",
-        "小转大累计完成度", "直接大定累计完成度", "累计大定完成度", "累计小订转化率", "累计退订率",
+        "小转大累计完成度", "直接大定累计完成度", "累计大定完成度", "累计小订转化率",
         "累计直接大定占比", "每日直接大定占比",
         "车型汇总", "小订by天", "小订进度",
     ]
@@ -1864,8 +1864,11 @@ def reorder_summary_sheets(workbook):
     ordered.extend(raw_sheets)
     if INDEX_SHEET in existing and existing[INDEX_SHEET] not in ordered:
         ordered.append(existing[INDEX_SHEET])
-    remaining = [sheet for sheet in workbook.worksheets if sheet not in ordered]
+    last_sheet = existing.get("累计退订率")
+    remaining = [sheet for sheet in workbook.worksheets if sheet not in ordered and sheet is not last_sheet]
     workbook._sheets = ordered + remaining
+    if last_sheet is not None:
+        workbook._sheets.append(last_sheet)
 
 
 def summary_is_current(source, output, mapping, orders_dir, as_of_date):
