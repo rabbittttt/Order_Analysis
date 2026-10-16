@@ -17,6 +17,7 @@ SUMMARY_NAME = "鸿蒙智行销量数据汇总.xlsx"
 GUIDE_SHEET = "说明与来源"
 MASTER_SHEET = "车型基本信息"
 DAILY_SHEET = "小订首销平销by天"
+DAILY_FIELD_LABELS = {"小订数量": "小订", "退订数量": "小订退订"}
 SMALL_HOURLY_SHEET = "小订by时"
 LAUNCH_HOURLY_SHEET = "首销by时"
 WEEKLY_SHEET = "首销平销by周"
@@ -96,6 +97,10 @@ def table_records(workbook, name):
     headers = [str(value or "").strip() for value in next(rows, ())]
     result = [dict(zip(headers, values)) for values in rows if any(value is not None for value in values)]
     for row in result:
+        if name == DAILY_SHEET:
+            # A single read adapter keeps existing consumers and old workbooks
+            # compatible; these aliases are never extra exported columns.
+            row.update({old: row[new] for old, new in DAILY_FIELD_LABELS.items() if new in row})
         if "二级代际名" in headers and row.get("代际名"):
             event = str(row.get("二级代际名") or row["代际名"])
             row.update({"primary_generation": row["代际名"], "secondary_generation": row.get("二级代际名") or "",
@@ -312,8 +317,8 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
             add(item["model"], None, day, "平销", "平销锁单",
                 {"file": item.get("source_file"), "sheet": "、".join(item.get("daily_source_sheets", []))}, {"交车锁单": day.get("lock")})
     rows = resolved_daily_rows(rows, data, master, history_file, as_of_date or date.today(), raw_profiles)
-    headers = ["订单分析代际名", "历史传播名", "日期", "订单阶段", "生命周期", "日期状态", "小订数量",
-               *ORDER_FIELDS.values(), "退订数量", "字段来源", "首销分时核对"]
+    headers = ["订单分析代际名", "历史传播名", "日期", "订单阶段", "生命周期", "日期状态", "小订数量", "退订数量",
+               *ORDER_FIELDS.values(), "字段来源", "首销分时核对"]
     for sheet, key, field, label, source_key in (
         (SMALL_HOURLY_SHEET, "small_hourly_days", "orders", "小时小订", "small_hour_source"),
         (LAUNCH_HOURLY_SHEET, "hourly_days", "gross", "小时大定", "hour_source")):
@@ -335,7 +340,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件", *component_headers], [records[k] for k in sorted(records)])
         if key == "hourly_days":
             reconcile_intraday_fields(rows, data.get("actuals", []), records)
-    emit(DAILY_SHEET, headers, [[r.get(k) for k in headers] for r in rows])
+    emit(DAILY_SHEET, [DAILY_FIELD_LABELS.get(k, k) for k in headers], [[r.get(k) for k in headers] for r in rows])
     if weekly_builder:
         weekly_rows = weekly_builder(rows)
     weekly = [list(r[:11]) for r in weekly_rows]
@@ -358,7 +363,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         ["口径", "数量与空值", "单位：单；0是已知无销量，空白是未知。未来日期不视为真实完成日。", None, None],
         ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。by时保存小时数量及已知小时分项，不存累计列；by天的首销分时核对列记录可用于完整日核对的分项。", None, None],
         ["口径", "参考曲线", "小订累计完成度、小订当日数量按小订窗口排列D1、D2；已有日量和可计算比例均保留，分母未知才留空。进行中、当日或未来数据不作为完整终局参考；参考来源与终值资格见车型基本信息，D1/D2另标口径状态。", None, None],
-        ["口径", "退订", "退订只取小订退订分析；真实0有效，日量不从缺少前一日基数的累计值猜算。", None, None],
+        ["口径", "退订", "小订退订只取小订退订分析日度退订Sheet：当日量读当日小订退，累计值读累计小订退，不混入大定或总退订。累计退订率按首销日期截取，D1为首销开始日；真实0有效，日量不从缺少前一日基数的累计值猜算。", None, None],
         ["口径", "小订及首销前", "整理表真实小订by天 → 小订选配比例by天 → 小订退订分析分时按日汇总；整理表须同一小订开始日期及维护窗口。D1分时只取小订分时退订。", None, None],
         ["口径", "首销窗口", "整理表 → 首销期订单节奏 → 对应大定/锁单选配比例表补缺；退订独立取数。进入平销不改变历史首销日的优先级。", None, None],
         ["口径", "首销结束后的日期", "大定、留存大定取大定选配比例，交车锁单取锁单选配比例；整理表不延伸到首销后，小订/小转大/直接大定不延伸各自维护窗口。", None, None],
@@ -896,6 +901,9 @@ def refresh_reference_tables(book, data, emit, daily, today):
         for title, field, denominator in (("小转大累计完成度", "小转大", "总小转大"), ("直接大定累计完成度", "直接大定", "总直接大定"),
             ("累计大定完成度", "大定", "总大定"), ("累计小订转化率", "小转大", "总小订"), ("累计退订率", "退订数量", "总小订")):
             progress = [safe_div(value, r.get(denominator)) for value in cumulative_counts[field]]
+            if title == "累计退订率":
+                progress = [value if start and start <= day and (not finish or day <= finish) else None
+                            for day, value in zip(dates, progress)]
             derived[title].append([name, *progress])
         cg, cd = cumulative_counts["大定"], cumulative_counts["直接大定"]
         derived["累计直接大定占比"].append([name, *[safe_div(a, b) for a, b in zip(cd, cg)]])

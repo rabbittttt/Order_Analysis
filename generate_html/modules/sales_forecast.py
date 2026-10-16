@@ -2011,8 +2011,8 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                            表头行=header_row, 列映射={name:i+1 for name,i in header_index.items()})
             cancel_by_date: dict[str, int] = {}
             cancel_rows = []
-            cumulative_column = next((header_index[name] for name in ("累计小订退", "累计退订数", "累计总退订") if name in header_index), None)
-            daily_column = next((header_index[name] for name in ("当日小订退", "当日退订数", "当日总退订") if name in header_index), None)
+            cumulative_column = next((header_index[name] for name in ("累计小订退", "累计小订退订") if name in header_index), None)
+            daily_column = next((header_index[name] for name in ("当日小订退", "当日小订退订") if name in header_index), None)
             rate_column = next((header_index[name] for name in ("整体 - 小订退 %", "小订后退订比例", "小订退订率") if name in header_index), None)
             for values in sheet.iter_rows(min_row=header_row+1, values_only=True):
                 if not values or date_column >= len(values):

@@ -1286,7 +1286,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
         ["文件用途", "统一保存小订、首销、平销历史参考及当前真实订单，网页从本文件读取。"],
         ["更新方式", "更新原始文件后运行main.py。汇总明细由脚本刷新，手工修改会被覆盖。"],
         ["数据边界", "缺失保持空白，真实0保留为0。历史合成曲线、当日快照和未来日期单独标识，不作为已结束日期真实值。"],
-        ["退订口径", "累计小订退订统一放在小订及退订逐日，不与当日大定退订混用。当前订单逐日只放大定、留存大定、小转大、直接大定和交车锁单。"],
+        ["退订口径", "小订首销平销by天按小订、小订退订相邻排列，保存真实当日量；累计退订率采用日度退订的累计小订退并按首销日期截取，不混用大定退订。"],
         ["阅读顺序", "先看字段说明、车型基本信息和数据来源目录；再看小订及退订逐日、当前小订分时、当前订单逐日和当前首销分时；最后核对预测参考。"],
         ["当前结果区", "车型基本信息合并阶段；真实小订按整理表小订by天→小订选配比例by天→小订退订分析分时汇总，退订独立取小订退订分析。"],
         ["预测参考区", "车型基本信息、首销D1D2预测指标及首销参考曲线：保留首销预测现有参考数据和计算结果，首销预测继续读取这些既有口径。"],
@@ -1480,7 +1480,7 @@ def audit_source_retention(workbook, raw_profiles):
     a known in-window field disappear. Derived quantity tables must match the
     selected day facts, independently of their eligibility for web prediction.
     """
-    from core.forecast_summary import MASTER_SHEET, D12_SHEET, LAUNCH_HOURLY_SHEET, ORDER_FIELDS, iso_day, calendar_day
+    from core.forecast_summary import MASTER_SHEET, D12_SHEET, LAUNCH_HOURLY_SHEET, ORDER_FIELDS, DAILY_FIELD_LABELS, iso_day, calendar_day
     valid = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
     masters = {r.get("订单分析代际名"): r for r in table_records(workbook, MASTER_SHEET)}
     daily = {(r.get("订单分析代际名"), iso_day(r.get("日期"))): r for r in table_records(workbook, DAILY_SHEET)}
@@ -1488,6 +1488,8 @@ def audit_source_retention(workbook, raw_profiles):
               for r in table_records(workbook, LAUNCH_HOURLY_SHEET)}
     issues = {}
     def missing(model, sheet, field, day):
+        if sheet == DAILY_SHEET:
+            field = DAILY_FIELD_LABELS.get(field, field)
         issues.setdefault((model, sheet, field), set()).add(day)
     for profile in raw_profiles or []:
         model = profile["model"]
@@ -1684,7 +1686,7 @@ def trace_g9_workbook(book, context='保存前Sheet核对'):
         else:
             labels = [iso_day(r.get('日期')) + (f" {r['小时']}时" if r.get('小时') is not None else '')
                       if r.get('日期') is not None else str(r.get('周期') or '') for r in records]
-            quantities = [k for k in headers if k in {'小订数量','大定','留存大定','小转大','直接大定','交车锁单','退订数量',
+            quantities = [k for k in headers if k in {'小订','小订退订','小订数量','大定','留存大定','小转大','直接大定','交车锁单','退订数量',
                                                       '小时小订','小时大定','小时小转大','小时直接大定','小时交车锁单'}]
             forecast_trace(G9_TRACE_MODEL, context, Sheet=sheet.title, 匹配行数=len(records),
                            日期或周期范围=[min(labels),max(labels)],
