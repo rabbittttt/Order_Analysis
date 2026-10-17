@@ -516,9 +516,16 @@ def main() -> int:
         return 1
     finally:
         cleanup_input_cache(args.input)
-    LOGGER.info("生成成功: %s", args.output)
-    LOGGER.info("汇总: 主体=%d，看板=%d, 警告=%d", len(manifest["subjects"]), len(manifest["dashboards"]), len(warnings))
+    errors = DIAGNOSTIC_COUNTS["ERROR"]
+    if errors:
+        LOGGER.error("生成不完整：发生%d条错误；已保留可用HTML供排查，不自动打开: %s",
+                     errors, args.output, extra={"diagnostic_continuation": True})
+    else:
+        LOGGER.info("生成成功: %s", args.output)
+    LOGGER.info("汇总: 主体=%d，看板=%d, 问题=%d", len(manifest["subjects"]), len(manifest["dashboards"]), len(warnings))
     LOGGER.info("运行日志: %s", log_file)
+    if errors:
+        return 1
     if AUTO_OPEN_HTML and not args.no_open:
         try:
             if sys.platform == "win32":

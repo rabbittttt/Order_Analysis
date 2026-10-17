@@ -1307,12 +1307,12 @@ def read_public_forecast(book, history, today=None):
                 continue
             weeks.append({"period": row["周期"], "start_date": a, "end_date": b, "lock": row["交车锁单"], "gross": row.get("大定") if isinstance(row.get("大定"), (int, float)) and row["大定"] >= 0 else None})
         weeks.sort(key=lambda r: r["start_date"])
-        if any((date.fromisoformat(b["start_date"])-date.fromisoformat(a["start_date"])).days != 7 for a, b in zip(weeks, weeks[1:])):
-            weeks = []
         if not daily_rows and not weeks:
             continue
-        for i, week in enumerate(weeks, 1):
-            week["week"] = i
+        # Unknown gaps do not invalidate independent, completed weekly facts.
+        # Preserve calendar positions; consumers check adjacency before ratios.
+        for week in weeks:
+            week["week"] = (date.fromisoformat(week["start_date"])-date.fromisoformat(weeks[0]["start_date"])).days // 7 + 1
         attrs = _master_record(model_master, model) or {}
         filename = (daily_rows[0].get("来源文件") if daily_rows else None) or SUMMARY_NAME
         sheets = list(dict.fromkeys(r.get("来源Sheet") for r in daily_rows if r.get("来源Sheet")))

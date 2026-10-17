@@ -129,6 +129,15 @@
     return {available,small,direct,gross:endedComplete?actualGross:small+direct};
   }
 
+  // A blank D1 means automatic; a deliberate zero is still a manual count.
+  function launchD1Input(raw) {
+    const supplied = raw !== null && raw !== undefined && String(raw).trim() !== '';
+    const value = supplied ? observedQuantity(raw) : NaN;
+    const error = supplied && !Number.isSafeInteger(value)
+      ? 'D1预测大定须为非负整数，请修正或清空恢复系统推荐' : '';
+    return {supplied, value:error?NaN:value, error};
+  }
+
   // Empty overrides restore the reference; invalid nonempty overrides must not
   // silently fall back or be used as divisors. Manual values retain their precision.
   function launchCompletion(reference, manual, overridden = false) {
@@ -803,6 +812,7 @@
     launchRowIssues,
     launchParameterTerminal,
     launchProgressTerminal,
+    launchD1Input,
     stretchCompletion,
     launchDailyReference,
     adaptLaunchDailyOrders,
