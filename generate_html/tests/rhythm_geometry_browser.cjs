@@ -1,0 +1,78 @@
+// Checks the formal main.py output; never creates or substitutes a test page.
+const path=require('path'),fs=require('fs'),crypto=require('crypto'),assert=require('assert'),{pathToFileURL}=require('url');
+const project=path.resolve(__dirname,'../../..'),{chromium}=require(path.join(project,'.test_runtime/node_modules/playwright'));
+const out=process.env.RHYTHM_ARTIFACT_DIR||path.join(project,'.test_outputs/rhythm_geometry');
+// Baseline comparison is opt-in: never compare new business data with a stale run.
+const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(fs.readFileSync(baselinePath,'utf8')):null;
+(async()=>{
+ fs.mkdirSync(out,{recursive:true});const browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[],report=[];
+ let boards=0,charts=0,snapshots=0,selections=0;
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});page.on('pageerror',error=>errors.push(error.message));
+  const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+  const ready=()=>page.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false'&&[...document.querySelectorAll('[data-rhythm-config]')].every(n=>n._rhythmWidth===Math.floor(n.clientWidth)));
+  await page.goto(base.href);await ready();
+  const blocks=await page.evaluate(()=>window.DASHBOARD_BLOCKS_B64),keys=Object.keys(blocks).filter(key=>/\|(cancellation|launch_rhythm)$/.test(key));
+  assert(keys.length,'no rhythm dashboards in formal output');
+  if(baseline)assert.deepEqual([...keys].sort(),Object.keys(baseline.boards).sort(),'rhythm dashboard availability changed');
+  const representative=process.env.RHYTHM_SCREENSHOT_SUBJECT||keys[0].split('|')[0];
+  assert(keys.some(key=>key.startsWith(representative+'|')),'screenshot subject has no rhythm dashboards');
+  for(const key of keys){if(baseline?.boards[key])assert.equal(crypto.createHash('sha256').update(blocks[key]).digest('hex'),baseline.boards[key],key+' business payload changed');boards++;}
+  for(const width of [1440,768,390]){
+   await page.setViewportSize({width,height:1000});
+   for(const key of keys){
+    const [subject,module]=key.split('|'),url=new URL(base);url.search=new URLSearchParams({subject,module,grain:'day'});
+    await page.goto(url.href);await ready();
+    const actual=await page.evaluate(()=>{
+     const frames=[...document.querySelectorAll('[data-rhythm-config]')],daily=[],hourly=[];
+     const measurements=frames.map(frame=>{
+      const svg=frame.querySelector('svg'),box=frame.getBoundingClientRect(),kind=frame.dataset.rhythmKind;
+      const texts=[...svg.querySelectorAll('text')].map(n=>({text:n.textContent,box:n.getBoundingClientRect()}));let overlaps=0;
+      for(let i=0;i<texts.length;i++)for(let j=i+1;j<texts.length;j++){const a=texts[i].box,b=texts[j].box;if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>2&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>2)overlaps++;}
+      const rows=[...svg.querySelectorAll('[data-rhythm-row]')];
+      if(kind.endsWith('-day'))daily.push(rows.map(n=>n.querySelector(':scope>title')?.textContent));
+      else hourly.push(...[...svg.querySelectorAll('[data-rhythm-bar]>title')].map(n=>n.textContent));
+      return {kind,height:box.height,left:box.left,right:box.right,svgHeight:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,barWidths:[...new Set([...svg.querySelectorAll('[data-rhythm-bar]')].map(n=>n.getBoundingClientRect().width))],plotHeight:Number(svg.dataset.plotHeight),plotLeft:Number(svg.dataset.plotLeft),plotRight:Number(svg.dataset.plotRight),rows:rows.length,overlaps,labelOffsets:[...svg.querySelectorAll('[data-rhythm-label="line"]')].map(n=>Math.abs(Number(n.getAttribute('y'))-Number(n.dataset.pointY))),labelStrokes:[...new Set([...svg.querySelectorAll('.rhythm-line-label')].map(n=>getComputedStyle(n).stroke))]};
+     });return {daily,hourly,measurements,pageOverflow:document.documentElement.scrollWidth>innerWidth+2};
+    });
+    assert(!actual.pageOverflow,key+' page overflow at '+width);
+    assert(actual.measurements.length,key+' missing charts');
+    const edge=actual.measurements[0];
+    for(const m of actual.measurements){
+     assert(Math.abs(m.height-280)<.05,key+' inconsistent frame height');assert(Math.abs(m.svgHeight-260)<.05);
+     assert(Math.abs(m.left-edge.left)<.05&&Math.abs(m.right-edge.right)<.05,key+' chart frames misaligned');
+     assert(Math.abs(m.scale-1)<.001,key+' SVG scaling changes actual bar width');
+     assert(m.barWidths.every(w=>Math.abs(w-32)<.05),key+' unequal actual bar widths: '+m.barWidths);
+     assert.equal(m.plotHeight,194);assert.equal(m.plotLeft,48);assert.equal(m.plotRight,48);
+     assert.equal(m.overlaps,0,key+' text overlaps at '+width+' '+m.kind);
+     assert(m.labelOffsets.every(offset=>offset<=24.01),key+' labels drift away from their points');
+     assert(m.labelStrokes.every(stroke=>stroke==='none'),key+' heavy label halo');
+     if(m.kind.endsWith('-hour'))assert.equal(m.rows,24,key+' lost clock hours');charts++;
+    }
+    if(baseline?.snapshots[key]){assert.deepEqual({daily:actual.daily,hourly:actual.hourly},baseline.snapshots[key],key+' historical quantities/tooltips changed');snapshots++;}
+    if(width===1440){
+     const selects=page.locator('[data-hourly-select],[data-launch-hourly-select]');
+     for(let i=0;i<await selects.count();i++){
+      const control=selects.nth(i),options=await control.locator('option').evaluateAll(nodes=>nodes.map(n=>n.value));
+      if(options.length<2)continue;await control.selectOption(options[1]);await ready();
+      const check=await control.evaluate(select=>{
+       const launch=select.hasAttribute('data-launch-hourly-select'),source=JSON.parse(select.dataset[launch?'launchHourlyRows':'hourlyRows']);
+       const totals=Array(24).fill(0);source.filter(row=>String(row.period||'')===select.value).forEach(row=>{if(Number.isInteger(Number(row.hour))&&Number(row.hour)>=0&&Number(row.hour)<24)totals[Number(row.hour)]+=Number((launch?row.orders:row.count)||0)});
+       return {expected:totals,actual:[...select.closest('.hourly-wrap').querySelectorAll('[data-rhythm-row]')].map(n=>Number(n.dataset.total))};
+      });assert.deepEqual(check.actual,check.expected,key+' hourly date selection changed values');selections++;
+      await control.selectOption(options[0]);await ready();
+     }
+    }
+    if(subject===representative){
+     const panels=page.locator('.panel').filter({has:page.locator('[data-rhythm-config]')});
+     for(let i=0;i<await panels.count();i++)await panels.nth(i).screenshot({path:path.join(out,`after-${module}-${width}-${i+1}.png`)});
+    }
+    report.push({width,key,measurements:actual.measurements});
+   }
+  }
+  // Exercise ResizeObserver on an already mounted chart, without a navigation.
+  for(const width of [1440,390,768]){await page.setViewportSize({width,height:1000});await ready();assert(await page.locator('[data-rhythm-bar]').evaluateAll(nodes=>nodes.every(n=>Math.abs(n.getBoundingClientRect().width-32)<.05)));}
+  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'geometry-report.json'),JSON.stringify({boards,checks:report.length,charts,snapshots,selections,errors,report},null,2));
+  console.log(JSON.stringify({boards,checks:report.length,charts,snapshots,selections,resizes:3,errors}));
+ }finally{await browser.close()}
+})().catch(error=>{console.error(error);process.exitCode=1});

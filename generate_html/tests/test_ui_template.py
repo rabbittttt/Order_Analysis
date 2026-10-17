@@ -29,19 +29,22 @@ assert.strictEqual(fmt(null),'');
 '''
         subprocess.run([node, '-e', formatter + checks], check=True, capture_output=True)
 
+    @staticmethod
+    def rhythm_runtime():
+        script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
+        helpers = script[script.index("  const displayText ="):script.index("  function avoidLabelY(")]
+        adapters = script[script.index("  function renderLaunch(data){"):script.index("  function renderColumns(rows,color){")]
+        return helpers + adapters
+
     def test_launch_chart_keeps_blank_gaps_and_real_zero(self):
         node = shutil.which('node')
         if not node:
             self.skipTest('Node unavailable')
-        script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
-        renderer = script[script.index('  function renderLaunch(data){'):script.index('  function renderSmallOrderRhythm(rows){')]
-        helpers = script[script.index('  const RHYTHM_LAYOUT='):script.index('  function avoidLabelY(')]
-        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;" + helpers
         data = "{periods:['D1','D2','D3','D4'],metrics:{'当日小订转大定数量':[20,null,40,0],'当日直接大定数量':[60,null,160,0],'累计小订转大定数量':[999,999,999,999],'累计直接大定数量':[9999,9999,9999,9999],'累计小订转化率':[.1,null,.2,0]}}"
-        result = subprocess.run([node, '-e', dependencies + renderer + 'process.stdout.write(renderLaunch(' + data + '));'],
+        result = subprocess.run([node, '-e', self.rhythm_runtime() + 'process.stdout.write(renderLaunch(' + data + '));'],
                                 text=True, encoding='utf-8', capture_output=True, check=True)
         self.assertEqual(result.stdout.count('<circle'), 3)
-        self.assertEqual(result.stdout.count('<rect'), 6)
+        self.assertEqual(result.stdout.count('<rect data-rhythm-bar='), 6)
         self.assertIn('>0</text>', result.stdout)
         self.assertIn('尚未更新或不完整', result.stdout)
         self.assertIn('D3 · 当日直接大定 160 · 当日小订转大 40 · 来源合计 200', result.stdout)
@@ -49,7 +52,7 @@ assert.strictEqual(fmt(null),'');
         self.assertIn('>20.0%</text>', result.stdout)
         self.assertNotIn('>999</text>', result.stdout)
         self.assertNotIn('>9999</text>', result.stdout)
-        path = re.search(r'<path d="([^"]*)"', result.stdout)[1]
+        path = re.search(r'<path[^>]*\bd="([^"]*)"', result.stdout)[1]
         self.assertEqual(path.count('M'), 2)
         self.assertEqual(path.count('L'), 1)
         self.assertNotIn('NaN', result.stdout)
@@ -58,73 +61,86 @@ assert.strictEqual(fmt(null),'');
         node = shutil.which('node')
         if not node:
             self.skipTest('Node unavailable')
-        script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
-        renderer = script[script.index('  function renderLaunch(data){'):script.index('  function renderSmallOrderRhythm(rows){')]
-        helpers = script[script.index('  const RHYTHM_LAYOUT='):script.index('  function avoidLabelY(')]
-        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;" + helpers
         checks = r'''
 const assert=require('assert');
-const metrics={'当日大定数量':[100,50,30],'当日小订转大数量':[40,null,10]};
+const metrics={'当日大定数量':[100,50,30],'当日小订转大数量':[40,null,10]},original=JSON.stringify(metrics);
 const html=renderLaunch({periods:['D1','D2','D3'],metrics});
 assert(html.includes('D1 · 当日直接大定 60 · 当日小订转大 40 · 来源合计 100'));
 assert(html.includes('D3 · 当日直接大定 20 · 当日小订转大 10 · 来源合计 30'));
-assert.equal((html.match(/<rect/g)||[]).length,4);
-assert.equal((html.match(/尚未更新或不完整/g)||[]).length,1);
+assert.equal((html.match(/<rect data-rhythm-bar=/g)||[]).length,4);
+assert.equal((html.match(/<title>[^<]*尚未更新或不完整/g)||[]).length,1);
+assert.equal(JSON.stringify(metrics),original,'display renderer must not change metrics');
 for(const missing of [{'累计直接大定数量':[100],'累计小订转大数量':[40]}, {'当日大定数量':[100]}]){
  const unavailable=renderLaunch({periods:['D1'],metrics:missing});
- assert(!unavailable.includes('<rect'));
- assert(unavailable.includes('尚未更新或不完整'));
+ assert(!unavailable.includes('<rect data-rhythm-bar='));assert(unavailable.includes('尚未更新或不完整'));
 }
 const week=renderLaunch({periods:['W1','W2','W3'],metrics,grain:'week'});
 assert(week.includes('当周直接大定'));assert(!week.includes('当日'));assert(!week.includes('累计直接大定</span>'));
 const rates=renderLaunch({periods:['D1','D2'],metrics:{'当日小订转大数量':[10,10],'当日直接大定数量':[30,20],'累计小订转化率':[.1,.2],'累计直接大定进度':[.6,1]}});
-assert(rates.includes('>20.0%</text>'));assert(rates.includes('>100.0%</text>'));
+assert(rates.includes('>20.0%</text>'));assert(rates.includes('100.0%'));
 assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · 来源合计 30'));
 '''
-        subprocess.run([node, '-e', dependencies + renderer + checks], check=True, capture_output=True)
+        subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)
 
     def test_rhythm_charts_use_shared_compact_presentation(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn("const RHYTHM_LAYOUT={height:300", script)
-        self.assertIn("const rhythmBarHasRoom=", script)
-        self.assertIn('class="launch-chart rhythm-chart"', script)
-        self.assertIn('class="small-order-chart rhythm-chart"', script)
-        self.assertIn('class="daily-cancel-chart rhythm-chart"', script)
-        self.assertIn("rhythm-hourly-chart", script)
-        self.assertIn(".rhythm-chart svg", css)
-        self.assertRegex(css, r"\.rhythm-chart \.chart-data-label\.line-label\s*\{[^}]*paint-order:stroke;[^}]*stroke:#fff;")
-        self.assertRegex(css, r"\.rhythm-hourly-chart\s+\.hourly-inner\s*\{[^}]*width:max-content;")
-        self.assertIn("overflow-x:auto", css)
+        script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
+        css = (ROOT / "templates/dashboard.css").read_text(encoding="utf-8")
+        adapters = script[script.index('  function renderLaunch(data){'):script.index('  function renderColumns(rows,color){')]
+        self.assertEqual(adapters.count('return renderRhythmChart('), 5)
+        self.assertNotIn('<svg', adapters)
+        self.assertNotIn('<rect', adapters)
+        self.assertNotIn('hourlyPlotHeight', script)
+        self.assertNotIn('rhythmLineLabelY', script)
+        self.assertIn('bindRhythmCharts();', script)
+        self.assertIn('rhythmObserver?.disconnect()', script)
+        self.assertNotIn('.hourly-bars', css)
+        self.assertNotIn('.hourly-chart', css)
+        self.assertNotIn('.rhythm-hourly-chart', css)
+        self.assertNotIn('.launch-chart', css)
+        self.assertNotIn('paint-order:stroke', css[css.index('/* Daily and hourly rhythms'):css.index('#page {')])
+        self.assertEqual(css.count('.rhythm-chart {'), 1)
+        self.assertIn('height:var(--rhythm-frame-height)', css)
+        self.assertIn('overflow-x:auto', css)
+
+    def test_rhythm_geometry_is_fixed_pixel_and_labels_cannot_drift(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        checks = r'''
+const assert=require('assert');
+for(const count of [1,14,24,100])for(const width of [320,768,1440]){
+ const g=rhythmGeometry(count,width);assert.equal(g.barWidth,32);assert.equal(g.height,260);assert.equal(g.frameHeight,280);
+ assert.equal(g.plotHeight,194);assert(g.step>=48);assert.equal(g.left,g.right);
+}
+const point={x:100,y:100},geometry=rhythmGeometry(2,500),occupied=[],points=[point],original=JSON.stringify([occupied,points]);
+const placed=rhythmLineLabel(point,'40.0%',occupied,points,[],geometry);
+assert(placed&&Math.abs(placed.y-point.y)<=24);assert.equal(JSON.stringify([occupied,points]),original);
+assert.equal(rhythmLineLabel(point,'40.0%',[{left:0,right:500,top:0,bottom:260}],points,[],geometry),null,'hide instead of moving away from its point');
+const close=renderDailyCancel(Array.from({length:14},(_,i)=>({period:'D'+(i+1),daily:10,big_daily:10,small_rate:.06,big_rate:.02})));
+const labelled=[...close.matchAll(/data-rhythm-label="line"[^>]*data-series="([^"]+)"/g)].map(match=>match[1]);
+assert(labelled.includes('small_rate')&&labelled.includes('big_rate'),'nearby curves must share the limited label space');
+'''
+        subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)
 
     def test_rhythm_labels_avoid_points_and_keep_hourly_tooltip_values(self):
         node = shutil.which("node")
         if not node:
             self.skipTest("Node unavailable")
-        script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
-        helpers = script[script.index("  const RHYTHM_LAYOUT="):script.index("  function avoidLabelY(")]
-        small = script[script.index("  function renderHourlyChart("):script.index("  function renderHourly(rows)")]
-        launch = script[script.index("  function renderLaunchHourlyChart("):script.index("  function renderLaunchHourly(rows)")]
         checks = r'''
-const assert=require('assert'),colors={green:'green',blue:'blue',coral:'coral'},fmt=String,esc=String,chartMax=v=>Math.max(1,...v)*1.18;
-const occupied=[65,88,170],points=[48,215],before=JSON.stringify([occupied,points]);
-const y=rhythmLineLabelY(66,occupied,points,254);
-assert(y!=null&&occupied.every(v=>Math.abs(y-v)>=12));
-assert(points.every(v=>y<=v-8||y>=v+14));
-assert.equal(JSON.stringify([occupied,points]),before);
-assert.equal(rhythmLineLabelY(12,Array.from({length:300},(_,i)=>i),[],254),null);
-const smallRows=[{period:'D1',hour:'0',count:1,cancel:0},{period:'D1',hour:'19',count:10000,cancel:1},{period:'D2',hour:'0',count:2,cancel:1}];
+const assert=require('assert');
+const smallRows=[{period:'D1',hour:'0',count:1,cancel:0},{period:'D1',hour:'19',count:10000,cancel:1},{period:'D2',hour:'0',count:2,cancel:1}],before=JSON.stringify(smallRows);
 const smallHtml=renderHourlyChart(smallRows,'总计');
-assert.equal((smallHtml.match(/class="hourly-group"/g)||[]).length,24);
-assert(smallHtml.includes('小订留存 9999')&&smallHtml.includes('退订 1 · 总计 10000'));
+assert.equal((smallHtml.match(/data-rhythm-row=/g)||[]).length,24);
+assert(smallHtml.includes('小订留存 9,999')&&smallHtml.includes('退订 1 · 总计 10,000'));
 assert(smallHtml.includes('退订 1 · 总计 3'));
-assert(!renderHourlyChart(smallRows,'D1').includes('总计 3"'));
+assert(!renderHourlyChart(smallRows,'D1').includes('总计 3</title>'));
+assert.equal(JSON.stringify(smallRows),before);
 const launchHtml=renderLaunchHourlyChart([{period:'D1',hour:'19',orders:10000,small:9999,direct:1}],'D1');
-assert.equal((launchHtml.match(/class="hourly-group"/g)||[]).length,24);
-assert(launchHtml.includes('小订转大 9999')&&launchHtml.includes('直接大定 1 · 总计 10000'));
-assert(!launchHtml.includes('<b class="in">1</b>'),'tiny segments retain tooltip without colliding labels');
+assert.equal((launchHtml.match(/data-rhythm-row=/g)||[]).length,24);
+assert(launchHtml.includes('小订转大 9,999')&&launchHtml.includes('直接大定 1 · 总计 10,000'));
+assert(!/data-rhythm-label="segment"[^>]*>1<\/text>/.test(launchHtml),'too-small segment cannot force a label outside the bar');
 '''
-        subprocess.run([node, "-e", helpers + small + launch + checks], check=True, capture_output=True)
+        subprocess.run([node, "-e", self.rhythm_runtime() + checks], check=True, capture_output=True)
 
     def test_day_period_selector_uses_chronological_order(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
@@ -329,10 +345,11 @@ assert(!launchHtml.includes('<b class="in">1</b>'),'tiny segments retain tooltip
 
     def test_generated_chart_renderers_include_visible_data_labels(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertGreaterEqual(script.count("chart-data-label"), 8)
+        self.assertIn('class="rhythm-value-label rhythm-', script)
+        self.assertIn('data-rhythm-label', script)
         self.assertIn("segment-data-labels", script)
         self.assertIn("column-data-label", script)
-        self.assertIn("hourly-bars", script)
+        self.assertIn("data-rhythm-bar", script)
         self.assertIn("data-launch-hourly-select", script)
         self.assertIn("renderLaunchHourlyChart", script)
         self.assertIn('<span>分时口径</span><select data-hourly-select', script)
@@ -373,10 +390,10 @@ assert(!launchHtml.includes('<b class="in">1</b>'),'tiny segments retain tooltip
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("const LABEL_SCALE_HEADROOM=1.18", script)
         self.assertIn("function avoidLabelY", script)
-        self.assertGreaterEqual(script.count("avoidLabelY("), 5)
-        self.assertIn("max=chartMax(data.map(row=>row.count))", script)
-        self.assertIn("max=chartMax(data.map(row=>row.orders))", script)
-        self.assertIn("padding:34px 12px 26px", css)
+        self.assertIn("maxValue:chartMax(data.map(row=>row.count))", script)
+        self.assertIn("maxValue:chartMax(data.map(row=>row.orders))", script)
+        self.assertIn("lineLabelMaxOffset:24", script)
+        self.assertIn("rhythmLabelClear(box,occupied,points,segments)", script)
         self.assertIn("color:var(--ink-2)", css)
 
     def test_stacked_trend_uses_requested_palette_in_series_order(self):
@@ -402,7 +419,7 @@ assert(!launchHtml.includes('<b class="in">1</b>'),'tiny segments retain tooltip
         self.assertIn('(rate*100).toFixed(0)', renderer)
         self.assertNotIn('(rate*100).toFixed(1)', renderer)
         self.assertIn("const stackedBarWidth=step=>Math.min(42,step*.58)", script)
-        self.assertGreaterEqual(script.count("bw=stackedBarWidth(step)"), 2)
+        self.assertIn("barW=stackedBarWidth(step)", renderer)
         self.assertNotIn("<circle", renderer)
         segment_label = re.search(r"\.chart-data-label\.stack-segment-label\s*\{([^}]*)\}", css, re.S)
         self.assertIsNotNone(segment_label)
@@ -424,6 +441,7 @@ assert(!launchHtml.includes('<b class="in">1</b>'),'tiny segments retain tooltip
     def test_svg_stacked_bars_use_square_corners(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         renderers = [
+            ("function renderRhythmSvg", "function renderRhythmChart"),
             ("function renderStackedTrend", "function renderTable"),
             ("function renderLaunch", "function renderSmallOrderRhythm"),
             ("function renderSmallOrderRhythm", "function renderTrend"),

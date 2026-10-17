@@ -37,28 +37,105 @@
   const LABEL_SCALE_HEADROOM=1.18;
   const chartMax=values=>Math.max(...values.map(value=>Number(value||0)),1)*LABEL_SCALE_HEADROOM;
   const stackedBarWidth=step=>Math.min(42,step*.58);
-  const RHYTHM_LAYOUT={height:300,left:44,bottom:254,plotHeight:218,step:72,right:18,labelLimit:8,lineWidth:2,pointRadius:3.5,hourlyPlotHeight:170,hourlyLabelMinHeight:14};
-  const rhythmChartWidth=count=>Math.max(count,1)*RHYTHM_LAYOUT.step+82;
-  const rhythmLabelVisible=(index,count,limit=RHYTHM_LAYOUT.labelLimit)=>{
-    if(count<=limit)return true;
-    if(index===0||index===count-1)return true;
-    return (index-1)%Math.ceil((count-2)/Math.max(limit-2,1))===0;
-  };
-  const rhythmBarHasRoom=(value,maxValue,plotHeight=RHYTHM_LAYOUT.plotHeight,minHeight=14)=>Number(value)>0&&Number(maxValue)>0&&Number(value)/Number(maxValue)*plotHeight>=minHeight;
-  const rhythmGrid=(width,left,bottom,plotHeight,right=RHYTHM_LAYOUT.right)=>{
-    const lines=[.25,.5,.75,1].map(rate=>{const y=bottom-rate*plotHeight;return '<line class="rhythm-grid-line" x1="'+left+'" y1="'+y+'" x2="'+(width-right)+'" y2="'+y+'"/>'}).join("");
-    return '<g class="rhythm-grid" aria-hidden="true">'+lines+'</g><line class="rhythm-axis-line" x1="'+left+'" y1="'+bottom+'" x2="'+(width-right)+'" y2="'+bottom+'"/>';
-  };
-  const rhythmPeriodLabel=(period,index,count,x,y)=>rhythmLabelVisible(index,count)?'<text class="rhythm-axis-label" x="'+x+'" y="'+y+'" text-anchor="middle">'+esc(period)+'</text>':'';
-  const rhythmHourLabel=hour=>{const value=Number(hour);return Number.isFinite(value)&&(value%2===0||value===23)};
-  const rhythmLineLabelY=(base,occupied,pointYs,bottom)=>{
-    const min=12,max=bottom-8,start=Math.min(Math.max(base,min),max);
-    const clear=y=>occupied.every(value=>Math.abs(value-y)>=12)&&pointYs.every(value=>y<=value-8||y>=value+14);
-    for(let distance=0;distance<=max-min;distance+=12){
-      for(const y of distance?[start-distance,start+distance]:[start])if(y>=min&&y<=max&&clear(y))return y;
+  // One pixel-space renderer for all daily/hourly rhythm charts. Adapters below
+  // retain their existing quantities, aggregation and formatting contracts.
+  const RHYTHM_LAYOUT=Object.freeze({height:260,frameHeight:280,top:28,bottom:222,left:48,right:48,barWidth:32,minStep:48,lineWidth:2,pointRadius:3.5,fontSize:10,lineLabelMaxOffset:24,defaultWidth:960});
+  const rhythmKnown=value=>typeof value==='number'&&Number.isFinite(value);
+  function rhythmGeometry(count,availableWidth=RHYTHM_LAYOUT.defaultWidth){
+    const n=Math.max(count,1),width=Math.max(Math.floor(availableWidth||RHYTHM_LAYOUT.defaultWidth),RHYTHM_LAYOUT.left+RHYTHM_LAYOUT.right+n*RHYTHM_LAYOUT.minStep);
+    return {...RHYTHM_LAYOUT,width,plotHeight:RHYTHM_LAYOUT.bottom-RHYTHM_LAYOUT.top,step:(width-RHYTHM_LAYOUT.left-RHYTHM_LAYOUT.right)/n};
+  }
+  const rhythmTextWidth=text=>Array.from(String(text)).reduce((width,char)=>width+(char.charCodeAt(0)>255?RHYTHM_LAYOUT.fontSize:RHYTHM_LAYOUT.fontSize*.62),0);
+  const rhythmLabelBox=(text,x,y)=>({left:x-rhythmTextWidth(text)/2-2,right:x+rhythmTextWidth(text)/2+2,top:y-RHYTHM_LAYOUT.fontSize-2,bottom:y+3});
+  const rhythmBoxesOverlap=(a,b,gap=2)=>a.left<b.right+gap&&a.right>b.left-gap&&a.top<b.bottom+gap&&a.bottom>b.top-gap;
+  function rhythmLabelClear(box,occupied,points,segments){
+    if(occupied.some(other=>rhythmBoxesOverlap(box,other))||points.some(point=>rhythmBoxesOverlap(box,{left:point.x-4,right:point.x+4,top:point.y-4,bottom:point.y+4},1)))return false;
+    return !segments.some(([a,b])=>{
+      const left=Math.max(box.left,a.x),right=Math.min(box.right,b.x);if(left>right||a.x===b.x)return false;
+      const y=x=>a.y+(b.y-a.y)*(x-a.x)/(b.x-a.x),low=Math.min(y(left),y(right)),high=Math.max(y(left),y(right));
+      return high>=box.top-1&&low<=box.bottom+1;
+    });
+  }
+  function rhythmLineLabel(point,text,occupied,points,segments,geometry){
+    for(const offset of [-12,-18,-RHYTHM_LAYOUT.lineLabelMaxOffset,18,RHYTHM_LAYOUT.lineLabelMaxOffset]){
+      const y=point.y+offset,box=rhythmLabelBox(text,point.x,y);
+      if(box.top<5||box.bottom>geometry.bottom-4||!rhythmLabelClear(box,occupied,points,segments))continue;
+      return {x:point.x,y,box,pointY:point.y};
     }
     return null;
-  };
+  }
+  function renderRhythmSvg(spec,availableWidth){
+    const rows=spec.rows||[],geometry=rhythmGeometry(rows.length,availableWidth),{width,height,left,right,bottom,plotHeight,step,barWidth}=geometry;
+    const x=index=>left+index*step+step/2,barY=value=>bottom-value/spec.maxValue*plotHeight,rateY=value=>bottom-Math.min(Math.max(value,0),1)*plotHeight;
+    const series=spec.series||[],lines=spec.lines||[],occupied=[],labels=[],points=[],segments=[];
+    const lineData=lines.map(line=>{
+      let previous=null,path='';const dots=rows.map((row,index)=>{
+        const value=row.rates?.[line.key];if(!rhythmKnown(value)){previous=null;return null;}
+        const point={x:x(index),y:rateY(value),value,index,line};path+=(previous?'L':'M')+point.x+','+point.y+' ';
+        if(previous)segments.push([previous,point]);previous=point;points.push(point);return point;
+      });return {line,path,dots};
+    });
+    const dataStride=Math.max(1,Math.ceil(84/step)),visible=index=>index===0||index===rows.length-1||index%dataStride===0;
+    const addLabel=(text,cx,y,kind,extra={})=>{
+      const box=rhythmLabelBox(text,cx,y);if(box.top<5||box.bottom>bottom-4||!rhythmLabelClear(box,occupied,points,segments))return false;
+      occupied.push(box);labels.push({text,x:cx,y,box,kind,...extra});return true;
+    };
+    // Known zero and unknown are distinct even when the line also reaches zero.
+    rows.forEach((row,index)=>{if(visible(index)&&(!rhythmKnown(row.total)||row.total===0)){
+      const text=rhythmKnown(row.total)?'0':'—',y=bottom-8,box=rhythmLabelBox(text,x(index),y);
+      occupied.push(box);labels.push({text,x:x(index),y,box,kind:'total'});
+    }});
+    rows.forEach((_,index)=>{
+      if(!visible(index))return;
+      const column=points.filter(point=>point.index===index).sort((a,b)=>b.y-a.y),rotation=Math.floor(index/dataStride)%Math.max(column.length,1);
+      // Rotate label priority: two close curves must not permanently hide one another.
+      [...column.slice(rotation),...column.slice(0,rotation)].forEach(point=>{
+        const text=(point.value*100).toFixed(point.line.digits??1)+'%',placement=rhythmLineLabel(point,text,occupied,points,segments,geometry);
+        if(placement){occupied.push(placement.box);labels.push({...placement,text,kind:'line',color:point.line.textColor||point.line.color,series:point.line.key,index});}
+      });
+    });
+    const bars=rows.map((row,index)=>{
+      const cx=x(index),title=esc(row.tooltip||'');
+      if(!rhythmKnown(row.total))return `<g data-rhythm-row="${index}" data-total=""><title>${title}</title></g>`;
+      let stack=0;const rectangles=series.map(item=>{
+        const value=row.values[item.key],displayValue=Math.max(value,0),barHeight=displayValue/spec.maxValue*plotHeight,top=barY(stack+displayValue);stack+=displayValue;
+        const text=fmt(value),labelY=top+barHeight/2+RHYTHM_LAYOUT.fontSize*.35;
+        if(visible(index)&&value>0&&barHeight>=RHYTHM_LAYOUT.fontSize+8&&rhythmTextWidth(text)<=barWidth-4)addLabel(text,cx,labelY,'segment');
+        return `<rect data-rhythm-bar="${esc(item.key)}" data-value="${value}" x="${cx-barWidth/2}" y="${top}" width="${barWidth}" height="${barHeight}" fill="${item.color}"><title>${esc(row.tips?.[item.key]||item.label+' '+fmt(value))}</title></rect>`;
+      }).join('');
+      if(visible(index)&&row.total!==0)addLabel(fmt(row.total),cx,barY(row.total)-8,'total');
+      return `<g data-rhythm-row="${index}" data-total="${row.total}"><title>${title}</title>${rectangles}</g>`;
+    }).join('');
+    const curves=lineData.map(({line,path,dots})=>`<path data-rhythm-series="${esc(line.key)}" d="${path}" fill="none" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"/>${dots.filter(Boolean).map(point=>`<circle data-rhythm-point="${esc(line.key)}" data-index="${point.index}" data-value="${point.value}" cx="${point.x}" cy="${point.y}" r="${RHYTHM_LAYOUT.pointRadius}" fill="#fff" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"><title>${esc(rows[point.index].label)} · ${esc(line.label)} ${(point.value*100).toFixed(line.digits??1)}%</title></circle>`).join('')}`).join('');
+    const valueLabels=labels.map(label=>`${label.kind==='line'?`<rect class="rhythm-label-background" x="${label.box.left}" y="${label.box.top}" width="${label.box.right-label.box.left}" height="${label.box.bottom-label.box.top}"/>`:''}<text class="rhythm-value-label rhythm-${label.kind}-label" data-rhythm-label="${label.kind}"${label.pointY==null?'':` data-point-y="${label.pointY}" data-series="${esc(label.series)}" data-index="${label.index}"`} x="${label.x}" y="${label.y}" text-anchor="middle"${label.color?` style="fill:${label.color}"`:''}>${esc(label.text)}</text>`).join('');
+    const axisStride=Math.max(1,Math.ceil((Math.max(...rows.map(row=>rhythmTextWidth(row.label)),0)+10)/step)),axisBoxes=[],axisIndices=[];
+    [0,rows.length-1,...rows.map((_,index)=>index).filter(index=>index%axisStride===0)].forEach(index=>{
+      if(!rows[index]||axisIndices.includes(index))return;const box=rhythmLabelBox(rows[index].label,x(index),bottom+22);
+      if(axisBoxes.some(other=>rhythmBoxesOverlap(box,other)))return;axisBoxes.push(box);axisIndices.push(index);
+    });
+    const axis=axisIndices.sort((a,b)=>a-b).map(index=>`<text class="rhythm-axis-label" x="${x(index)}" y="${bottom+22}" text-anchor="middle">${esc(rows[index].label)}</text>`).join('');
+    const grid=[.25,.5,.75,1].map(rate=>`<line class="rhythm-grid-line" x1="${left}" y1="${bottom-rate*plotHeight}" x2="${width-right}" y2="${bottom-rate*plotHeight}"/>`).join('');
+    return `<svg class="rhythm-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="width:${width}px;height:${height}px" data-plot-left="${left}" data-plot-right="${right}" data-plot-height="${plotHeight}" role="img" aria-label="${esc(spec.title)}"><g aria-hidden="true">${grid}<line class="rhythm-axis-line" x1="${left}" y1="${bottom}" x2="${width-right}" y2="${bottom}"/></g>${bars}${curves}${valueLabels}${axis}</svg>`;
+  }
+  function renderRhythmChart(spec){
+    const legend=[...(spec.series||[]),...(spec.lines||[]).map(line=>({...line,line:true}))].map(item=>`<span><i${item.line?' class="line-key"':''} style="background:${item.color}"></i>${esc(item.label)}</span>`).join('');
+    return `<div class="rhythm-chart" data-rhythm-kind="${esc(spec.kind)}" data-rhythm-config="${esc(JSON.stringify(spec))}" style="--rhythm-frame-height:${RHYTHM_LAYOUT.frameHeight}px" role="region" tabindex="0" aria-label="${esc(spec.title)}，可横向滚动">${renderRhythmSvg(spec)}</div><div class="legend rhythm-legend">${legend}</div>`;
+  }
+  let rhythmObserver=null;
+  function bindRhythmCharts(){
+    rhythmObserver?.disconnect();rhythmObserver=null;
+    const charts=[...document.querySelectorAll('#page [data-rhythm-config]')];
+    const paint=chart=>{
+      const width=Math.floor(chart.clientWidth);if(width<=0||width===chart._rhythmWidth)return;
+      chart._rhythmSpec??=JSON.parse(chart.dataset.rhythmConfig);chart._rhythmWidth=width;
+      chart.innerHTML=renderRhythmSvg(chart._rhythmSpec,width);
+    };
+    charts.forEach(paint);
+    if(charts.length&&typeof ResizeObserver!=='undefined'){
+      rhythmObserver=new ResizeObserver(entries=>entries.forEach(entry=>paint(entry.target)));
+      charts.forEach(chart=>rhythmObserver.observe(chart));
+    }
+  }
   function avoidLabelY(baseY,occupied=[],minY=12,maxY=280,gap=14){
     let y=Math.min(Math.max(baseY,minY),maxY);
     for(let attempt=0;attempt<occupied.length*2+2;attempt++){
@@ -575,6 +652,7 @@
     });
   }
   async function renderPage(){
+    rhythmObserver?.disconnect();rhythmObserver=null;
     const revision=++pageRevision,moduleId=state.module,subjectId=state.subject;
     if(state.module==="raw"){await renderRaw();return}
     const board=await getDashboard(),page=board?.views?.[state.grain]?.pages?.[state.period];
@@ -589,6 +667,7 @@
       return;
     }
     $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${page.sections.map(renderSection).join("")}</div>`;
+    bindRhythmCharts();
     alignOverviewChartScrollbars();
     document.querySelectorAll("[data-panel-source]").forEach(button=>button.onclick=()=>jumpToSource(page.sections[Number(button.dataset.panelSource)]?.source));
     document.querySelectorAll("[data-combo-switch]").forEach(button=>button.onclick=()=>{
@@ -599,10 +678,12 @@
     document.querySelectorAll("[data-hourly-select]").forEach(select=>select.onchange=()=>{
       const rows=JSON.parse(select.dataset.hourlyRows||"[]");
       select.closest(".hourly-wrap").querySelector("[data-hourly-body]").innerHTML=renderHourlyChart(rows,select.value);
+      bindRhythmCharts();
     });
     document.querySelectorAll("[data-launch-hourly-select]").forEach(select=>select.onchange=()=>{
       const rows=JSON.parse(select.dataset.launchHourlyRows||"[]");
       select.closest(".hourly-wrap").querySelector("[data-launch-hourly-body]").innerHTML=renderLaunchHourlyChart(rows,select.value);
+      bindRhythmCharts();
     });
     bindForecastWorkspaceV2();
   }
@@ -713,123 +794,65 @@
   function renderTailDistribution(rows){return renderColumns(rows||[],colors.purple)}
   function cumulative(values){let total=0;return values.map(value=>(total+=Number(value||0)))}
   function renderLaunch(data){
-    const known=value=>typeof value==='number'&&Number.isFinite(value);
-    const periods=data.periods,metrics=data.metrics,dailyBig=metrics["当日大定数量"]||[],dailySmall=metrics["当日小订转大数量"]||metrics["当日小订转大定数量"]||[];
-    const dailyDirect=metrics["当日直接大定数量"]||dailyBig.map((value,index)=>known(value)&&known(dailySmall[index])?value-dailySmall[index]:null);
-    const small=dailySmall,direct=dailyDirect,unit=data.grain==='week'?'当周':'当日',count=periods.length;
-    const totals=periods.map((_,index)=>known(small[index])&&known(direct[index])?small[index]+direct[index]:null),maxBar=chartMax(totals),W=rhythmChartWidth(count),H=RHYTHM_LAYOUT.height,left=RHYTHM_LAYOUT.left,bottom=RHYTHM_LAYOUT.bottom,step=RHYTHM_LAYOUT.step,plotH=RHYTHM_LAYOUT.plotHeight,x=index=>left+index*step+step/2;
-    const barLabelYs=periods.map((_,index)=>{
-      const total=totals[index];
-      if(!known(total)||!rhythmLabelVisible(index,count))return {};
-      const totalHeight=total/maxBar*plotH,smallHeight=Number(small[index]||0)/maxBar*plotH,directHeight=Number(direct[index]||0)/maxBar*plotH,occupied=[],labels={};
-      const place=(key,base)=>{const y=avoidLabelY(base,occupied,12,bottom-8,12);occupied.push(y);labels[key]=y;};
-      if(rhythmBarHasRoom(direct[index],maxBar,plotH))place("direct",bottom-directHeight/2);
-      if(rhythmBarHasRoom(small[index],maxBar,plotH))place("small",bottom-directHeight-smallHeight/2);
-      if(total===0||rhythmBarHasRoom(total,maxBar,plotH,18))place("total",bottom-totalHeight-6);
-      return labels;
+    if(!data?.periods?.length)return '<div class="empty-image">暂无首销期节奏数据</div>';
+    const known=rhythmKnown,periods=data.periods,metrics=data.metrics,dailyBig=metrics["当日大定数量"]||[],small=metrics["当日小订转大数量"]||metrics["当日小订转大定数量"]||[];
+    const direct=metrics["当日直接大定数量"]||dailyBig.map((value,index)=>known(value)&&known(small[index])?value-small[index]:null),unit=data.grain==='week'?'当周':'当日';
+    const smallRate=metrics["累计小订转化率"]||metrics["累计小转大率"]||null,bigRate=metrics["累计直接大定进度"]||null;
+    const rows=periods.map((label,index)=>{
+      const total=known(small[index])&&known(direct[index])?small[index]+direct[index]:null;
+      return {label,total,values:{small:small[index],direct:direct[index]},rates:{smallRate:smallRate?.[index],bigRate:bigRate?.[index]},tooltip:known(total)?`${label} · ${unit}直接大定 ${fmt(direct[index])} · ${unit}小订转大 ${fmt(small[index])} · 来源合计 ${fmt(total)}`:`${label} · ${unit}来源数据尚未更新或不完整，不按0绘制`};
     });
-    const bars=totals.map((total,index)=>{
-      const cx=x(index),dateLabel=rhythmPeriodLabel(periods[index],index,count,cx,bottom+18);
-      if(!known(total))return `<g><title>${esc(periods[index])} · ${unit}来源数据尚未更新或不完整，不按0绘制</title>${rhythmLabelVisible(index,count)?`<text class="rhythm-axis-placeholder" x="${cx}" y="${bottom-8}" text-anchor="middle">—</text>`:""}${dateLabel}</g>`;
-      const height=total/maxBar*plotH,smallHeight=small[index]/maxBar*plotH,directHeight=direct[index]/maxBar*plotH,barW=stackedBarWidth(step),labels=barLabelYs[index]||{};
-      return `<g><title>${esc(periods[index])} · ${unit}直接大定 ${fmt(direct[index])} · ${unit}小订转大 ${fmt(small[index])} · 来源合计 ${fmt(total)}</title><rect x="${cx-barW/2}" y="${bottom-directHeight}" width="${barW}" height="${directHeight}" fill="${colors.blue}"/><rect x="${cx-barW/2}" y="${bottom-height}" width="${barW}" height="${smallHeight}" fill="${colors.green}"/>${labels.direct==null?"":`<text class="chart-data-label on-color" x="${cx}" y="${labels.direct}" text-anchor="middle">${fmt(direct[index])}</text>`}${labels.small==null?"":`<text class="chart-data-label on-color" x="${cx}" y="${labels.small}" text-anchor="middle">${fmt(small[index])}</text>`}${labels.total==null?"":`<text class="chart-data-label" x="${cx}" y="${labels.total}" text-anchor="middle">${fmt(total)}</text>`}${dateLabel}</g>`;
-    }).join("");
-    const smallRate=metrics["累计小订转化率"]||metrics["累计小转大率"]||null,bigRate=metrics["累计直接大定进度"]||null,rateY=value=>bottom-Math.min(Math.max(value,0),1)*(plotH-12);
-    const labelYs=periods.map((_,index)=>{
-      const occupied=Object.values(barLabelYs[index]||{}),result={},pointYs=[smallRate?.[index],bigRate?.[index]].filter(known).map(rateY);
-      const place=(key,base)=>{if(!rhythmLabelVisible(index,count))return;const y=rhythmLineLabelY(base,occupied,pointYs,bottom);if(y!=null){occupied.push(y);result[key]=y;}};
-      if(known(smallRate?.[index]))place("smallRate",rateY(smallRate[index])-18);
-      if(known(bigRate?.[index]))place("bigRate",rateY(bigRate[index])+18);
-      return result;
-    });
-    const rateLines=[["smallRate","#00B578","rhythm-line-green",smallRate],["bigRate","#7C3AED","rhythm-line-purple",bigRate]].filter(([, , ,values])=>Array.isArray(values)&&values.length).map(([key,color,lineClass,values])=>{
-      let connected=false;
-      const path=values.map((value,index)=>{if(!known(value)){connected=false;return '';}const point=`${connected?'L':'M'}${x(index)},${rateY(value)}`;connected=true;return point;}).join(' ');
-      const labels=values.map((value,index)=>known(value)&&labelYs[index]?.[key]!=null?`<text class="chart-data-label line-label ${lineClass}" x="${x(index)}" y="${labelYs[index][key]}" text-anchor="middle">${(value*100).toFixed(1)}%</text>`:'').join("");
-      const dots=values.map((value,index)=>known(value)?`<circle cx="${x(index)}" cy="${rateY(value)}" r="${RHYTHM_LAYOUT.pointRadius}" fill="#fff" stroke="${color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"><title>${esc(periods[index])} · ${(value*100).toFixed(1)}%</title></circle>`:'').join("");
-      return `<path d="${path}" fill="none" stroke="${color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"/>${dots}${labels}`;
-    }).join("");
-    return `<div class="launch-chart rhythm-chart"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px" role="img" aria-label="首销期${unit}订单来源，堆叠柱顶显示${unit}来源合计，比例线为累计口径">${rhythmGrid(W,left,bottom,plotH)}${bars}${rateLines}</svg></div><div class="legend rhythm-legend"><span><i style="background:${colors.blue}"></i>${unit}直接大定</span><span><i style="background:${colors.green}"></i>${unit}小订转大</span><span><i class="line-key" style="background:#00B578"></i>累计小转大率（累计小转大÷总小订）</span><span><i class="line-key" style="background:#7C3AED"></i>累计直接大定进度</span></div>`;
+    const lines=[];
+    if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:colors.green,textColor:'#087858',digits:1});
+    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定进度',color:colors.purple,textColor:'#6930bd',digits:1});
+    return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源，比例线为累计口径`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:colors.green},{key:'direct',label:unit+'直接大定',color:colors.blue}],lines});
   }
   function renderSmallOrderRhythm(rows){
     if(!rows?.length)return '<div class="empty-image">暂无小订期节奏数据</div>';
-    const count=rows.length,W=rhythmChartWidth(count),H=RHYTHM_LAYOUT.height,left=RHYTHM_LAYOUT.left,bottom=RHYTHM_LAYOUT.bottom,plotH=RHYTHM_LAYOUT.plotHeight,step=RHYTHM_LAYOUT.step,maxValue=chartMax(rows.flatMap(row=>[row.orders,row.retained,row.cancel]));
-    const x=index=>left+index*step+step/2,y=value=>bottom-Number(value||0)/maxValue*plotH,rateY=value=>bottom-Math.min(Math.max(Number(value||0),0),1)*(plotH-24);
-    const barLabelYs=rows.map((row,index)=>{
-      if(!rhythmLabelVisible(index,count))return {};
-      const total=Math.max(Number(row.orders||0),0),retained=Math.max(Number(row.retained||0),0),cancel=Math.max(Number(row.cancel||0),0),totalH=total/maxValue*plotH,retainedH=retained/maxValue*plotH,cancelH=cancel/maxValue*plotH,yTop=bottom-totalH,occupied=[],labels={};
-      const place=(key,base)=>{const labelY=avoidLabelY(base,occupied,12,bottom-8,12);occupied.push(labelY);labels[key]=labelY;};
-      if(rhythmBarHasRoom(retained,maxValue,plotH))place("retained",yTop+retainedH/2);
-      if(rhythmBarHasRoom(cancel,maxValue,plotH))place("cancel",yTop+retainedH+cancelH/2);
-      if(rhythmBarHasRoom(total,maxValue,plotH,18))place("total",Math.max(yTop-6,12));
-      return labels;
+    const data=rows.map(row=>{
+      const total=Math.max(Number(row.orders||0),0),retained=Math.max(Number(row.retained||0),0),cancel=Math.max(Number(row.cancel||0),0),retention=Number(row.retention_rate||0);
+      return {label:row.period,total,values:{retained,cancel},rates:{retention},tooltip:`${row.period} · 订单 ${fmt(total)} · 留存小订 ${fmt(retained)} · 退订 ${fmt(cancel)} · 留存率 ${(retention*100).toFixed(0)}%`};
     });
-    const bars=rows.map((row,index)=>{
-      const total=Math.max(Number(row.orders||0),0),retained=Math.max(Number(row.retained||0),0),cancel=Math.max(Number(row.cancel||0),0),totalH=total/maxValue*plotH,retainedH=retained/maxValue*plotH,cancelH=cancel/maxValue*plotH,yTop=bottom-totalH,cx=x(index),bw=stackedBarWidth(step),labels=barLabelYs[index]||{},dateLabel=rhythmPeriodLabel(row.period,index,count,cx,bottom+18);
-      return `<g><title>${esc(row.period)} · 订单 ${fmt(total)} · 留存小订 ${fmt(retained)} · 退订 ${fmt(cancel)} · 留存率 ${(Number(row.retention_rate||0)*100).toFixed(0)}%</title><rect x="${cx-bw/2}" y="${yTop}" width="${bw}" height="${retainedH}" fill="${colors.green}"><title>留存小订 ${fmt(retained)}</title></rect><rect x="${cx-bw/2}" y="${yTop+retainedH}" width="${bw}" height="${cancelH}" fill="${colors.coral}"><title>退订 ${fmt(cancel)}</title></rect>${labels.retained==null?"":`<text class="chart-data-label on-color" x="${cx}" y="${labels.retained}" text-anchor="middle">${fmt(retained)}</text>`}${labels.cancel==null?"":`<text class="chart-data-label on-color" x="${cx}" y="${labels.cancel}" text-anchor="middle">${fmt(cancel)}</text>`}${labels.total==null?"":`<text class="chart-data-label" x="${cx}" y="${labels.total}" text-anchor="middle">${fmt(total)}</text>`}${dateLabel}</g>`;
-    }).join("");
-    const lineLabelYs=rows.map((row,index)=>{
-      const occupied=Object.values(barLabelYs[index]||{}),result={};
-      if(rhythmLabelVisible(index,count)){const cy=rateY(row.retention_rate);result.retention=rhythmLineLabelY(cy-9,occupied,[cy],bottom);}
-      return result;
-    });
-    const points=rows.map((row,index)=>`${x(index)},${rateY(row.retention_rate)}`).join(" ");
-    const dots=rows.map((row,index)=>{const cy=rateY(row.retention_rate),labelY=lineLabelYs[index].retention;return `<circle cx="${x(index)}" cy="${cy}" r="${RHYTHM_LAYOUT.pointRadius}" fill="#fff" stroke="#0070C0" stroke-width="${RHYTHM_LAYOUT.lineWidth}"><title>${esc(row.period)} · 留存率 ${(Number(row.retention_rate||0)*100).toFixed(0)}%</title></circle>${labelY==null?"":`<text class="chart-data-label line-label rhythm-line-blue" x="${x(index)}" y="${labelY}" text-anchor="middle">${(Number(row.retention_rate||0)*100).toFixed(0)}%</text>`}`}).join("");
-    return `<div class="small-order-chart rhythm-chart"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px" role="img" aria-label="小订期间订单、留存、退订与留存率趋势">${rhythmGrid(W,left,bottom,plotH)}${bars}<polyline points="${points}" fill="none" stroke="#0070C0" stroke-width="${RHYTHM_LAYOUT.lineWidth}"/>${dots}</svg></div><div class="legend rhythm-legend"><span><i style="background:${colors.green}"></i>留存小订</span><span><i style="background:${colors.coral}"></i>退订</span><span><i class="line-key purple"></i>留存率</span></div>`;
+    return renderRhythmChart({kind:'small-day',title:'小订期间订单、留存、退订与留存率趋势',rows:data,maxValue:chartMax(rows.flatMap(row=>[row.orders,row.retained,row.cancel])),series:[{key:'retained',label:'留存小订',color:colors.green},{key:'cancel',label:'退订',color:colors.coral}],lines:[{key:'retention',label:'留存率',color:'#0070C0',textColor:'#075fa8',digits:0}]});
   }
   function renderTrend(rows){return renderColumns(rows.map(row=>({label:row.period,value:row.daily||0})),colors.coral)}
   function renderDailyCancel(rows){
     if(!rows?.length)return '<div class="empty-image">暂无日度退订数据</div>';
-    const count=rows.length,W=rhythmChartWidth(count),H=RHYTHM_LAYOUT.height,left=RHYTHM_LAYOUT.left,bottom=RHYTHM_LAYOUT.bottom,plotH=RHYTHM_LAYOUT.plotHeight,step=RHYTHM_LAYOUT.step,maxBar=chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),x=index=>left+index*step+step/2,ry=value=>bottom-Math.min(Math.max(Number(value||0),0),1)*plotH;
-    const barLabelYs=rows.map((row,index)=>{
-      if(!rhythmLabelVisible(index,count))return {};
-      const small=Math.max(Number(row.daily||0),0),big=Math.max(Number(row.big_daily||0),0),smallH=small/maxBar*plotH,bigH=big/maxBar*plotH,yTop=bottom-smallH-bigH,occupied=[],labels={};
-      const place=(key,base)=>{const labelY=avoidLabelY(base,occupied,12,bottom-8,12);occupied.push(labelY);labels[key]=labelY;};
-      if(rhythmBarHasRoom(small,maxBar,plotH))place("small",bottom-smallH/2);
-      if(rhythmBarHasRoom(big,maxBar,plotH))place("big",yTop+bigH/2);
-      if(rhythmBarHasRoom(small+big,maxBar,plotH,18))place("total",Math.max(yTop-6,12));
-      return labels;
+    const data=rows.map(row=>{
+      const small=Math.max(Number(row.daily||0),0),big=Math.max(Number(row.big_daily||0),0),small_rate=Number(row.small_rate||0),big_rate=Number(row.big_rate||0);
+      return {label:row.period,total:small+big,values:{small,big},rates:{small_rate,big_rate},tooltip:`${row.period} · 当日小订退 ${fmt(small)} · 当日大定退 ${fmt(big)} · 退订合计 ${fmt(small+big)} · 小订退率 ${(small_rate*100).toFixed(1)}% · 大定退率 ${(big_rate*100).toFixed(1)}%`};
     });
-    const bars=rows.map((row,index)=>{
-      const small=Math.max(Number(row.daily||0),0),big=Math.max(Number(row.big_daily||0),0),smallH=small/maxBar*plotH,bigH=big/maxBar*plotH,yTop=bottom-smallH-bigH,cx=x(index),bw=stackedBarWidth(step),labels=barLabelYs[index]||{},dateLabel=rhythmPeriodLabel(row.period,index,count,cx,bottom+18);
-      return `<g><title>${esc(row.period)} · 当日小订退 ${fmt(small)} · 当日大定退 ${fmt(big)} · 退订合计 ${fmt(small+big)} · 小订退率 ${(Number(row.small_rate||0)*100).toFixed(1)}% · 大定退率 ${(Number(row.big_rate||0)*100).toFixed(1)}%</title><rect x="${cx-bw/2}" y="${bottom-smallH}" width="${bw}" height="${smallH}" fill="${colors.coral}"><title>当日小订退 ${fmt(small)}</title></rect><rect x="${cx-bw/2}" y="${yTop}" width="${bw}" height="${bigH}" fill="${colors.orange}"><title>当日大定退 ${fmt(big)}</title></rect>${labels.small==null?"":`<text class="chart-data-label on-color" x="${cx}" y="${labels.small}" text-anchor="middle">${fmt(small)}</text>`}${labels.big==null?"":`<text class="chart-data-label on-color" x="${cx}" y="${labels.big}" text-anchor="middle">${fmt(big)}</text>`}${labels.total==null?"":`<text class="chart-data-label" x="${cx}" y="${labels.total}" text-anchor="middle">${fmt(small+big)}</text>`}${dateLabel}</g>`;
-    }).join("");
-    const lineLabelYs=rows.map((row,index)=>{
-      const occupied=Object.values(barLabelYs[index]||{}),result={};
-      if(rhythmLabelVisible(index,count))for(const [field,offset] of [["small_rate",-12],["big_rate",-24]]){const labelY=rhythmLineLabelY(ry(row[field])+offset,occupied,[ry(row.small_rate),ry(row.big_rate)],bottom);if(labelY!=null){occupied.push(labelY);result[field]=labelY;}}
-      return result;
-    });
-    const lineDefs=[["small_rate","#0070C0","rhythm-line-blue"],["big_rate",colors.orange,"rhythm-line-orange"]];
-    const lines=lineDefs.map(([field,color,lineClass])=>{
-      const points=rows.map((row,index)=>`${x(index)},${ry(row[field])}`).join(" ");
-      const labels=rows.map((row,index)=>lineLabelYs[index][field]==null?"":`<text class="chart-data-label line-label ${lineClass}" x="${x(index)}" y="${lineLabelYs[index][field]}" text-anchor="middle">${(Number(row[field]||0)*100).toFixed(1)}%</text>`).join("");
-      const dots=rows.map((row,index)=>`<circle cx="${x(index)}" cy="${ry(row[field])}" r="${RHYTHM_LAYOUT.pointRadius}" fill="#fff" stroke="${color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"><title>${esc(row.period)} · ${(Number(row[field]||0)*100).toFixed(1)}%</title></circle>`).join("");
-      return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"/>${dots}${labels}`;
-    }).join("");
-    return `<div class="daily-cancel-chart rhythm-chart"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px" role="img" aria-label="日度退订与退订率趋势">${rhythmGrid(W,left,bottom,plotH)}${bars}${lines}</svg></div><div class="legend rhythm-legend"><span><i style="background:${colors.coral}"></i>当日小订退</span><span><i style="background:${colors.orange}"></i>当日大定退</span><span><i class="line-key"></i>累计小订退率</span><span><i class="line-key" style="background:${colors.orange}"></i>大定退率</span></div>`;
+    return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:colors.coral},{key:'big',label:'当日大定退',color:colors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:'#0070C0',textColor:'#075fa8',digits:1},{key:'big_rate',label:'大定退率',color:colors.orange,textColor:'#9b5000',digits:1}]});
   }
   function renderHourlyChart(rows,day){
     const filtered=day==="总计"?(rows||[]):(rows||[]).filter(row=>String(row.period||"")===day);
     const grouped=new Map();filtered.forEach(row=>{const key=String(row.hour),item=grouped.get(key)||{hour:key,count:0,cancel:0};item.count+=Number(row.count||0);item.cancel+=Number(row.cancel||0);grouped.set(key,item)});
-    // 横轴统一从 0 时开始,固定 0-23 时,缺失时段补 0
-    const data=Array.from({length:24},(_,hour)=>grouped.get(String(hour))||{hour:String(hour),count:0,cancel:0}),max=chartMax(data.map(row=>row.count));
-    return `<div class="hourly-chart rhythm-hourly-chart"><div class="hourly-inner">${data.map(row=>{const count=Number(row.count||0),cancel=Number(row.cancel||0),kept=Math.max(count-cancel,0),keptLabel=rhythmBarHasRoom(kept,max,RHYTHM_LAYOUT.hourlyPlotHeight,RHYTHM_LAYOUT.hourlyLabelMinHeight)?`<b class="in">${fmt(kept)}</b>`:"",cancelLabel=rhythmBarHasRoom(cancel,max,RHYTHM_LAYOUT.hourlyPlotHeight,RHYTHM_LAYOUT.hourlyLabelMinHeight)?`<b class="in">${fmt(cancel)}</b>`:"",totalLabel=rhythmBarHasRoom(cancel,max,RHYTHM_LAYOUT.hourlyPlotHeight,18)&&rhythmBarHasRoom(count,max,RHYTHM_LAYOUT.hourlyPlotHeight,18)?`<b class="total">${fmt(count)}</b>`:"",hourText=rhythmHourLabel(row.hour)?esc(row.hour)+"时":"";return `<div class="hourly-group"><div class="hourly-bars"><i style="height:${kept/max*100}%;background:${colors.green}" title="小订留存 ${fmt(kept)}">${keptLabel}</i><i style="height:${cancel/max*100}%;background:${colors.coral}" title="退订 ${fmt(cancel)} · 总计 ${fmt(count)}">${totalLabel}${cancelLabel}</i></div><span${hourText?'':' aria-hidden="true"'}>${hourText}</span></div>`}).join("")}</div></div><div class="legend rhythm-legend"><span><i style="background:${colors.green}"></i>小订留存</span><span><i style="background:${colors.coral}"></i>退订</span></div>`
+    const data=Array.from({length:24},(_,hour)=>grouped.get(String(hour))||{hour:String(hour),count:0,cancel:0});
+    const points=data.map(row=>{
+      const count=Number(row.count||0),cancel=Number(row.cancel||0),kept=Math.max(count-cancel,0);
+      return {label:row.hour+'时',total:count,values:{kept,cancel},tips:{kept:`小订留存 ${fmt(kept)}`,cancel:`退订 ${fmt(cancel)} · 总计 ${fmt(count)}`},tooltip:`${row.hour}时 · 小订留存 ${fmt(kept)} · 退订 ${fmt(cancel)} · 总计 ${fmt(count)}`};
+    });
+    return renderRhythmChart({kind:'small-hour',title:'分时小订与退订节奏',rows:points,maxValue:chartMax(data.map(row=>row.count)),series:[{key:'kept',label:'留存小订',color:colors.green},{key:'cancel',label:'退订',color:colors.coral}]});
   }
   function renderHourly(rows){
     const days=[...new Set((rows||[]).map(row=>String(row.period||"")).filter(Boolean))];
     const options=["总计",...days].map(day=>`<option value="${esc(day)}">${esc(String(day).replace(/[ T]00:00:00$/, ""))}</option>`).join("");
-    return `<div class="hourly-wrap rhythm-hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-hourly-select data-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-hourly-body>${renderHourlyChart(rows,"总计")}</div></div>`
+    return `<div class="hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-hourly-select data-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-hourly-body>${renderHourlyChart(rows,"总计")}</div></div>`;
   }
   function renderLaunchHourlyChart(rows,day){
     const filtered=day==="总计"?(rows||[]):(rows||[]).filter(row=>String(row.period||"")===day);
     const grouped=new Map();filtered.forEach(row=>{const key=String(row.hour),item=grouped.get(key)||{hour:key,orders:0,small:0,direct:0};item.orders+=Number(row.orders||0);item.small+=Number(row.small||0);item.direct+=Number(row.direct||0);grouped.set(key,item)});
-    const data=Array.from({length:24},(_,hour)=>grouped.get(String(hour))||{hour:String(hour),orders:0,small:0,direct:0}),max=chartMax(data.map(row=>row.orders));
-    return `<div class="hourly-chart rhythm-hourly-chart"><div class="hourly-inner">${data.map(row=>{const orders=Number(row.orders||0),small=Number(row.small||0),direct=Number(row.direct||0),smallLabel=rhythmBarHasRoom(small,max,RHYTHM_LAYOUT.hourlyPlotHeight,RHYTHM_LAYOUT.hourlyLabelMinHeight)?`<b class="in">${fmt(small)}</b>`:"",directLabel=rhythmBarHasRoom(direct,max,RHYTHM_LAYOUT.hourlyPlotHeight,RHYTHM_LAYOUT.hourlyLabelMinHeight)?`<b class="in">${fmt(direct)}</b>`:"",totalLabel=rhythmBarHasRoom(direct,max,RHYTHM_LAYOUT.hourlyPlotHeight,18)&&rhythmBarHasRoom(orders,max,RHYTHM_LAYOUT.hourlyPlotHeight,18)?`<b class="total">${fmt(orders)}</b>`:"",hourText=rhythmHourLabel(row.hour)?esc(row.hour)+"时":"";return `<div class="hourly-group"><div class="hourly-bars"><i style="height:${small/max*100}%;background:${colors.green}" title="小订转大 ${fmt(small)}">${smallLabel}</i><i style="height:${direct/max*100}%;background:${colors.blue}" title="直接大定 ${fmt(direct)} · 总计 ${fmt(orders)}">${totalLabel}${directLabel}</i></div><span${hourText?'':' aria-hidden="true"'}>${hourText}</span></div>`}).join("")}</div></div><div class="legend rhythm-legend"><span><i style="background:${colors.green}"></i>小订转大</span><span><i style="background:${colors.blue}"></i>直接大定</span></div>`
+    const data=Array.from({length:24},(_,hour)=>grouped.get(String(hour))||{hour:String(hour),orders:0,small:0,direct:0});
+    const points=data.map(row=>{
+      const orders=Number(row.orders||0),small=Number(row.small||0),direct=Number(row.direct||0);
+      return {label:row.hour+'时',total:orders,values:{small,direct},tips:{small:`小订转大 ${fmt(small)}`,direct:`直接大定 ${fmt(direct)} · 总计 ${fmt(orders)}`},tooltip:`${row.hour}时 · 小订转大 ${fmt(small)} · 直接大定 ${fmt(direct)} · 总计 ${fmt(orders)}`};
+    });
+    return renderRhythmChart({kind:'launch-hour',title:'分时首销节奏',rows:points,maxValue:chartMax(data.map(row=>row.orders)),series:[{key:'small',label:'小订转大',color:colors.green},{key:'direct',label:'直接大定',color:colors.blue}]});
   }
   function renderLaunchHourly(rows){
     const days=[...new Set((rows||[]).map(row=>String(row.period||"")).filter(Boolean))];
     const options=["总计",...days].map(day=>`<option value="${esc(day)}">${esc(String(day).replace(/[ T]00:00:00$/, ""))}</option>`).join("");
-    return `<div class="hourly-wrap rhythm-hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-launch-hourly-select data-launch-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-launch-hourly-body>${renderLaunchHourlyChart(rows,"总计")}</div></div>`
+    return `<div class="hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-launch-hourly-select data-launch-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-launch-hourly-body>${renderLaunchHourlyChart(rows,"总计")}</div></div>`;
   }
   function renderColumns(rows,color){const max=chartMax(rows.map(row=>row.value));return `<div class="trend">${rows.map(row=>`<div class="trend-col"><i style="height:${Number(row.value)/max*100}%;background:${color}"><b class="column-data-label">${fmt(row.value)}</b></i><span>${esc(row.label)}</span></div>`).join("")}</div>`}
   function renderCancelCards(groups){return `<div class="cancel-grid">${groups.map((group,index)=>`<section class="structure-card"><h3>${esc(group.name)}</h3>${renderBars({color:["orange","coral","purple","blue","coral","green","orange"][index%7],rows:group.rows})}</section>`).join("")}</div>`}

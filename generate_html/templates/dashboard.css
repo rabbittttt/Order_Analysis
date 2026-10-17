@@ -320,18 +320,8 @@ button {
   white-space:nowrap;
 }
 
-.launch-chart,.stacked-chart,.original-chart,.daily-cancel-chart {
+.stacked-chart,.original-chart {
   overflow:auto;
-}
-
-.launch-chart svg {
-  display:block;
-  margin:0 auto;
-}
-
-.daily-cancel-chart svg {
-  display:block;
-  margin:0 auto;
 }
 
 .stacked-chart svg {
@@ -1483,27 +1473,14 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   background:#0070c0;
 }
 
-.launch-chart svg,.stacked-chart svg,.small-order-chart svg {
+.stacked-chart svg {
   background:linear-gradient(180deg,#fbfdff,#fff);
   border-radius:12px;
 }
 
-.small-order-chart {
-  overflow:auto;
-}
-
-.small-order-chart svg {
-  display:block;
-  margin:0 auto;
-}
-
-.hourly-chart {
-  height:312px;
-  display:block;
-  padding:34px 12px 26px;
-  border-left:1px solid var(--line);
-  border-bottom:1px solid var(--line);
-  overflow:auto;
+.hourly-wrap {
+  min-width:0;
+  max-width:100%;
 }
 
 .hourly-toolbar {
@@ -1527,40 +1504,6 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   color:var(--ink-2);
   padding:0 8px;
   font-size:11px;
-}
-
-.hourly-inner {
-  display:flex;
-  align-items:end;
-  gap:10px;
-  width:100%;
-  margin:0;
-  height:100%;
-}
-
-.hourly-group {
-  flex:1 1 0;
-  min-width:42px;
-  height:100%;
-  display:grid;
-  grid-template-rows:1fr auto;
-  gap:8px;
-}
-
-.hourly-bars {
-  display:flex;
-  flex-direction:column-reverse;
-  align-items:center;
-  justify-content:flex-start;
-  gap:0;
-  height:100%;
-}
-
-.hourly-group>span {
-  text-align:center;
-  color:var(--muted);
-  font-size:10px;
-  white-space:nowrap;
 }
 
 .rank-card {
@@ -2174,56 +2117,38 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   font-variant-numeric:tabular-nums;
 }
 
-.hourly-bars i {
-  width:36px;
-  min-height:2px;
-  position:relative;
-}
-
-.hourly-bars i b {
-  position:absolute;
-  left:50%;
-  transform:translateX(-50%);
-  font-size:9px;
-  font-style:normal;
-  white-space:nowrap;
-  font-variant-numeric:tabular-nums;
-}
-
-.hourly-bars i b.total {
-  top:-16px;
-  color:var(--ink-2);
-}
-
-.hourly-bars i b.in {
-  bottom:2px;
-  color:var(--ink-2);
-}
-
-/* 小订/首销节奏图共享紧凑的轴线、网格、标签和容器规则。 */
-.rhythm-chart,
-.rhythm-hourly-wrap {
+/* Daily and hourly rhythms share one SVG and one style contract. */
+.rhythm-chart {
+  width:100%;
   min-width:0;
   max-width:100%;
-}
-
-.rhythm-chart {
+  height:var(--rhythm-frame-height);
   overflow-x:auto;
   overflow-y:hidden;
-  font-family:"Microsoft YaHei","微软雅黑",Arial,sans-serif;
-}
-
-.rhythm-chart svg {
-  display:block;
-  max-width:none;
-  margin:0 auto;
   border:1px solid #e5edf5;
   border-radius:10px;
   background:linear-gradient(180deg,#fbfdff,#fff);
+}
+
+.rhythm-chart:focus-visible {
+  outline:2px solid #1677ff;
+  outline-offset:2px;
+}
+
+.rhythm-chart .rhythm-svg {
+  display:block;
+  min-width:0;
+  max-width:none;
+  margin:0;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
   font-family:"Microsoft YaHei","微软雅黑",Arial,sans-serif;
 }
 
-.rhythm-grid-line {
+.rhythm-grid-line,
+.rhythm-axis-line {
   stroke:#e5edf3;
   stroke-width:1;
   vector-effect:non-scaling-stroke;
@@ -2231,47 +2156,34 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 
 .rhythm-axis-line {
   stroke:#b7c9d8;
-  stroke-width:1;
-  vector-effect:non-scaling-stroke;
 }
 
 .rhythm-axis-label,
-.rhythm-axis-placeholder {
+.rhythm-value-label {
+  font-size:10px;
+  font-variant-numeric:tabular-nums;
+  stroke:none;
+}
+
+.rhythm-axis-label {
   fill:#64748b;
-  font-family:"Microsoft YaHei","微软雅黑",Arial,sans-serif;
-  font-size:9px;
-  font-variant-numeric:tabular-nums;
 }
 
-.rhythm-chart .chart-data-label {
-  font-size:9px;
-  font-weight:650;
-  font-variant-numeric:tabular-nums;
+.rhythm-value-label {
+  fill:#253f59;
+  font-weight:600;
+  pointer-events:none;
 }
 
-.rhythm-chart .chart-data-label.line-label {
-  font-size:9px;
-  font-weight:700;
-  paint-order:stroke;
-  stroke:#fff;
-  stroke-width:2px;
-  stroke-linejoin:round;
+.rhythm-line-label {
+  font-weight:500;
 }
 
-.rhythm-chart .rhythm-line-blue {
-  fill:#0070c0;
-}
-
-.rhythm-chart .rhythm-line-green {
-  fill:#00b578;
-}
-
-.rhythm-chart .rhythm-line-purple {
-  fill:#7c3aed;
-}
-
-.rhythm-chart .rhythm-line-orange {
-  fill:#ff8a00;
+.rhythm-label-background {
+  fill:#fff;
+  fill-opacity:.94;
+  stroke:none;
+  pointer-events:none;
 }
 
 .rhythm-legend {
@@ -2279,15 +2191,15 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   flex-wrap:wrap;
   align-items:center;
   gap:6px 14px;
-  margin-top:6px;
-  line-height:1.35;
+  margin-top:8px;
+  line-height:1.4;
 }
 
 .rhythm-legend span {
   display:inline-flex;
   align-items:center;
   min-width:0;
-  font-size:10px;
+  font-size:11px;
   white-space:normal;
 }
 
@@ -2295,84 +2207,10 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   flex:0 0 auto;
 }
 
-.rhythm-hourly-wrap {
-  width:100%;
-  overflow:hidden;
-}
-
-.rhythm-hourly-wrap .hourly-toolbar {
-  margin-bottom:6px;
-}
-
-.rhythm-hourly-chart {
-  width:100%;
-  height:236px;
-  max-width:100%;
-  min-width:0;
-  padding:20px 10px 18px;
-  border:1px solid var(--line);
-  border-radius:10px;
-  overflow-x:auto;
-  overflow-y:hidden;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,.35)),
-    repeating-linear-gradient(to bottom,transparent 0,transparent calc(25% - 1px),rgba(220,231,245,.68) 25%,rgba(220,231,245,.68) calc(25% + 1px));
-}
-
-.rhythm-hourly-chart .hourly-inner {
-  width:max-content;
-  min-width:1180px;
-  gap:8px;
-}
-
-.rhythm-hourly-chart .hourly-group {
-  flex:0 0 40px;
-  width:40px;
-  min-width:40px;
-  gap:6px;
-}
-
-.rhythm-hourly-chart .hourly-group>span {
-  min-height:11px;
-  font-size:9px;
-  line-height:1.2;
-}
-
-.rhythm-hourly-chart .hourly-bars i {
-  width:28px;
-  min-height:2px;
-}
-
-.rhythm-hourly-chart .hourly-bars i b {
-  font-size:9px;
-  line-height:1;
-}
-
-.rhythm-hourly-chart .hourly-bars i b.total {
-  top:-13px;
-}
-
-.rhythm-hourly-chart .hourly-bars i b.in {
-  bottom:1px;
-}
-
 @media (max-width:780px) {
-  .rhythm-chart {
-    width:100%;
-  }
-
-  .rhythm-chart svg {
-    margin:0;
-  }
-
   .rhythm-legend {
     justify-content:flex-start;
     gap:5px 10px;
-  }
-
-  .rhythm-hourly-chart {
-    height:224px;
-    padding:18px 8px 16px;
   }
 }
 

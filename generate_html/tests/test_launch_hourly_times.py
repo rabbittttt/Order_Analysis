@@ -82,7 +82,7 @@ const helpers=source.slice(source.indexOf('  const RHYTHM_LAYOUT='),source.index
 const chart=new Function('rows','day','chartMax','colors','fmt','esc',helpers+text+';return renderLaunchHourlyChart(rows,day)');
 const html=chart(JSON.parse(process.argv[1]),'2026-10-04',values=>Math.max(...values,1),{green:'green',blue:'blue'},String,String);
 // Sparse visible labels must not remove the 24 hourly values or their tooltips.
-console.log(JSON.stringify([...html.matchAll(/title="直接大定 [^"]+ · 总计 (\d+)"/g)].map(match=>Number(match[1]))));
+console.log(JSON.stringify([...html.matchAll(/data-rhythm-row="\d+" data-total="([^"]+)"/g)].map(match=>Number(match[1]))));
 '''
         result = subprocess.run(['node', '-e', script, json.dumps(rows)], cwd=ROOT, capture_output=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)
