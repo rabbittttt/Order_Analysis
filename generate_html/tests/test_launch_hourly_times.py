@@ -78,9 +78,11 @@ class LaunchHourlyTimeTests(unittest.TestCase):
         script = r'''
 const fs=require('fs'),source=fs.readFileSync('templates/dashboard.js','utf8');
 const text=source.slice(source.indexOf('  function renderLaunchHourlyChart('),source.indexOf('  function renderLaunchHourly(rows)'));
-const chart=new Function('rows','day','chartMax','colors','fmt','esc',text+';return renderLaunchHourlyChart(rows,day)');
+const helpers=source.slice(source.indexOf('  const RHYTHM_LAYOUT='),source.indexOf('  function avoidLabelY('));
+const chart=new Function('rows','day','chartMax','colors','fmt','esc',helpers+text+';return renderLaunchHourlyChart(rows,day)');
 const html=chart(JSON.parse(process.argv[1]),'2026-10-04',values=>Math.max(...values,1),{green:'green',blue:'blue'},String,String);
-console.log(JSON.stringify([...html.matchAll(/class="total">([^<]+)</g)].map(match=>Number(match[1]))));
+// Sparse visible labels must not remove the 24 hourly values or their tooltips.
+console.log(JSON.stringify([...html.matchAll(/title="直接大定 [^"]+ · 总计 (\d+)"/g)].map(match=>Number(match[1]))));
 '''
         result = subprocess.run(['node', '-e', script, json.dumps(rows)], cwd=ROOT, capture_output=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)

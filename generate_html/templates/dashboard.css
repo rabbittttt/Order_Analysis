@@ -2200,6 +2200,182 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   color:var(--ink-2);
 }
 
+/* 小订/首销节奏图共享紧凑的轴线、网格、标签和容器规则。 */
+.rhythm-chart,
+.rhythm-hourly-wrap {
+  min-width:0;
+  max-width:100%;
+}
+
+.rhythm-chart {
+  overflow-x:auto;
+  overflow-y:hidden;
+  font-family:"Microsoft YaHei","微软雅黑",Arial,sans-serif;
+}
+
+.rhythm-chart svg {
+  display:block;
+  max-width:none;
+  margin:0 auto;
+  border:1px solid #e5edf5;
+  border-radius:10px;
+  background:linear-gradient(180deg,#fbfdff,#fff);
+  font-family:"Microsoft YaHei","微软雅黑",Arial,sans-serif;
+}
+
+.rhythm-grid-line {
+  stroke:#e5edf3;
+  stroke-width:1;
+  vector-effect:non-scaling-stroke;
+}
+
+.rhythm-axis-line {
+  stroke:#b7c9d8;
+  stroke-width:1;
+  vector-effect:non-scaling-stroke;
+}
+
+.rhythm-axis-label,
+.rhythm-axis-placeholder {
+  fill:#64748b;
+  font-family:"Microsoft YaHei","微软雅黑",Arial,sans-serif;
+  font-size:9px;
+  font-variant-numeric:tabular-nums;
+}
+
+.rhythm-chart .chart-data-label {
+  font-size:9px;
+  font-weight:650;
+  font-variant-numeric:tabular-nums;
+}
+
+.rhythm-chart .chart-data-label.line-label {
+  font-size:9px;
+  font-weight:700;
+  paint-order:stroke;
+  stroke:#fff;
+  stroke-width:2px;
+  stroke-linejoin:round;
+}
+
+.rhythm-chart .rhythm-line-blue {
+  fill:#0070c0;
+}
+
+.rhythm-chart .rhythm-line-green {
+  fill:#00b578;
+}
+
+.rhythm-chart .rhythm-line-purple {
+  fill:#7c3aed;
+}
+
+.rhythm-chart .rhythm-line-orange {
+  fill:#ff8a00;
+}
+
+.rhythm-legend {
+  max-width:100%;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px 14px;
+  margin-top:6px;
+  line-height:1.35;
+}
+
+.rhythm-legend span {
+  display:inline-flex;
+  align-items:center;
+  min-width:0;
+  font-size:10px;
+  white-space:normal;
+}
+
+.rhythm-legend i {
+  flex:0 0 auto;
+}
+
+.rhythm-hourly-wrap {
+  width:100%;
+  overflow:hidden;
+}
+
+.rhythm-hourly-wrap .hourly-toolbar {
+  margin-bottom:6px;
+}
+
+.rhythm-hourly-chart {
+  width:100%;
+  height:236px;
+  max-width:100%;
+  min-width:0;
+  padding:20px 10px 18px;
+  border:1px solid var(--line);
+  border-radius:10px;
+  overflow-x:auto;
+  overflow-y:hidden;
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,.35)),
+    repeating-linear-gradient(to bottom,transparent 0,transparent calc(25% - 1px),rgba(220,231,245,.68) 25%,rgba(220,231,245,.68) calc(25% + 1px));
+}
+
+.rhythm-hourly-chart .hourly-inner {
+  width:max-content;
+  min-width:1180px;
+  gap:8px;
+}
+
+.rhythm-hourly-chart .hourly-group {
+  flex:0 0 40px;
+  width:40px;
+  min-width:40px;
+  gap:6px;
+}
+
+.rhythm-hourly-chart .hourly-group>span {
+  min-height:11px;
+  font-size:9px;
+  line-height:1.2;
+}
+
+.rhythm-hourly-chart .hourly-bars i {
+  width:28px;
+  min-height:2px;
+}
+
+.rhythm-hourly-chart .hourly-bars i b {
+  font-size:9px;
+  line-height:1;
+}
+
+.rhythm-hourly-chart .hourly-bars i b.total {
+  top:-13px;
+}
+
+.rhythm-hourly-chart .hourly-bars i b.in {
+  bottom:1px;
+}
+
+@media (max-width:780px) {
+  .rhythm-chart {
+    width:100%;
+  }
+
+  .rhythm-chart svg {
+    margin:0;
+  }
+
+  .rhythm-legend {
+    justify-content:flex-start;
+    gap:5px 10px;
+  }
+
+  .rhythm-hourly-chart {
+    height:224px;
+    padding:18px 8px 16px;
+  }
+}
+
 #page {
   max-height:calc(100vh - 132px);
   overflow-y:auto;

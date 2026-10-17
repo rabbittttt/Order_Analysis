@@ -35,7 +35,8 @@ assert.strictEqual(fmt(null),'');
             self.skipTest('Node unavailable')
         script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
         renderer = script[script.index('  function renderLaunch(data){'):script.index('  function renderSmallOrderRhythm(rows){')]
-        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;"
+        helpers = script[script.index('  const RHYTHM_LAYOUT='):script.index('  function avoidLabelY(')]
+        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;" + helpers
         data = "{periods:['D1','D2','D3','D4'],metrics:{'当日小订转大定数量':[20,null,40,0],'当日直接大定数量':[60,null,160,0],'累计小订转大定数量':[999,999,999,999],'累计直接大定数量':[9999,9999,9999,9999],'累计小订转化率':[.1,null,.2,0]}}"
         result = subprocess.run([node, '-e', dependencies + renderer + 'process.stdout.write(renderLaunch(' + data + '));'],
                                 text=True, encoding='utf-8', capture_output=True, check=True)
@@ -59,7 +60,8 @@ assert.strictEqual(fmt(null),'');
             self.skipTest('Node unavailable')
         script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
         renderer = script[script.index('  function renderLaunch(data){'):script.index('  function renderSmallOrderRhythm(rows){')]
-        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;"
+        helpers = script[script.index('  const RHYTHM_LAYOUT='):script.index('  function avoidLabelY(')]
+        dependencies = "const colors={blue:'blue',green:'green'},chartMax=v=>Math.max(1,...v.filter(Number.isFinite)),stackedBarWidth=()=>20,avoidLabelY=v=>v,fmt=String,esc=String;" + helpers
         checks = r'''
 const assert=require('assert');
 const metrics={'当日大定数量':[100,50,30],'当日小订转大数量':[40,null,10]};
@@ -80,6 +82,49 @@ assert(rates.includes('>20.0%</text>'));assert(rates.includes('>100.0%</text>'))
 assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · 来源合计 30'));
 '''
         subprocess.run([node, '-e', dependencies + renderer + checks], check=True, capture_output=True)
+
+    def test_rhythm_charts_use_shared_compact_presentation(self):
+        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
+        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
+        self.assertIn("const RHYTHM_LAYOUT={height:300", script)
+        self.assertIn("const rhythmBarHasRoom=", script)
+        self.assertIn('class="launch-chart rhythm-chart"', script)
+        self.assertIn('class="small-order-chart rhythm-chart"', script)
+        self.assertIn('class="daily-cancel-chart rhythm-chart"', script)
+        self.assertIn("rhythm-hourly-chart", script)
+        self.assertIn(".rhythm-chart svg", css)
+        self.assertRegex(css, r"\.rhythm-chart \.chart-data-label\.line-label\s*\{[^}]*paint-order:stroke;[^}]*stroke:#fff;")
+        self.assertRegex(css, r"\.rhythm-hourly-chart\s+\.hourly-inner\s*\{[^}]*width:max-content;")
+        self.assertIn("overflow-x:auto", css)
+
+    def test_rhythm_labels_avoid_points_and_keep_hourly_tooltip_values(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node unavailable")
+        script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
+        helpers = script[script.index("  const RHYTHM_LAYOUT="):script.index("  function avoidLabelY(")]
+        small = script[script.index("  function renderHourlyChart("):script.index("  function renderHourly(rows)")]
+        launch = script[script.index("  function renderLaunchHourlyChart("):script.index("  function renderLaunchHourly(rows)")]
+        checks = r'''
+const assert=require('assert'),colors={green:'green',blue:'blue',coral:'coral'},fmt=String,esc=String,chartMax=v=>Math.max(1,...v)*1.18;
+const occupied=[65,88,170],points=[48,215],before=JSON.stringify([occupied,points]);
+const y=rhythmLineLabelY(66,occupied,points,254);
+assert(y!=null&&occupied.every(v=>Math.abs(y-v)>=12));
+assert(points.every(v=>y<=v-8||y>=v+14));
+assert.equal(JSON.stringify([occupied,points]),before);
+assert.equal(rhythmLineLabelY(12,Array.from({length:300},(_,i)=>i),[],254),null);
+const smallRows=[{period:'D1',hour:'0',count:1,cancel:0},{period:'D1',hour:'19',count:10000,cancel:1},{period:'D2',hour:'0',count:2,cancel:1}];
+const smallHtml=renderHourlyChart(smallRows,'总计');
+assert.equal((smallHtml.match(/class="hourly-group"/g)||[]).length,24);
+assert(smallHtml.includes('小订留存 9999')&&smallHtml.includes('退订 1 · 总计 10000'));
+assert(smallHtml.includes('退订 1 · 总计 3'));
+assert(!renderHourlyChart(smallRows,'D1').includes('总计 3"'));
+const launchHtml=renderLaunchHourlyChart([{period:'D1',hour:'19',orders:10000,small:9999,direct:1}],'D1');
+assert.equal((launchHtml.match(/class="hourly-group"/g)||[]).length,24);
+assert(launchHtml.includes('小订转大 9999')&&launchHtml.includes('直接大定 1 · 总计 10000'));
+assert(!launchHtml.includes('<b class="in">1</b>'),'tiny segments retain tooltip without colliding labels');
+'''
+        subprocess.run([node, "-e", helpers + small + launch + checks], check=True, capture_output=True)
 
     def test_day_period_selector_uses_chronological_order(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
