@@ -7,6 +7,7 @@ import logging
 import math
 from time import perf_counter
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Any
 
 
@@ -108,7 +109,16 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
     html = html.replace("__DASHBOARD_JS__", javascript)
     html = html.replace("__BRAND_LOGO__", f"data:image/png;base64,{logo_data}")
     output_file.parent.mkdir(parents=True, exist_ok=True)
-    output_file.write_text(html, encoding="utf-8")
+    # Write on the same volume, and close before replacing (Windows). A disk
+    # write/replace failure must not truncate the previous usable dashboard.
+    with NamedTemporaryFile(dir=output_file.parent, prefix=f".{output_file.name}.",
+                            suffix=".tmp", delete=False) as staging:
+        temporary = Path(staging.name)
+    try:
+        temporary.write_text(html, encoding="utf-8")
+        temporary.replace(output_file)
+    finally:
+        temporary.unlink(missing_ok=True)
 
     logging.getLogger(__name__).info(
         "HTML输出明细: 公共数据打包 %.2fs | JSON序列化 %.2fs | 看板压缩 %.2fs | 其余输出 %.2fs",

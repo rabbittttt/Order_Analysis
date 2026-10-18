@@ -1456,7 +1456,7 @@ def _history_item(record: dict[str, Any], processed: bool) -> dict[str, Any]:
         "gross": int(_number(_first_record_value(record, gross_key, "大定量"))),
         "net": int(_number(_first_record_value(record, "首销期留存大定", "首销期净大定"))),
         "net_rate": _optional_number(record.get("留存大定率") if record.get("留存大定率") not in (None, "") else record.get("净大定率")),
-        "lock": int(_number(record.get("首销期锁单"))),
+        "lock": _optional_count([record.get("首销期锁单")], 0),
         "lock_rate": _optional_number(record.get("大定到锁单率") if record.get("大定到锁单率") not in (None, "") else record.get("锁单率")),
         "small": int(_number(record.get("总小订"))),
         "small_to_big": int(_number(_first_record_value(record, "总小转大", "小订转大", "小订转大定量", "小订转大定"))),

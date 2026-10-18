@@ -4,7 +4,7 @@ import logging
 import re
 
 from core.components import kpi, section, table
-from core.excel import WorkbookStore, cell_number, clean_text
+from core.excel import WorkbookStore, _period_sort, cell_number, clean_text
 from core.models import Dashboard, SourceRef, Subject
 
 LOGGER = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ class SkuModule:
             return None
         total_col = find_header(sku_sheet, "总计占比", 6, header_row) or sku_sheet.max_column
         period_cols = [col for col in range(6, total_col) if clean_text(sku_sheet.cell(header_row, col).value)]
-        periods = [clean_text(sku_sheet.cell(header_row, col).value) for col in period_cols] or ["最新周期"]
+        share_periods = [clean_text(sku_sheet.cell(header_row, col).value) for col in period_cols]
         sku_rows = []
         for row in range(header_row + 1, sku_sheet.max_row + 1):
             code = clean_text(sku_sheet.cell(row, 1).value)
@@ -122,6 +122,7 @@ class SkuModule:
 
         cumulative_start = find_header(sku_sheet, "累计锁单", header_row=header_row)
         cumulative_rows = []
+        cumulative_periods = []
         if cumulative_start:
             cumulative_total = find_header(sku_sheet, "总计", cumulative_start + 1, header_row) or sku_sheet.max_column
             cumulative_period_cols = [
@@ -129,8 +130,6 @@ class SkuModule:
                 if clean_text(sku_sheet.cell(header_row, col).value)
             ]
             cumulative_periods = [clean_text(sku_sheet.cell(header_row, col).value) for col in cumulative_period_cols]
-            if cumulative_periods:
-                periods = cumulative_periods
             for row in range(header_row + 1, sku_sheet.max_row + 1):
                 label = clean_text(sku_sheet.cell(row, cumulative_start).value)
                 if label:
@@ -139,7 +138,16 @@ class SkuModule:
                         "values": [cell_number(sku_sheet.cell(row, col), rate=True) for col in cumulative_period_cols],
                     })
 
-        latest_index = max(len(periods) - 1, 0)
+        # Each horizontal block (including merged files) owns its own date
+        # headers. Join by week, never by its column offset in another block.
+        periods = sorted(set(share_periods + cumulative_periods), key=_period_sort) or ["最新周期"]
+        def align(rows, headers):
+            for row in rows:
+                by_period = dict(zip(headers, row["values"]))
+                row["values"] = [by_period.get(period) for period in periods]
+        align(sku_rows, share_periods)
+        align(cumulative_rows, cumulative_periods)
+        latest_index = len(periods) - 1
         latest = periods[latest_index]
 
         def period_metrics(index: int) -> list:
@@ -148,19 +156,21 @@ class SkuModule:
                 for row in cumulative_rows if len(row["values"]) > index
             }
             coverage_80 = next(
-                (row["label"] for row in cumulative_rows if len(row["values"]) > index and row["values"][index] >= .8),
+                (row["label"] for row in cumulative_rows if row["values"][index] is not None and row["values"][index] >= .8),
                 "-",
             )
             coverage_match = re.search(r"\d+", coverage_80)
             coverage_value = int(coverage_match.group()) if coverage_match else coverage_80
             active_sku = sum(
                 1 for row in sku_rows
-                if len(row["values"]) > index and row["values"][index] > 0
-            )
+                if row["values"][index] is not None and row["values"][index] > 0
+            ) if periods[index] in share_periods else None
+            top3 = top_map.get("TOP3")
+            top5 = top_map.get("TOP5", top3)
             return [
                 active_sku,
-                top_map.get("TOP3", 0) * 100,
-                top_map.get("TOP5", top_map.get("TOP3", 0)) * 100,
+                top3 * 100 if top3 is not None else None,
+                top5 * 100 if top5 is not None else None,
                 coverage_value,
             ]
 
@@ -169,18 +179,20 @@ class SkuModule:
 
         latest_sku_rows = sorted(
             sku_rows,
-            key=lambda row: row["values"][latest_index] if len(row["values"]) > latest_index else 0,
+            key=lambda row: row["values"][latest_index] or 0,
             reverse=True,
         )
         ranking_rows = [
             [index, row["code"], " / ".join(value for value in (row["exterior"], row["interior"]) if value),
              row["values"][latest_index] if len(row["values"]) > latest_index else 0]
             for index, row in enumerate(latest_sku_rows, start=1)
+            if row["values"][latest_index] is not None
         ]
         tail_rows = [
             {
                 "label": period,
-                "value": sum(1 for row in sku_rows if len(row["values"]) > index and 0 < row["values"][index] <= .05),
+                "value": sum(1 for row in sku_rows if row["values"][index] is not None and 0 < row["values"][index] <= .05)
+                         if period in share_periods else None,
             }
             for index, period in enumerate(periods)
         ]
