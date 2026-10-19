@@ -54,6 +54,13 @@ def ordinary(d,c):
     return d.year in c['years'] and d not in c['holidays'] and d not in c['work']
 
 UNIFIED_DAILY_SHEET = '小订首销平销by天'
+# Canonical names remain stable for analyses/configuration across workbook versions.
+RESOLVED_METRIC_COLUMNS = {
+    '小订数量': ('小订', '小订数量'),
+    **{metric: tuple(column for column, _ in aliases)
+       for metric, aliases in ORDER_METRIC_COLUMNS.items()},
+}
+RESOLVED_STAGES = {'小订', '小订阶段', '首销', '平销'}
 
 
 def _workbook_records(wb, name):
@@ -124,6 +131,14 @@ def _field_sources(value):
     return result
 
 
+def _resolved_field_source(sources, aliases):
+    # The new value header can coexist with the old name in field provenance.
+    declared = {sources[name] for name in aliases if name in sources}
+    if len(declared) > 1:
+        raise ValueError('字段来源冲突：'+'/'.join(aliases))
+    return next(iter(declared), '')
+
+
 def read_resolved_panel(wb, audit):
     """The current workbook already resolves each metric; respect its provenance."""
     cutoff = date.today()
@@ -143,9 +158,9 @@ def read_resolved_panel(wb, audit):
     required = {'日期', '订单阶段', '字段来源'}
     if required-set(head) or not ({'代际名','订单分析代际名'} & set(head)):
         raise ValueError(UNIFIED_DAILY_SHEET+'缺少字段：日期、代际名、订单阶段或字段来源')
-    columns = {'小订数量':'小订数量'} if '小订数量' in head else {}
-    for metric, aliases in ORDER_METRIC_COLUMNS.items():
-        present = [column for column, _ in aliases if column in head]
+    columns = {}
+    for metric, aliases in RESOLVED_METRIC_COLUMNS.items():
+        present = [column for column in aliases if column in head]
         if present:
             columns[metric] = present[0]
             if len(present)>1: audit[metric+'新旧字段同时存在，优先新字段'] += 1
@@ -160,9 +175,24 @@ def read_resolved_panel(wb, audit):
         if d > cutoff:
             audit['未来或超过数据判定日期排除'] += 1
             continue
+        if '日期状态' in head:
+            # New-schema rows explicitly describe completion. Unknown/blank status
+            # and the judgement day itself must not train complete-day patterns.
+            if str(row.get('日期状态') or '').strip() != '已结束日':
+                audit['未结束或未知日期状态排除'] += 1
+                continue
+            if d == cutoff:
+                audit['数据判定当日未完整排除'] += 1
+                continue
         sources = _field_sources(row.get('字段来源'))
         raw_stage = str(row.get('订单阶段') or '').strip()
         stages = [part.strip() for part in raw_stage.split('/') if part.strip()]
+        if not stages or any(stage not in RESOLVED_STAGES for stage in stages):
+            audit['阶段不明确排除'] += 1
+            continue
+        if row.get('首销分时核对'):
+            # Retain an audit count only: hourly checks do not override daily values.
+            audit['原表首销分时核对标记行'] += 1
         for metric, column in columns.items():
             value = row.get(column)
             if value is None:
@@ -171,7 +201,7 @@ def read_resolved_panel(wb, audit):
             if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value):
                 audit[metric+'非数值'] += 1
                 continue
-            source = sources.get(column, '')
+            source = _resolved_field_source(sources, RESOLVED_METRIC_COLUMNS[metric])
             if not source or any(word in source for word in ('预测','合成','模拟','缺失','累计','快照','参考曲线','未更新')):
                 audit[metric+'字段来源排除'] += 1
                 continue
@@ -672,7 +702,8 @@ def main():
         raise ValueError('源工作簿中没有有效观测，请检查日期、车型、指标值和来源字段')
     log(f'源数据读取及校验完成：有效观测 {len(panel):,} 条，车型 {len({r["model"] for r in panel}):,} 个，用时 {time.perf_counter()-stage:.1f} 秒')
     log('读取工作表：'+'、'.join(sorted({r['sheet'] for r in panel})))
-    for key in ('跨来源候选未累加', '累计快照或参考曲线排除', '未来或超过数据判定日期排除'):
+    for key in ('跨来源候选未累加', '累计快照或参考曲线排除', '未来或超过数据判定日期排除',
+                '未结束或未知日期状态排除', '数据判定当日未完整排除', '阶段不明确排除'):
         if audit.get(key): log(f'{key}：{audit[key]:,} 条')
     log(f'数据日期范围：{min(r["date"] for r in panel)} 至 {max(r["date"] for r in panel)}')
 

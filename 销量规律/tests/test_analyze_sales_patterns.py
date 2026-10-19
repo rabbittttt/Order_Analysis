@@ -386,6 +386,153 @@ class UnifiedDailyTests(unittest.TestCase):
         row.update(changes)
         return row
 
+    NEW_HEADERS = ['代际名','二级代际名','日期','订单阶段','生命周期','日期状态',
+                   '小订','小订数量','小订退订','小转大','直接大定','大定',
+                   '留存大定','净大定','交车锁单','字段来源','首销分时核对']
+
+    def new_read(self, rows, models=(),判定日='2025-12-31', headers=None):
+        headers = headers or self.NEW_HEADERS
+        model_head = ['代际名','二级代际名','首销开始','首销结束','小订开始','小订结束',
+                      '品牌','产品档位','能源类型']
+        model_head = list(dict.fromkeys(model_head + [k for r in models for k in r]))
+        book = Book([], [])
+        book.sheets = {
+            m.UNIFIED_DAILY_SHEET: Sheet([headers] + [[r.get(k) for k in headers] for r in rows]),
+            '车型基本信息': Sheet([model_head] + [[r.get(k) for k in model_head] for r in models]),
+            '说明与来源': Sheet([['项目','内容'],['数据判定日期',判定日]]),
+        }
+        book.sheetnames = list(book.sheets)
+        with patch.object(m.openpyxl, 'load_workbook', return_value=book):
+            return m.read_panel(Path('not-read.xlsx'))
+
+    def new_row(self, **changes):
+        row = dict(代际名='新代际',二级代际名='纯电版',日期=date(2025,8,1),订单阶段='平销',
+                   生命周期=None,日期状态='已结束日',小订=11,小订数量=99,
+                   小订退订=100,小转大=None,直接大定=None,大定=88,
+                   留存大定=10,净大定=99,交车锁单=7,首销分时核对=999,
+                   字段来源='小订=小订.xlsx｜by天；大定/留存大定/净大定=大定.xlsx｜by天；'
+                         '交车锁单=锁单.xlsx｜by天')
+        row.update(changes)
+        return row
+
+    def test_new_schema_metric_aliases_prefer_new_values_and_keep_zero_negative_missing(self):
+        rows = [
+            self.new_row(日期=date(2025,8,1),小订=11,小订数量=99,留存大定=10,净大定=99,
+                         交车锁单=7),
+            self.new_row(日期=date(2025,8,2),小订=0,小订数量=88,留存大定=0,净大定=77,
+                         交车锁单=-2),
+            self.new_row(日期=date(2025,8,3),小订=None,小订数量=66,留存大定=None,净大定=55,
+                         交车锁单=None),
+        ]
+        panel, audit = self.new_read(rows)
+        values = {(r['date'], r['metric']): r['value'] for r in panel}
+        self.assertEqual(values[(date(2025,8,1),'小订数量')], 11)
+        self.assertEqual(values[(date(2025,8,1),'留存大定')], 10)
+        self.assertEqual(values[(date(2025,8,1),'交车锁单')], 7)
+        self.assertEqual(values[(date(2025,8,2),'小订数量')], 0)
+        self.assertEqual(values[(date(2025,8,2),'留存大定')], 0)
+        self.assertEqual(values[(date(2025,8,2),'交车锁单')], -2)
+        self.assertNotIn((date(2025,8,3),'小订数量'), values)
+        self.assertNotIn((date(2025,8,3),'留存大定'), values)
+        self.assertNotIn((date(2025,8,3),'交车锁单'), values)
+        self.assertEqual(audit.get('小订数量负值不参与倍率', 0), 0)
+        self.assertEqual(audit['交车锁单负值不参与倍率'], 1)
+
+    def test_new_schema_value_and_source_aliases_cross_match(self):
+        cases = [
+            ('新值列+旧来源名', self.new_row(
+                日期=date(2025,8,4),小订=21,小订数量=77,留存大定=31,净大定=71,
+                字段来源='小订数量=旧小订.xlsx｜by天；净大定=旧大定.xlsx｜by天；'
+                          '交车锁单=锁单.xlsx｜by天'), self.NEW_HEADERS,
+             {'小订数量':21,'留存大定':31}),
+            ('旧值列+新来源名', self.new_row(
+                日期=date(2025,8,5),小订=None,小订数量=22,留存大定=None,净大定=32,
+                字段来源='小订=新小订.xlsx｜by天；留存大定=新大定.xlsx｜by天；'
+                          '交车锁单=锁单.xlsx｜by天'),
+             [h for h in self.NEW_HEADERS if h not in ('小订','留存大定')],
+             {'小订数量':22,'留存大定':32}),
+        ]
+        for label, row, headers, expected in cases:
+            with self.subTest(label=label):
+                panel, _ = self.new_read([row], headers=headers)
+                values = {r['metric']: r['value'] for r in panel}
+                for metric, value in expected.items():
+                    self.assertEqual(values[metric], value)
+
+    def test_new_schema_alias_source_conflict_is_rejected(self):
+        for source in ('小订=来源A；小订数量=来源B', '留存大定=来源A；净大定=来源B'):
+            row = self.new_row(字段来源=source)
+            with self.assertRaisesRegex(ValueError, '字段来源冲突'):
+                self.new_read([row])
+
+    def test_new_schema_legacy_metric_aliases_remain_compatible(self):
+        headers = [h for h in self.NEW_HEADERS if h not in ('小订','留存大定')]
+        row = self.new_row(小订=None,留存大定=None,小订数量=14,净大定=13,
+                           字段来源='小订数量=旧小订.xlsx｜by天；净大定=旧大定.xlsx｜by天；'
+                                 '交车锁单=锁单.xlsx｜by天')
+        panel, _ = self.new_read([row], headers=headers)
+        values = {r['metric']: r['value'] for r in panel}
+        self.assertEqual(values['小订数量'], 14)
+        self.assertEqual(values['留存大定'], 13)
+        self.assertEqual(values['交车锁单'], 7)
+
+    def test_new_schema_status_and_cutoff_require_finished_before_judgement_date(self):
+        rows = [
+            self.new_row(日期=date(2025,8,1),日期状态='已结束日'),
+            self.new_row(日期=date(2025,8,2),日期状态='当前日'),
+            self.new_row(日期=date(2025,8,2),日期状态='未结束日'),
+            self.new_row(日期=date(2025,8,2),日期状态='未知状态'),
+            self.new_row(日期=date(2025,8,2),日期状态=None),
+            self.new_row(日期=date(2025,8,3),日期状态='已结束日'),
+            self.new_row(日期=date(2025,8,4),日期状态='已结束日'),
+        ]
+        panel, audit = self.new_read(rows,判定日='2025-08-03')
+        self.assertEqual({r['date'] for r in panel}, {date(2025,8,1)})
+        self.assertEqual(audit['未结束或未知日期状态排除'], 4)
+        self.assertEqual(audit['数据判定当日未完整排除'], 1)
+        self.assertEqual(audit['未来或超过数据判定日期排除'], 1)
+
+    def test_new_schema_unknown_stage_is_excluded_and_reference_columns_do_not_change_net_lock(self):
+        rows = [
+            self.new_row(日期=date(2025,8,1),订单阶段='未知',小订退订=100,首销分时核对=999,
+                         留存大定=12,净大定=12,交车锁单=8),
+            self.new_row(日期=date(2025,8,2),订单阶段=None,小订退订=100,首销分时核对=999,
+                         留存大定=12,净大定=12,交车锁单=8),
+            self.new_row(日期=date(2025,8,3),订单阶段='平销',小订退订=100,首销分时核对=999,
+                         留存大定=12,净大定=12,交车锁单=8),
+        ]
+        panel, _ = self.new_read(rows)
+        self.assertEqual({r['date'] for r in panel}, {date(2025,8,3)})
+        valid = panel
+        self.assertEqual({r['metric']: r['value'] for r in valid},
+                         {'小订数量': 11, '大定': 88, '留存大定': 12,
+                          '交车锁单': 8})
+        self.assertEqual({r['stage'] for r in valid}, {'小订阶段','平销'})
+        self.assertNotIn('小订退订', {r['metric'] for r in panel})
+        self.assertNotIn('首销分时核对', {r['metric'] for r in panel})
+
+    def test_new_schema_composite_stage_uses_metric_specific_windows_and_secondary_model(self):
+        row = self.new_row(二级代际名='纯电版',订单阶段='小订/首销',日期=date(2025,9,1),
+                           生命周期='D32',小订=30,小订数量=None,留存大定=10,净大定=None,
+                           交车锁单=15,
+                           字段来源='小订=小订.xlsx｜by天；留存大定=首销.xlsx｜by天；'
+                                 '交车锁单=首销.xlsx｜by天')
+        models = [dict(代际名='新代际',二级代际名='纯电版',小订开始='2025-09-01',小订结束='2025-09-30',
+                       首销开始='2025-08-01',首销结束='2025-09-30',品牌='品牌甲',
+                       产品档位='SUV',能源类型='纯电')]
+        panel, audit = self.new_read([row], models)
+        small = next(r for r in panel if r['metric']=='小订数量')
+        net = next(r for r in panel if r['metric']=='留存大定')
+        lock = next(r for r in panel if r['metric']=='交车锁单')
+        self.assertEqual((small['model'], small['stage'], small['cycle'], small['life']),
+                         ('纯电版','小订阶段','2025-09-01',1))
+        self.assertEqual((net['stage'], net['cycle'], net['life']),
+                         ('首销','2025-08-01',32))
+        self.assertEqual((lock['stage'], lock['cycle'], lock['life']),
+                         ('首销','2025-08-01',32))
+        self.assertEqual((small['brand'], small['segment'], small['energy']), ('品牌甲','SUV','纯电'))
+        self.assertEqual(audit['复合阶段按指标拆分'], 3)
+
     def test_resolved_sources_are_metric_specific_and_values_are_not_reselected(self):
         panel,audit=self.resolved([self.resolved_row(大定=12)])
         net=next(r for r in panel if r['metric']=='留存大定')
