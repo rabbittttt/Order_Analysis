@@ -143,3 +143,70 @@ class PayloadPackingTests(unittest.TestCase):
         self.assertEqual(rows, [["日期", "比例", "数量"], ["2026-01-01", "12.5%", "0"]])
         self.assertEqual(files[0]["sheets"][0]["total_rows"], 2)
         book.close()
+
+    def test_option_percentage_format_repair_reaches_raw_tables_and_refreshes_cache(self):
+        from types import SimpleNamespace
+        from openpyxl import Workbook
+        from core.excel import load_data_workbook
+        from main import raw_tables
+
+        with TemporaryDirectory() as folder:
+            path = Path(folder) / "鸿蒙智行大定选配比例分析.xlsx"
+            cache = Path(folder) / "cache"
+            book = Workbook()
+            book.remove(book.active)
+            for name in ("智界by周", "问界by天", "尊界by月"):
+                sheet = book.create_sheet(name)
+                for row in (
+                    ["指标", "统计类型", "分类", "当期", "上期"],
+                    ["大定", "数量", "数量", 1234, 0],
+                    ["动力", "占比", "增程", .3111, 0],
+                    [None, None, "纯电", .6889, 1],
+                    ["门店类型", "占比", "华为授权体验店", .375, .5],
+                    [None, "数量", "华为授权体验店", 1234, 0],
+                    [None, "贡献门店数", "华为授权体验店", 131, 0],
+                    ["普通小数", "数值", "产能", 12.34, None],
+                ):
+                    sheet.append(row)
+                sheet.merge_cells("B3:B4")
+                for row in (2, 6, 7):
+                    for cell in sheet[row][3:]:
+                        cell.number_format = "#,##0"
+                for row in (3, 4, 5):
+                    for cell in sheet[row][3:]:
+                        cell.number_format = "0.0%" if row == 5 else "0.00%"
+                sheet["D3"].number_format = "#,##0.00"
+                sheet["D8"].number_format = "#,##0.00"
+            original_values = [[list(row) for row in sheet.values] for sheet in book]
+            book.save(path)
+
+            def read_display_rows():
+                loaded = load_data_workbook(path, cache)
+                self.assertEqual([[list(row) for row in sheet.values] for sheet in loaded], original_values)
+                _, blocks = raw_tables(SimpleNamespace(items=[SimpleNamespace(path=path, workbook=loaded)]))
+                loaded.close()
+                return [json.loads(gzip.decompress(base64.b64decode(blocks[f"0|{index}"])))["rows"]
+                        for index in range(3)]
+
+            before = read_display_rows()
+            for rows in before:
+                self.assertEqual(rows[2][3], "0.31")
+            # A source-only format repair must invalidate the cached display;
+            # merged labels must not affect percent precision or numeric values.
+            for sheet in book:
+                sheet["D3"].number_format = "0.00%"
+            book.save(path)
+            book.close()
+            after = read_display_rows()
+            self.assertEqual(read_display_rows(), after)
+            for rows in after:
+                self.assertEqual(rows[1][3:], ["1,234", "0"])
+                self.assertEqual(rows[2][3:], ["31.11%", "0.00%"])
+                self.assertEqual(rows[3][3:], ["68.89%", "100.00%"])
+                self.assertEqual(rows[4][3:], ["37.5%", "50.0%"])
+                self.assertEqual(rows[5][3:], ["1,234", "0"])
+                self.assertEqual(rows[6][3:], ["131", "0"])
+                self.assertEqual(rows[7][3:], ["12.34", None])
+            for old, repaired in zip(before, after):
+                old[2][3] = "31.11%"
+                self.assertEqual(old, repaired)
