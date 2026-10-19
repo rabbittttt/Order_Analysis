@@ -1,4 +1,5 @@
 from modules.cancellation import CancellationModule
+from modules.channel_analysis import ChannelAnalysisModule
 from modules.conversion import ConversionModule
 from modules.generic import GenericModule
 from modules.launch_rhythm import LaunchRhythmModule
@@ -11,6 +12,7 @@ from modules.sales_forecast import SalesForecastModule
 
 MODULES = [
     OverviewModule(),
+    ChannelAnalysisModule(),
     SalesForecastModule(),
     LaunchRhythmModule(),
     CancellationModule(),

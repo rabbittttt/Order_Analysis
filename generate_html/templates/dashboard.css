@@ -93,6 +93,347 @@ button {
   z-index:1;
 }
 
+/* Channel analysis keeps the comparison, trend and source values together. */
+.panel[data-section-kind="channel_panel"] {
+  max-height:none;
+  overflow:visible;
+}
+
+.panel[data-section-kind="channel_panel"] .panel-head {
+  position:static;
+}
+
+.channel-panel {
+  --channel-accent:#1769c6;
+  color:var(--ink,#223047);
+  font-size:12px;
+  line-height:1.5;
+}
+
+.channel-toolbar,.channel-subhead {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+
+.channel-toolbar {
+  margin-bottom:14px;
+  padding-bottom:12px;
+  border-bottom:1px solid var(--line,#e5eaf1);
+}
+
+.channel-toolbar p {
+  margin:0;
+  color:var(--muted,#617187);
+}
+
+.channel-toolbar label {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-shrink:0;
+}
+
+.channel-panel select {
+  max-width:100%;
+  min-height:36px;
+  border:1px solid var(--line-strong,#cdd8e7);
+  border-radius:7px;
+  background:#fff;
+  padding:6px 28px 6px 9px;
+  color:var(--ink,#223047);
+  font:inherit;
+}
+
+.channel-panel-grid {
+  display:grid;
+  grid-template-columns:minmax(0,1.12fr) minmax(0,1fr);
+  gap:22px;
+}
+
+.channel-current,.channel-history {
+  min-width:0;
+}
+
+.channel-subhead {
+  min-height:38px;
+  margin-bottom:8px;
+}
+
+.channel-subhead h3 {
+  margin:0;
+  font-size:13px;
+  font-weight:700;
+}
+
+.channel-subhead>span {
+  color:var(--muted,#617187);
+  text-align:right;
+}
+
+.channel-subhead label {
+  min-width:0;
+  max-width:68%;
+}
+
+.channel-comparison {
+  display:grid;
+  gap:3px;
+}
+
+.channel-bar-row {
+  display:grid;
+  grid-template-columns:minmax(96px,1.05fr) minmax(44px,1fr) minmax(105px,1fr) minmax(75px,.8fr);
+  align-items:center;
+  gap:8px;
+  width:100%;
+  min-height:40px;
+  padding:4px 7px;
+  border:1px solid transparent;
+  border-radius:7px;
+  background:transparent;
+  color:inherit;
+  font:inherit;
+  text-align:left;
+}
+
+.channel-bar-row:not(:has(.channel-bar-change)) {
+  grid-template-columns:minmax(96px,1.05fr) minmax(44px,1fr) minmax(105px,1fr);
+}
+
+.channel-bar-row:hover,.channel-bar-row.selected {
+  background:#f1f7fe;
+  border-color:#cde0f8;
+}
+
+.channel-bar-name {
+  overflow-wrap:anywhere;
+  line-height:1.45;
+}
+
+.channel-bar-track {
+  height:8px;
+  border-radius:5px;
+  background:#edf1f6;
+  overflow:hidden;
+}
+
+.channel-bar-track i {
+  display:block;
+  height:100%;
+  background:#8db9e9;
+  border-radius:inherit;
+}
+
+.channel-bar-row.selected .channel-bar-track i {
+  background:var(--channel-accent);
+}
+
+.channel-bar-value {
+  display:grid;
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+}
+
+.channel-bar-value b {
+  color:#234a76;
+  font-size:13px;
+}
+
+.channel-bar-value small {
+  color:var(--muted,#617187);
+  font-size:11px;
+  overflow-wrap:anywhere;
+}
+
+.channel-bar-change {
+  color:var(--muted,#617187);
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+  font-size:11px;
+}
+
+.channel-bar-change.rising {
+  color:#096b51;
+}
+
+.channel-bar-change.falling {
+  color:#b24452;
+}
+
+.channel-trend-summary {
+  display:grid;
+  gap:4px;
+  margin:0 0 6px;
+  min-height:42px;
+}
+
+.channel-trend-summary strong {
+  font-size:12px;
+  color:#234a76;
+}
+
+.channel-trend-summary span,.channel-history-note {
+  color:var(--muted,#617187);
+  font-size:11px;
+}
+
+.channel-trend-scroll {
+  max-width:100%;
+  overflow-x:auto;
+  overflow-y:hidden;
+  border:1px solid #e5edf6;
+  border-radius:8px;
+  background:#fbfdff;
+  scrollbar-width:thin;
+}
+
+.channel-trend-scroll svg {
+  display:block;
+  min-width:100%;
+}
+
+.channel-trend-grid line {
+  stroke:#e2eaf3;
+  stroke-dasharray:3 4;
+}
+
+.channel-trend-grid text,.channel-axis-label {
+  fill:#60748b;
+  font:11px "Microsoft YaHei","微软雅黑",sans-serif;
+}
+
+.channel-trend-line {
+  stroke:var(--channel-accent);
+  stroke-width:2.2;
+  fill:none;
+}
+
+.channel-trend-points circle {
+  fill:var(--channel-accent);
+  stroke:#fff;
+  stroke-width:1.5;
+}
+
+.channel-last-value {
+  fill:#174e8d;
+  font:700 11px "Microsoft YaHei","微软雅黑",sans-serif;
+}
+
+.channel-history-note {
+  margin:6px 0 0;
+}
+
+.channel-details {
+  margin-top:10px;
+}
+
+.channel-details>summary {
+  width:fit-content;
+  padding:6px 0;
+  color:#285d97;
+  cursor:pointer;
+  font-weight:600;
+}
+
+.channel-current-details {
+  margin-top:14px;
+  border-top:1px solid var(--line,#e5eaf1);
+  padding-top:5px;
+}
+
+.channel-panel .channel-table {
+  margin-top:6px;
+  max-height:360px;
+  overflow:auto;
+}
+
+.channel-table .data-table {
+  width:100%;
+  min-width:0;
+}
+
+.channel-table .data-table tbody th {
+  position:static;
+  min-width:115px;
+  max-width:160px;
+  padding:9px 10px;
+  border-bottom:1px solid #eff1f5;
+  color:#42556d;
+  background:#fff;
+  text-align:left;
+  white-space:normal;
+  font-size:12px;
+  font-weight:500;
+  overflow-wrap:anywhere;
+}
+
+.channel-table .data-table td,.channel-table .data-table thead th {
+  font-size:12px;
+}
+
+.channel-table .data-table thead th {
+  top:0;
+}
+
+.channel-empty {
+  display:grid;
+  min-height:220px;
+  place-items:center;
+  margin:0;
+  color:var(--muted,#617187);
+  text-align:center;
+  background:#fafcff;
+  border:1px dashed var(--line-strong,#cdd8e7);
+  border-radius:8px;
+}
+
+.channel-panel :is(button,select,summary,[tabindex]):focus-visible {
+  outline:2px solid var(--channel-accent);
+  outline-offset:3px;
+}
+
+@media (max-width:1200px) {
+  .channel-panel-grid {
+    grid-template-columns:1fr;
+    gap:18px;
+  }
+}
+
+@media (max-width:600px) {
+  .channel-toolbar {
+    align-items:flex-start;
+    flex-direction:column;
+    gap:8px;
+  }
+  .channel-panel select {
+    min-height:44px;
+  }
+  .channel-bar-row {
+    grid-template-columns:minmax(82px,.9fr) minmax(25px,.5fr) minmax(90px,1fr);
+    gap:4px 7px;
+    min-height:44px;
+    padding-inline:3px;
+  }
+  .channel-bar-row:not(:has(.channel-bar-change)) {
+    grid-template-columns:minmax(82px,.9fr) minmax(25px,.5fr) minmax(90px,1fr);
+  }
+  .channel-bar-change {
+    grid-column:2/-1;
+  }
+  .channel-subhead {
+    align-items:flex-start;
+  }
+  .channel-subhead>span {
+    max-width:62%;
+  }
+  .channel-details>summary {
+    min-height:44px;
+    line-height:32px;
+  }
+}
+
 .panel-source svg {
   width:14px;
   height:14px;

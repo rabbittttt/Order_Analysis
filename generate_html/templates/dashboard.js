@@ -686,8 +686,10 @@
       bindForecastWorkspaceV2();restoreForecastDraft();bindReferencePickers($('#page'));
       return;
     }
+    channelPanelData.clear();
     $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${page.sections.map(renderSection).join("")}</div>`;
     bindRhythmCharts();
+    bindChannelPanels();
     alignOverviewChartScrollbars();
     document.querySelectorAll("[data-panel-source]").forEach(button=>button.onclick=()=>jumpToSource(page.sections[Number(button.dataset.panelSource)]?.source));
     document.querySelectorAll("[data-combo-switch]").forEach(button=>button.onclick=()=>{
@@ -717,7 +719,7 @@
   }
   function renderSection(item,index){
     const pieBars=item.kind==='bars'&&item.title==='门店渠道订单量';
-    const renderer=pieBars?renderPieChart:({stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_heatmap:renderComboHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
+    const renderer=pieBars?renderPieChart:({channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_heatmap:renderComboHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
     const body=renderer(item.data);
     const sourceButton=item.source?`<button class="panel-source" data-panel-source="${index}" aria-label="查看${esc(item.title)}的来源数据" title="跳转到底表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7m0-7-9 9M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/></svg><span>来源数据</span></button>`:"";
     return `<article class="panel ${item.width==="half"?"":"full"}" data-section-kind="${esc(item.kind||"")}"><div class="panel-head"><div><h2>${esc(item.title)}</h2><span>${esc(item.meta)}</span></div>${sourceButton}</div><div class="panel-body">${body}</div></article>`;
@@ -725,6 +727,78 @@
   function renderWorkspacePage(item){
     const renderer={forecast_workspace:renderForecastWorkspaceV2}[item.kind]||renderUnknown;
     return `<section class="page-workspace forecast-page"><div class="page-workspace-body">${renderer(item.data)}</div></section>`;
+  }
+  const channelPanelData=new Map();
+  const channelKnown=value=>typeof value==='number'&&Number.isFinite(value);
+  function channelMetricOptions(metric){
+    if(metric==='sales')return [{key:'share',label:'销量占比',format:'percent',unit:'%',change:'share_change',changeFormat:'points'},{key:'count',label:'留存大定',format:'number',unit:'单',change:'count_change',changeFormat:'number'}];
+    if(metric==='stores')return [{key:'active_rate',label:'出单门店比例',format:'percent',unit:'%',change:'active_rate_change',changeFormat:'points'},{key:'active_count',label:'出单门店数',format:'number',unit:'家'}];
+    return [{key:'productivity',label:'单店产能',format:'capacity',unit:'单/店/本周期',change:'productivity_change',changeFormat:'capacity'}];
+  }
+  function channelValue(value,format='number',signed=false){
+    if(!channelKnown(value))return '—';
+    const prefix=signed&&value>0?'+':'';
+    if(format==='percent')return prefix+(value*100).toFixed(1)+'%';
+    if(format==='points')return prefix+(value*100).toFixed(1)+' 个百分点';
+    if(format==='capacity')return prefix+value.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    return prefix+fmt(value);
+  }
+  function channelHistory(data){
+    const history=Array.isArray(data.history)?data.history:[],index=history.findIndex(item=>String(item.period)===String(data.period));
+    return index>=0?history.slice(0,index+1):[{period:data.period,rows:data.rows||[]}];
+  }
+  function channelTable(columns,rows,caption){
+    return `<div class="table-wrap channel-table"><table class="data-table"><caption class="sr-only">${esc(caption)}</caption><thead><tr>${columns.map((column,index)=>`<th scope="col"${index?' class="num"':''}>${esc(column)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map((value,index)=>index?`<td class="num">${value}</td>`:`<th scope="row">${esc(value)}</th>`).join('')}</tr>`).join('')||`<tr><td colspan="${columns.length}">暂无数据</td></tr>`}</tbody></table></div>`;
+  }
+  function channelCurrentTable(data){
+    const rows=data.rows||[],value=channelValue;
+    if(data.metric==='sales')return channelTable(['门店渠道','留存大定（单）','销量占比','上期留存大定（单）','订单变化（单）','占比变化'],rows.map(row=>[row.channel,value(row.count),value(row.share,'percent'),value(row.previous_count),value(row.count_change,'number',true),value(row.share_change,'points',true)]),'各渠道留存大定与占比明细');
+    if(data.metric==='stores')return channelTable(['门店渠道','出单门店（家）','配置门店（家）','出单门店比例','上期出单门店比例','比例变化'],rows.map(row=>[row.channel,value(row.active_count),value(row.store_count),value(row.active_rate,'percent'),value(row.previous_active_rate,'percent'),value(row.active_rate_change,'points',true)]),'各渠道贡献订单门店明细');
+    return channelTable(['门店渠道','留存大定（单）','配置门店（家）','单店产能（单/店/本周期）','上期单店产能','产能变化（单/店）'],rows.map(row=>[row.channel,value(row.count),value(row.store_count),value(row.productivity,'capacity'),value(row.previous_productivity,'capacity'),value(row.productivity_change,'capacity',true)]),'各渠道单店产能明细');
+  }
+  function channelComparison(data,metric,selected){
+    const rows=data.rows||[],values=rows.map(row=>row[metric.key]).filter(channelKnown),max=Math.max(1,...values);
+    return `<div class="channel-comparison">${rows.map(row=>{
+      const value=row[metric.key],known=channelKnown(value),width=known?Math.max(0,Math.min(100,value/max*100)):0;
+      const detail=data.metric==='sales'?`${channelValue(row.count)} 单 · ${channelValue(row.share,'percent')}`:data.metric==='stores'?`${channelValue(row.active_count)} / ${channelValue(row.store_count)} 家`:`${channelValue(row.count)} 单 / ${channelValue(row.store_count)} 家`;
+      const change=metric.change?row[metric.change]:null;
+      return `<button type="button" class="channel-bar-row${row.channel===selected?' selected':''}" data-channel-choose="${esc(row.channel)}" aria-pressed="${row.channel===selected}" aria-label="查看${esc(row.channel)}的${esc(metric.label)}历史趋势"><span class="channel-bar-name">${esc(row.channel)}</span><span class="channel-bar-track" aria-hidden="true"><i style="width:${width.toFixed(3)}%"></i></span><span class="channel-bar-value"><b>${channelValue(value,metric.format)}</b><small>${esc(detail)}</small></span>${metric.change?`<span class="channel-bar-change ${channelKnown(change)?change>0?'rising':change<0?'falling':'flat':'missing'}">${channelValue(change,metric.changeFormat,true)}</span>`:''}</button>`;
+    }).join('')||'<p class="channel-empty">暂无渠道数据</p>'}</div>`;
+  }
+  function channelTrend(data,metric,selected){
+    const history=channelHistory(data),rows=history.map(item=>({period:item.period,value:(item.rows||[]).find(row=>row.channel===selected)?.[metric.key]})),known=rows.filter(row=>channelKnown(row.value));
+    const table=channelTable(['周期',metric.label+(metric.format==='percent'?'':`（${metric.unit}）`)],rows.map(row=>[row.period,channelValue(row.value,metric.format)]),`${selected}的${metric.label}历史数值`);
+    const details=`<details class="channel-details"><summary>查看历史数值（${rows.length} 个周期）</summary>${table}</details>`;
+    if(!known.length)return `<div class="channel-empty" data-channel-chart role="status">此渠道暂无${esc(metric.label)}数据</div>${details}`;
+    const W=Math.max(460,rows.length*62+84),H=224,left=64,right=20,top=24,bottom=180,max=metric.format==='percent'?Math.max(1,...known.map(row=>row.value)):Math.max(...known.map(row=>row.value))*1.12||1;
+    const point=(row,index)=>({x:left+(rows.length>1?index/(rows.length-1)*(W-left-right):(W-left-right)/2),y:bottom-row.value/max*(bottom-top)});
+    let path='',connected=false;
+    rows.forEach((row,index)=>{if(!channelKnown(row.value)){connected=false;return}const p=point(row,index);path+=`${connected?'L':'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)} `;connected=true;});
+    const grid=[0,.5,1].map(part=>{const y=bottom-part*(bottom-top);return `<line x1="${left}" x2="${W-right}" y1="${y}" y2="${y}"/><text x="${left-10}" y="${y+4}" text-anchor="end">${channelValue(max*part,metric.format)}</text>`}).join('');
+    const lastKnown=rows.findLastIndex(row=>channelKnown(row.value)),points=rows.map((row,index)=>{
+      if(!channelKnown(row.value))return '';
+      const p=point(row,index),description=`${row.period} · ${selected} · ${metric.label} ${channelValue(row.value,metric.format)}${metric.format==='percent'?'':' '+metric.unit}`;
+      return `<circle cx="${p.x}" cy="${p.y}" r="3.5"><title>${esc(description)}</title></circle>${index===lastKnown?`<text class="channel-last-value" x="${p.x}" y="${p.y-10}" text-anchor="${index===rows.length-1&&rows.length>1?'end':'middle'}">${channelValue(row.value,metric.format)}</text>`:''}`;
+    }).join('');
+    const labels=rows.map((row,index)=>{const p=point({...row,value:0},index);return `<text class="channel-axis-label" x="${p.x}" y="${bottom+24}" text-anchor="middle">${esc(String(row.period).replace(/^20(\d{2})[-/](\d{2})[-/](\d{2})$/,'$2-$3'))}<title>${esc(row.period)}</title></text>`}).join('');
+    const current=rows.at(-1),changeKey=metric.change,currentRow=(data.rows||[]).find(row=>row.channel===selected),movement=changeKey&&channelKnown(currentRow?.[changeKey])?` · 较上期 ${channelValue(currentRow[changeKey],metric.changeFormat,true)}`:'';
+    return `<p class="channel-trend-summary" aria-live="polite"><strong>${esc(selected)}</strong><span>${esc(current?.period)} · ${channelValue(current?.value,metric.format)}${metric.format==='percent'?'':' '+esc(metric.unit)}${movement}</span></p><div class="channel-trend-scroll" data-channel-chart tabindex="0" role="region" aria-label="${esc(selected)}${esc(metric.label)}历史趋势，可横向滚动"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px" role="img" aria-label="${esc(selected)}的${esc(metric.label)}历史趋势，缺失数据保留断点"><g class="channel-trend-grid">${grid}</g><path class="channel-trend-line" d="${path}"/><g class="channel-trend-points">${points}</g>${labels}</svg></div><p class="channel-history-note">截至 ${esc(data.period)} · 缺失数据以断点保留</p>${details}`;
+  }
+  function renderChannelPanel(data){
+    const id=String(channelPanelData.size),options=channelMetricOptions(data.metric),metric=options[0],rows=data.rows||[],selected=rows.find(row=>channelKnown(row[metric.key])&&row[metric.key]>0)?.channel||rows[0]?.channel||'';
+    channelPanelData.set(id,data);
+    const description=data.metric==='sales'?'留存大定数量和销量占比直接取自门店类型指标。':data.metric==='stores'?'出单门店比例 = 当期出单门店数 ÷ 配置门店总数。':'单店产能 = 当期渠道留存大定 ÷ 配置门店总数。';
+    return `<div class="channel-panel" data-channel-panel="${id}" data-channel-metric="${esc(data.metric)}"><div class="channel-toolbar"><p>${description}</p><label>查看指标<select data-channel-measure aria-label="${data.metric==='sales'?'渠道销量':data.metric==='stores'?'贡献订单门店':'单店产能'}指标">${options.map(option=>`<option value="${option.key}">${option.label}</option>`).join('')}</select></label></div><div class="channel-panel-grid"><section class="channel-current"><div class="channel-subhead"><h3>当前渠道比较</h3><span>${esc(data.period)} · 点击渠道查看趋势</span></div><div data-channel-comparison>${channelComparison(data,metric,selected)}</div></section><section class="channel-history"><div class="channel-subhead"><h3>历史变化</h3><label><span class="sr-only">选择历史趋势渠道</span><select data-channel-select aria-label="选择${data.metric==='sales'?'渠道销量':data.metric==='stores'?'出单门店':'单店产能'}历史趋势渠道">${rows.map(row=>`<option value="${esc(row.channel)}"${row.channel===selected?' selected':''}>${esc(row.channel)}</option>`).join('')}</select></label></div><div data-channel-history>${channelTrend(data,metric,selected)}</div></section></div><details class="channel-details channel-current-details"><summary>查看当前周期明细（${rows.length} 个渠道）</summary>${channelCurrentTable(data)}</details></div>`;
+  }
+  function bindChannelPanels(){
+    document.querySelectorAll('[data-channel-panel]').forEach(root=>{
+      const data=channelPanelData.get(root.dataset.channelPanel);if(!data)return;
+      const metricControl=root.querySelector('[data-channel-measure]'),channelControl=root.querySelector('[data-channel-select]');
+      const refresh=()=>{const metric=channelMetricOptions(data.metric).find(item=>item.key===metricControl.value)||channelMetricOptions(data.metric)[0];root.querySelector('[data-channel-comparison]').innerHTML=channelComparison(data,metric,channelControl.value);root.querySelector('[data-channel-history]').innerHTML=channelTrend(data,metric,channelControl.value);const scroll=root.querySelector('.channel-trend-scroll');if(scroll)scroll.scrollLeft=scroll.scrollWidth;};
+      metricControl.onchange=refresh;channelControl.onchange=refresh;
+      root.querySelector('[data-channel-comparison]').onclick=event=>{const button=event.target.closest('[data-channel-choose]');if(!button)return;channelControl.value=button.dataset.channelChoose;refresh();root.querySelector('[data-channel-choose="'+CSS.escape(channelControl.value)+'"]')?.focus({preventScroll:true});};
+      const scroll=root.querySelector('.channel-trend-scroll');if(scroll)scroll.scrollLeft=scroll.scrollWidth;
+    });
   }
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';

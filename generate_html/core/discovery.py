@@ -10,7 +10,7 @@ from core.model_identity import generation_records, parent_generation
 
 
 DEFAULT_MODULE_ORDER = [
-    "overview", "sales_forecast", "cancellation", "launch_rhythm", "conversion", "order_mix",
+    "overview", "channel_analysis", "sales_forecast", "cancellation", "launch_rhythm", "conversion", "order_mix",
     "lock_mix", "small_order_mix", "option_fee", "sku", "generic", "raw",
 ]
 # 保留旧导入名作为只读兼容别名；运行时排序仍以 config.json 为唯一来源。

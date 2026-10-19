@@ -18,6 +18,7 @@
   // raw（底表中心）固定排在最后，任何主体都可用
   "module_order": [
     "overview",
+    "channel_analysis",
     "sales_forecast",
     "cancellation",
     "launch_rhythm",
@@ -33,6 +34,7 @@
   // 各模块在页面导航栏上的显示名称
   "module_labels": {
     "overview": "订单总览",
+    "channel_analysis": "渠道分析",
     "sales_forecast": "销量预测",
     "order_mix": "大定选配",
     "lock_mix": "锁单选配",

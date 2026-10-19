@@ -414,6 +414,7 @@ def _source_key(value):
 def _quantity_field(labels, number_format):
     text = "|".join(map(str, labels))
     return ("%" not in number_format and "％" not in number_format
+            and "贡献订单门店数" not in labels  # Unique stores cannot be added across export shards.
             and not re.search(r"占比|比例|率|平均|均价|时长|天数|（天）|\(天\)", text)
             and any(label in {"数量", "订单量", "订单数", "单量", "累计锁单"} for label in labels))
 
@@ -767,6 +768,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     conflict_count = 0
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
+    store_period_parts = {}
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
     owns_diagnostics = diagnostics is None
     diagnostics = diagnostics if diagnostics is not None else _OverlapDiagnostics(coverage)
@@ -851,6 +853,13 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                     col_keys[-len(col_keys)-1] = key
                     columns.setdefault(key, [(day, "yyyy-mm-dd")])
         column_periods = {col: next((part for part in key if _week_period(part)), "") for col, key in col_keys.items()}
+        # Coverage belongs to the export period, even when an entire channel's
+        # active-store row is absent from one physical shard.
+        for col, col_key in col_keys.items():
+            week = _week_period(column_periods[col])
+            side = _boundary_side(coverage.get(item.path.name), week) if week and week[3] else None
+            if side:
+                store_period_parts.setdefault(col_key, set()).add(side)
         for row, row_key in row_keys.items():
             for col, col_key in col_keys.items():
                 if col < 0:
@@ -891,6 +900,18 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                                 conflict_kinds[kind] += 1
                                 if len(conflicts) < 3:
                                     conflicts.append(example)
+    # A left/right export pair contains overlapping store identities. Even equal
+    # counts (or a blank/missing row) cannot establish a whole-week distinct count.
+    unknown_store_keys = [key for key in values if key[0][:2] == ("贡献订单门店数", "数量")
+                          and store_period_parts.get(key[1]) == {"left", "right"}]
+    for key in unknown_store_keys:
+        if key in values:
+            old = values[key]
+            values[key] = (None, old[1], "n", old[3], *old[4:])
+    if unknown_store_keys:
+        LOGGER.warning("[渠道门店数无法去重] Sheet=%s | 周期=%s | 涉及%d项贡献订单门店数 | 边界周存在多个分段，合并门店数留空",
+                       matches[0][1].title,
+                       "、".join(sorted({"/".join(key[1]) for key in unknown_store_keys})), len(unknown_store_keys))
     # Counts are additive; percentages are not. Rebuild dimension shares from
     # merged category counts, or weight source shares by the primary order count.
     primary = next((metric for marker, metric in (("锁单", "交车锁单"), ("小订", "小订"), ("大定", "大定"))
