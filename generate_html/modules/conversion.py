@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+import math
 
-from core.components import kpi, section, table
-from core.excel import WorkbookStore, clean_text, compact_identifier, safe_number, safe_rate
+from core.components import kpi, section
+from core.excel import WorkbookStore, clean_text, compact_identifier, safe_number
 from core.models import Dashboard, SourceRef, Subject
 
 
@@ -13,6 +14,18 @@ PERIOD_HEADERS = {"周", "月", "周期", "统计周期"}
 QUANTITY_HEADERS = {"数量", "订单量", "订单数", "单量"}
 ORDER_TO_LOCK_HEADERS = {"大定到交车锁单（天）", "大定到交车锁单天数", "大定至交车锁单（天）", "大定至交车锁单天数"}
 LOCK_TO_DELIVERY_HEADERS = {"交车锁单到交付（天）", "交车锁单到交付天数", "交车锁单至交付（天）", "交车锁单至交付天数"}
+
+
+def _observed_number(value) -> float | None:
+    """Missing quantities/durations must not become observed zeros."""
+    if isinstance(value, bool):
+        return None
+    number = safe_number(value, float("nan"))
+    return number if math.isfinite(number) and number >= 0 else None
+
+
+def _observed_rate(numerator, denominator) -> float | None:
+    return numerator / denominator if numerator is not None and denominator is not None and denominator > 0 else None
 
 
 def _header_key(value) -> str:
@@ -94,21 +107,22 @@ class ConversionModule:
                 period = clean_text(sheet.cell(row, period_column).value)
                 if not period:
                     continue
-                values = {label: safe_number(sheet.cell(row, stage_columns[label]).value) for label in STAGES}
+                values = {label: _observed_number(sheet.cell(row, stage_columns[label]).value) for label in STAGES}
                 order = values["大定"]
                 stages = []
                 previous = order
                 for label in STAGES:
                     value = values[label]
                     stages.append({
-                        "label": label, "value": value, "total_rate": safe_rate(value, order),
-                        "stage_rate": safe_rate(value, previous), "loss": max(previous - value, 0),
+                        "label": label, "value": value, "total_rate": _observed_rate(value, order),
+                        "stage_rate": _observed_rate(value, previous),
+                        "loss": max(previous - value, 0) if previous is not None and value is not None else None,
                     })
                     previous = value
                 cohorts.append({
                     "period": period, "stages": stages,
-                    "order_to_lock_days": safe_number(sheet.cell(row, order_to_lock_column).value) if order_to_lock_column else None,
-                    "lock_to_delivery_days": safe_number(sheet.cell(row, lock_to_delivery_column).value) if lock_to_delivery_column else None,
+                    "order_to_lock_days": _observed_number(sheet.cell(row, order_to_lock_column).value) if order_to_lock_column else None,
+                    "lock_to_delivery_days": _observed_number(sheet.cell(row, lock_to_delivery_column).value) if lock_to_delivery_column else None,
                 })
             if not cohorts:
                 continue
@@ -117,23 +131,27 @@ class ConversionModule:
             for cohort in cohorts:
                 delivered = cohort["stages"][-1]["value"]
                 order = cohort["stages"][0]["value"]
-                loss_stages = [stage for stage in cohort["stages"][1:] if stage["loss"] > 0]
+                total_rate = _observed_rate(delivered, order)
+                loss_complete = all(stage["loss"] is not None for stage in cohort["stages"][1:])
+                loss_stages = [stage for stage in cohort["stages"][1:] if stage["loss"] is not None and stage["loss"] > 0]
                 largest_loss = max(loss_stages, key=lambda stage: stage["loss"], default={"label": "-", "loss": 0})
                 loss_bars = [
-                    {"label": stage["label"], "share": safe_rate(stage["loss"], order), "count": stage["loss"]}
-                    for stage in loss_stages
+                    {"label": stage["label"], "share": _observed_rate(stage["loss"], order), "count": stage["loss"]}
+                    for stage in loss_stages if order is not None and order > 0
                 ]
                 pages[cohort["period"]] = {
                     "kpis": [
-                        kpi("总转化率", safe_rate(delivered, order) * 100, "%", "大定至已交付", "blue"),
+                        kpi("总转化率", total_rate * 100 if total_rate is not None else None, "%", "大定至已交付", "blue"),
                         kpi("本批次大定", order, "单", cohort["period"], "green"),
                         kpi("当前已交付", delivered, "单", "同一批订单", "orange"),
-                        kpi("最大阶段流失", largest_loss["loss"], "单", largest_loss["label"], "orange"),
+                        kpi("最大阶段流失", largest_loss["loss"] if loss_complete else None, "单", largest_loss["label"] if loss_complete else "阶段数量缺失，无法比较全部阶段", "orange"),
                     ],
                     "sections": [
-                        section("funnel", "7级转化漏斗", cohort["stages"], "数量 / 总占比 / 阶段转化 / 流失", source=source),
-                        section("cohort_matrix", "批次转化矩阵", cohorts, "阶段转化率与转化时长", source=source),
-                        section("bars", "阶段流失占比", {"color": "orange", "rows": loss_bars}, "相对大定订单", source=source),
+                        section("funnel", "7级转化漏斗", cohort["stages"], "数量 / 总占比 / 阶段转化 / 流失；— 表示数据缺失或分母为0", source=source),
+                        section("cohort_matrix", "批次转化矩阵", cohorts, "阶段转化率与转化时长；— 表示缺失或无法计算，真实0保留", source=source),
+                        section("bars", "阶段流失占比", {"color": "orange", "rows": loss_bars},
+                                "大定基数缺失或为0，无法计算占比" if order is None or order <= 0 else
+                                "相对大定订单" if loss_complete else "相对大定订单；仅展示相邻阶段数量均已知的流失", source=source),
                     ],
                 }
             views[grain] = {"periods": periods, "default_period": periods[-1], "pages": pages}
