@@ -2127,7 +2127,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   overflow-y:hidden;
   border:1px solid #e5edf5;
   border-radius:10px;
-  background:linear-gradient(180deg,#fbfdff,#fff);
+  background:#fff;
 }
 
 .rhythm-chart:focus-visible {
@@ -2147,15 +2147,10 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   font-family:"Microsoft YaHei","微软雅黑",Arial,sans-serif;
 }
 
-.rhythm-grid-line,
-.rhythm-axis-line {
-  stroke:#e5edf3;
-  stroke-width:1;
-  vector-effect:non-scaling-stroke;
-}
-
 .rhythm-axis-line {
   stroke:#b7c9d8;
+  stroke-width:1;
+  vector-effect:non-scaling-stroke;
 }
 
 .rhythm-axis-label,
@@ -2166,6 +2161,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 .rhythm-axis-label {
+  font-size:9px;
   fill:#64748b;
 }
 
@@ -2179,19 +2175,12 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   font-weight:500;
 }
 
-.rhythm-label-background {
-  fill:#fff;
-  fill-opacity:.94;
-  stroke:none;
-  pointer-events:none;
-}
-
 .rhythm-legend {
   max-width:100%;
   flex-wrap:wrap;
   align-items:center;
   gap:6px 14px;
-  margin-top:8px;
+  margin-top:6px;
   line-height:1.4;
 }
 

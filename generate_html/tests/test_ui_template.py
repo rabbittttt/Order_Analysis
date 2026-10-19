@@ -97,7 +97,8 @@ assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · �
         self.assertNotIn('.hourly-chart', css)
         self.assertNotIn('.rhythm-hourly-chart', css)
         self.assertNotIn('.launch-chart', css)
-        self.assertNotIn('paint-order:stroke', css[css.index('/* Daily and hourly rhythms'):css.index('#page {')])
+        self.assertNotIn('rhythm-label-background', script + css)
+        self.assertNotIn('rhythm-grid-line', script + css)
         self.assertEqual(css.count('.rhythm-chart {'), 1)
         self.assertIn('height:var(--rhythm-frame-height)', css)
         self.assertIn('overflow-x:auto', css)
@@ -109,16 +110,40 @@ assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · �
         checks = r'''
 const assert=require('assert');
 for(const count of [1,14,24,100])for(const width of [320,768,1440]){
- const g=rhythmGeometry(count,width);assert.equal(g.barWidth,32);assert.equal(g.height,260);assert.equal(g.frameHeight,280);
- assert.equal(g.plotHeight,194);assert(g.step>=48);assert.equal(g.left,g.right);
+ const g=rhythmGeometry(count,width);assert.equal(g.barWidth,42);assert.equal(g.height,224);assert.equal(g.frameHeight,240);
+ assert.equal(g.plotHeight,160);assert(g.step>=56);assert.equal(g.left,g.right);
 }
 const point={x:100,y:100},geometry=rhythmGeometry(2,500),occupied=[],points=[point],original=JSON.stringify([occupied,points]);
 const placed=rhythmLineLabel(point,'40.0%',occupied,points,[],geometry);
 assert(placed&&Math.abs(placed.y-point.y)<=24);assert.equal(JSON.stringify([occupied,points]),original);
+const completed={x:100,y:geometry.top};
+assert(rhythmLineLabel(completed,'100.0%',[],[completed],[],geometry),'100% endpoint needs space above the plot');
 assert.equal(rhythmLineLabel(point,'40.0%',[{left:0,right:500,top:0,bottom:260}],points,[],geometry),null,'hide instead of moving away from its point');
 const close=renderDailyCancel(Array.from({length:14},(_,i)=>({period:'D'+(i+1),daily:10,big_daily:10,small_rate:.06,big_rate:.02})));
 const labelled=[...close.matchAll(/data-rhythm-label="line"[^>]*data-series="([^"]+)"/g)].map(match=>match[1]);
 assert(labelled.includes('small_rate')&&labelled.includes('big_rate'),'nearby curves must share the limited label space');
+'''
+        subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)
+
+    def test_rhythm_preserves_every_total_before_allocating_rate_labels(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        checks = r'''
+const assert=require('assert');
+const rows=Array.from({length:24},(_,i)=>({label:'2026-10-'+String(i+1).padStart(2,'0'),total:i===0?null:i*35,values:{orders:i*35},rates:{rate:i/24}}));
+const spec={title:'test',rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'orders',label:'orders',color:'#1677ff'}],lines:[{key:'rate',label:'rate',color:'#0070c0'}]},before=JSON.stringify(spec);
+for(const width of [320,768,1440,1920]){
+ const html=renderRhythmSvg(spec,width),labels=[...html.matchAll(/data-rhythm-label="total" data-index="(\d+)"[^>]*>([^<]*)<\/text>/g)];
+ assert.equal(labels.length,24,'every column has its total, even beside a rate curve');
+ labels.forEach((match,index)=>{assert.equal(Number(match[1]),index);assert.equal(match[2],index===0?'—':fmt(index*35));});
+ assert(!html.includes('rhythm-label-background')&&!html.includes('rhythm-grid-line'));
+ assert(html.includes('>10-01<title>2026-10-01</title>'),'short axis date preserves full date');
+}
+assert.equal(JSON.stringify(spec),before);
+assert.equal(rhythmAxisText('D1'),'D1');assert.equal(rhythmAxisText('23时'),'23时');
+const larger=rhythmLabelBox('12345',50,50,10),smaller=rhythmLabelBox('12345',50,50,9);
+assert(smaller.right-smaller.left<larger.right-larger.left,'collision measurement must honor the smaller font');
 '''
         subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)
 

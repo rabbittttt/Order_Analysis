@@ -39,14 +39,15 @@
   const stackedBarWidth=step=>Math.min(42,step*.58);
   // One pixel-space renderer for all daily/hourly rhythm charts. Adapters below
   // retain their existing quantities, aggregation and formatting contracts.
-  const RHYTHM_LAYOUT=Object.freeze({height:260,frameHeight:280,top:28,bottom:222,left:48,right:48,barWidth:32,minStep:48,lineWidth:2,pointRadius:3.5,fontSize:10,lineLabelMaxOffset:24,defaultWidth:960});
+  const RHYTHM_LAYOUT=Object.freeze({height:224,frameHeight:240,top:30,bottom:190,left:30,right:30,barWidth:42,minStep:56,lineWidth:2,pointRadius:3,fontSize:10,minFontSize:9,lineLabelMaxOffset:24,defaultWidth:960});
   const rhythmKnown=value=>typeof value==='number'&&Number.isFinite(value);
-  function rhythmGeometry(count,availableWidth=RHYTHM_LAYOUT.defaultWidth){
-    const n=Math.max(count,1),width=Math.max(Math.floor(availableWidth||RHYTHM_LAYOUT.defaultWidth),RHYTHM_LAYOUT.left+RHYTHM_LAYOUT.right+n*RHYTHM_LAYOUT.minStep);
+  function rhythmGeometry(count,availableWidth=RHYTHM_LAYOUT.defaultWidth,labelWidth=0){
+    const n=Math.max(count,1),minStep=Math.max(RHYTHM_LAYOUT.minStep,labelWidth+10),width=Math.max(Math.floor(availableWidth||RHYTHM_LAYOUT.defaultWidth),RHYTHM_LAYOUT.left+RHYTHM_LAYOUT.right+n*minStep);
     return {...RHYTHM_LAYOUT,width,plotHeight:RHYTHM_LAYOUT.bottom-RHYTHM_LAYOUT.top,step:(width-RHYTHM_LAYOUT.left-RHYTHM_LAYOUT.right)/n};
   }
-  const rhythmTextWidth=text=>Array.from(String(text)).reduce((width,char)=>width+(char.charCodeAt(0)>255?RHYTHM_LAYOUT.fontSize:RHYTHM_LAYOUT.fontSize*.62),0);
-  const rhythmLabelBox=(text,x,y)=>({left:x-rhythmTextWidth(text)/2-2,right:x+rhythmTextWidth(text)/2+2,top:y-RHYTHM_LAYOUT.fontSize-2,bottom:y+3});
+  const rhythmTextWidth=(text,fontSize=RHYTHM_LAYOUT.fontSize)=>Array.from(String(text)).reduce((width,char)=>width+(char.charCodeAt(0)>255?fontSize:fontSize*.62),0);
+  const rhythmLabelBox=(text,x,y,fontSize=RHYTHM_LAYOUT.fontSize)=>({left:x-rhythmTextWidth(text,fontSize)/2-2,right:x+rhythmTextWidth(text,fontSize)/2+2,top:y-fontSize-2,bottom:y+3});
+  const rhythmAxisText=text=>String(text).replace(/^\d{4}-(\d{2})-(\d{2})$/, '$1-$2');
   const rhythmBoxesOverlap=(a,b,gap=2)=>a.left<b.right+gap&&a.right>b.left-gap&&a.top<b.bottom+gap&&a.bottom>b.top-gap;
   function rhythmLabelClear(box,occupied,points,segments){
     if(occupied.some(other=>rhythmBoxesOverlap(box,other))||points.some(point=>rhythmBoxesOverlap(box,{left:point.x-4,right:point.x+4,top:point.y-4,bottom:point.y+4},1)))return false;
@@ -57,17 +58,17 @@
     });
   }
   function rhythmLineLabel(point,text,occupied,points,segments,geometry){
-    for(const offset of [-12,-18,-RHYTHM_LAYOUT.lineLabelMaxOffset,18,RHYTHM_LAYOUT.lineLabelMaxOffset]){
-      const y=point.y+offset,box=rhythmLabelBox(text,point.x,y);
+    for(const fontSize of [RHYTHM_LAYOUT.fontSize,RHYTHM_LAYOUT.minFontSize])for(const offset of [-10,-16,-RHYTHM_LAYOUT.lineLabelMaxOffset,18,RHYTHM_LAYOUT.lineLabelMaxOffset]){
+      const y=point.y+offset,box=rhythmLabelBox(text,point.x,y,fontSize);
       if(box.top<5||box.bottom>geometry.bottom-4||!rhythmLabelClear(box,occupied,points,segments))continue;
-      return {x:point.x,y,box,pointY:point.y};
+      return {x:point.x,y,box,fontSize,pointY:point.y};
     }
     return null;
   }
   function renderRhythmSvg(spec,availableWidth){
-    const rows=spec.rows||[],geometry=rhythmGeometry(rows.length,availableWidth),{width,height,left,right,bottom,plotHeight,step,barWidth}=geometry;
+    const rows=spec.rows||[],geometry=rhythmGeometry(rows.length,availableWidth,Math.max(0,...rows.map(row=>rhythmTextWidth(rhythmKnown(row.total)?fmt(row.total):'—',RHYTHM_LAYOUT.minFontSize)))),{width,height,left,right,bottom,plotHeight,step,barWidth}=geometry;
     const x=index=>left+index*step+step/2,barY=value=>bottom-value/spec.maxValue*plotHeight,rateY=value=>bottom-Math.min(Math.max(value,0),1)*plotHeight;
-    const series=spec.series||[],lines=spec.lines||[],occupied=[],labels=[],points=[],segments=[];
+    const series=spec.series||[],lines=spec.lines||[],occupied=[],labels=[],points=[],segments=[],barAreas=[];
     const lineData=lines.map(line=>{
       let previous=null,path='';const dots=rows.map((row,index)=>{
         const value=row.rates?.[line.key];if(!rhythmKnown(value)){previous=null;return null;}
@@ -75,23 +76,31 @@
         if(previous)segments.push([previous,point]);previous=point;points.push(point);return point;
       });return {line,path,dots};
     });
-    const dataStride=Math.max(1,Math.ceil(84/step)),visible=index=>index===0||index===rows.length-1||index%dataStride===0;
-    const addLabel=(text,cx,y,kind,extra={})=>{
-      const box=rhythmLabelBox(text,cx,y);if(box.top<5||box.bottom>bottom-4||!rhythmLabelClear(box,occupied,points,segments))return false;
-      occupied.push(box);labels.push({text,x:cx,y,box,kind,...extra});return true;
-    };
-    // Known zero and unknown are distinct even when the line also reaches zero.
-    rows.forEach((row,index)=>{if(visible(index)&&(!rhythmKnown(row.total)||row.total===0)){
-      const text=rhythmKnown(row.total)?'0':'—',y=bottom-8,box=rhythmLabelBox(text,x(index),y);
-      occupied.push(box);labels.push({text,x:x(index),y,box,kind:'total'});
-    }});
+    const saveLabel=label=>{occupied.push(label.box);labels.push(label);};
+    // Reserve every column's total first. Never sample away a known value (or
+    // turn a missing value into zero) just because the viewport is narrow.
+    rows.forEach((row,index)=>{
+      const text=rhythmKnown(row.total)?fmt(row.total):'—',top=rhythmKnown(row.total)?barY(row.total):bottom,cx=x(index);
+      let placement=null;
+      for(const fontSize of [RHYTHM_LAYOUT.fontSize,RHYTHM_LAYOUT.minFontSize]){
+        for(const offset of [-8,-20,-32,16,28]){
+          const y=top+offset,box=rhythmLabelBox(text,cx,y,fontSize);
+          if(box.top<5||box.bottom>bottom-4||!rhythmLabelClear(box,occupied,points,segments))continue;
+          placement={text,x:cx,y,box,fontSize,kind:'total',index};break;
+        }
+        if(placement)break;
+      }
+      // A steep curve can cross every nearby position. The total still belongs
+      // above its column; never silently remove it as the old collision pass did.
+      if(!placement){const y=Math.max(RHYTHM_LAYOUT.fontSize+8,top-8),fontSize=RHYTHM_LAYOUT.minFontSize;placement={text,x:cx,y,box:rhythmLabelBox(text,cx,y,fontSize),fontSize,kind:'total',index};}
+      saveLabel(placement);
+    });
     rows.forEach((_,index)=>{
-      if(!visible(index))return;
-      const column=points.filter(point=>point.index===index).sort((a,b)=>b.y-a.y),rotation=Math.floor(index/dataStride)%Math.max(column.length,1);
+      const column=points.filter(point=>point.index===index).sort((a,b)=>b.y-a.y),rotation=index%Math.max(column.length,1);
       // Rotate label priority: two close curves must not permanently hide one another.
       [...column.slice(rotation),...column.slice(0,rotation)].forEach(point=>{
         const text=(point.value*100).toFixed(point.line.digits??1)+'%',placement=rhythmLineLabel(point,text,occupied,points,segments,geometry);
-        if(placement){occupied.push(placement.box);labels.push({...placement,text,kind:'line',color:point.line.textColor||point.line.color,series:point.line.key,index});}
+        if(placement)saveLabel({...placement,text,kind:'line',color:point.line.textColor||point.line.color,series:point.line.key,index});
       });
     });
     const bars=rows.map((row,index)=>{
@@ -99,23 +108,32 @@
       if(!rhythmKnown(row.total))return `<g data-rhythm-row="${index}" data-total=""><title>${title}</title></g>`;
       let stack=0;const rectangles=series.map(item=>{
         const value=row.values[item.key],displayValue=Math.max(value,0),barHeight=displayValue/spec.maxValue*plotHeight,top=barY(stack+displayValue);stack+=displayValue;
-        const text=fmt(value),labelY=top+barHeight/2+RHYTHM_LAYOUT.fontSize*.35;
-        if(visible(index)&&value>0&&barHeight>=RHYTHM_LAYOUT.fontSize+8&&rhythmTextWidth(text)<=barWidth-4)addLabel(text,cx,labelY,'segment');
+        if(barHeight>0)barAreas.push({left:cx-barWidth/2,right:cx+barWidth/2,top,bottom:top+barHeight});
+        const text=fmt(value);
+        for(const fontSize of [RHYTHM_LAYOUT.fontSize,RHYTHM_LAYOUT.minFontSize]){
+          if(value<=0||barHeight<fontSize+8||rhythmTextWidth(text,fontSize)>barWidth-4)continue;
+          const y=top+barHeight/2+fontSize*.35,box=rhythmLabelBox(text,cx,y,fontSize);
+          if(!rhythmLabelClear(box,occupied,points,segments))continue;
+          saveLabel({text,x:cx,y,box,fontSize,kind:'segment',index});break;
+        }
         return `<rect data-rhythm-bar="${esc(item.key)}" data-value="${value}" x="${cx-barWidth/2}" y="${top}" width="${barWidth}" height="${barHeight}" fill="${item.color}"><title>${esc(row.tips?.[item.key]||item.label+' '+fmt(value))}</title></rect>`;
       }).join('');
-      if(visible(index)&&row.total!==0)addLabel(fmt(row.total),cx,barY(row.total)-8,'total');
       return `<g data-rhythm-row="${index}" data-total="${row.total}"><title>${title}</title>${rectangles}</g>`;
     }).join('');
     const curves=lineData.map(({line,path,dots})=>`<path data-rhythm-series="${esc(line.key)}" d="${path}" fill="none" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"/>${dots.filter(Boolean).map(point=>`<circle data-rhythm-point="${esc(line.key)}" data-index="${point.index}" data-value="${point.value}" cx="${point.x}" cy="${point.y}" r="${RHYTHM_LAYOUT.pointRadius}" fill="#fff" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"><title>${esc(rows[point.index].label)} · ${esc(line.label)} ${(point.value*100).toFixed(line.digits??1)}%</title></circle>`).join('')}`).join('');
-    const valueLabels=labels.map(label=>`${label.kind==='line'?`<rect class="rhythm-label-background" x="${label.box.left}" y="${label.box.top}" width="${label.box.right-label.box.left}" height="${label.box.bottom-label.box.top}"/>`:''}<text class="rhythm-value-label rhythm-${label.kind}-label" data-rhythm-label="${label.kind}"${label.pointY==null?'':` data-point-y="${label.pointY}" data-series="${esc(label.series)}" data-index="${label.index}"`} x="${label.x}" y="${label.y}" text-anchor="middle"${label.color?` style="fill:${label.color}"`:''}>${esc(label.text)}</text>`).join('');
-    const axisStride=Math.max(1,Math.ceil((Math.max(...rows.map(row=>rhythmTextWidth(row.label)),0)+10)/step)),axisBoxes=[],axisIndices=[];
+    const valueLabels=labels.map(label=>{
+      // Use a dark label over colored bars instead of a white patch/outline
+      // cutting the stack. Keep the series color on the white plot background.
+      const color=barAreas.some(area=>rhythmBoxesOverlap(label.box,area,0))?'#102238':label.color;
+      return `<text class="rhythm-value-label rhythm-${label.kind}-label" data-rhythm-label="${label.kind}" data-index="${label.index}"${label.pointY==null?'':` data-point-y="${label.pointY}" data-series="${esc(label.series)}"`} x="${label.x}" y="${label.y}" text-anchor="middle" style="font-size:${label.fontSize}px${color?`;fill:${color}`:''}">${esc(label.text)}</text>`;
+    }).join('');
+    const axisStride=Math.max(1,Math.ceil((Math.max(...rows.map(row=>rhythmTextWidth(rhythmAxisText(row.label),9)),0)+10)/step)),axisBoxes=[],axisIndices=[];
     [0,rows.length-1,...rows.map((_,index)=>index).filter(index=>index%axisStride===0)].forEach(index=>{
-      if(!rows[index]||axisIndices.includes(index))return;const box=rhythmLabelBox(rows[index].label,x(index),bottom+22);
+      if(!rows[index]||axisIndices.includes(index))return;const box=rhythmLabelBox(rhythmAxisText(rows[index].label),x(index),bottom+20,9);
       if(axisBoxes.some(other=>rhythmBoxesOverlap(box,other)))return;axisBoxes.push(box);axisIndices.push(index);
     });
-    const axis=axisIndices.sort((a,b)=>a-b).map(index=>`<text class="rhythm-axis-label" x="${x(index)}" y="${bottom+22}" text-anchor="middle">${esc(rows[index].label)}</text>`).join('');
-    const grid=[.25,.5,.75,1].map(rate=>`<line class="rhythm-grid-line" x1="${left}" y1="${bottom-rate*plotHeight}" x2="${width-right}" y2="${bottom-rate*plotHeight}"/>`).join('');
-    return `<svg class="rhythm-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="width:${width}px;height:${height}px" data-plot-left="${left}" data-plot-right="${right}" data-plot-height="${plotHeight}" role="img" aria-label="${esc(spec.title)}"><g aria-hidden="true">${grid}<line class="rhythm-axis-line" x1="${left}" y1="${bottom}" x2="${width-right}" y2="${bottom}"/></g>${bars}${curves}${valueLabels}${axis}</svg>`;
+    const axis=axisIndices.sort((a,b)=>a-b).map(index=>`<text class="rhythm-axis-label" x="${x(index)}" y="${bottom+20}" text-anchor="middle">${esc(rhythmAxisText(rows[index].label))}<title>${esc(rows[index].label)}</title></text>`).join('');
+    return `<svg class="rhythm-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="width:${width}px;height:${height}px" data-plot-left="${left}" data-plot-right="${right}" data-plot-height="${plotHeight}" role="img" aria-label="${esc(spec.title)}"><line aria-hidden="true" class="rhythm-axis-line" x1="${left}" y1="${bottom}" x2="${width-right}" y2="${bottom}"/>${bars}${curves}${valueLabels}${axis}</svg>`;
   }
   function renderRhythmChart(spec){
     const legend=[...(spec.series||[]),...(spec.lines||[]).map(line=>({...line,line:true}))].map(item=>`<span><i${item.line?' class="line-key"':''} style="background:${item.color}"></i>${esc(item.label)}</span>`).join('');
