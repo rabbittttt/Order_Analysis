@@ -80,6 +80,13 @@ button {
   grid-column:1/-1;
 }
 
+.panel.full:has(.rhythm-chart) {
+  width:fit-content;
+  max-width:100%;
+  justify-self:start;
+  box-sizing:border-box;
+}
+
 .panel-body {
   min-height:0;
   position:relative;
@@ -2167,12 +2174,12 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 
 .rhythm-value-label {
   fill:#253f59;
-  font-weight:600;
+  font-weight:400;
   pointer-events:none;
 }
 
 .rhythm-line-label {
-  font-weight:500;
+  font-weight:400;
 }
 
 .rhythm-legend {

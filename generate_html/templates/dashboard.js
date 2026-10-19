@@ -39,11 +39,13 @@
   const stackedBarWidth=step=>Math.min(42,step*.58);
   // One pixel-space renderer for all daily/hourly rhythm charts. Adapters below
   // retain their existing quantities, aggregation and formatting contracts.
-  const RHYTHM_LAYOUT=Object.freeze({height:224,frameHeight:240,top:30,bottom:190,left:30,right:30,barWidth:42,minStep:56,lineWidth:2,pointRadius:3,fontSize:10,minFontSize:9,lineLabelMaxOffset:24,defaultWidth:960});
+  const RHYTHM_LAYOUT=Object.freeze({height:224,frameHeight:240,top:30,bottom:190,left:30,right:30,barWidth:28,minStep:40,lineWidth:2,pointRadius:3,fontSize:10,minFontSize:9,lineLabelMaxOffset:24,defaultWidth:960});
   const rhythmKnown=value=>typeof value==='number'&&Number.isFinite(value);
   function rhythmGeometry(count,availableWidth=RHYTHM_LAYOUT.defaultWidth,labelWidth=0){
-    const n=Math.max(count,1),minStep=Math.max(RHYTHM_LAYOUT.minStep,labelWidth+10),width=Math.max(Math.floor(availableWidth||RHYTHM_LAYOUT.defaultWidth),RHYTHM_LAYOUT.left+RHYTHM_LAYOUT.right+n*minStep);
-    return {...RHYTHM_LAYOUT,width,plotHeight:RHYTHM_LAYOUT.bottom-RHYTHM_LAYOUT.top,step:(width-RHYTHM_LAYOUT.left-RHYTHM_LAYOUT.right)/n};
+    // Keep the plot's natural density; a wide viewport must not stretch the gaps.
+    // Only unusually long totals may increase the step to preserve legibility.
+    const n=Math.max(count,1),step=Math.max(RHYTHM_LAYOUT.minStep,labelWidth+8),width=RHYTHM_LAYOUT.left+RHYTHM_LAYOUT.right+n*step;
+    return {...RHYTHM_LAYOUT,width,viewportWidth:Math.min(availableWidth,width),plotHeight:RHYTHM_LAYOUT.bottom-RHYTHM_LAYOUT.top,step};
   }
   const rhythmTextWidth=(text,fontSize=RHYTHM_LAYOUT.fontSize)=>Array.from(String(text)).reduce((width,char)=>width+(char.charCodeAt(0)>255?fontSize:fontSize*.62),0);
   const rhythmLabelBox=(text,x,y,fontSize=RHYTHM_LAYOUT.fontSize)=>({left:x-rhythmTextWidth(text,fontSize)/2-2,right:x+rhythmTextWidth(text,fontSize)/2+2,top:y-fontSize-2,bottom:y+3});

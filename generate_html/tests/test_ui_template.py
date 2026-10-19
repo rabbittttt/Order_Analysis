@@ -110,8 +110,9 @@ assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · �
         checks = r'''
 const assert=require('assert');
 for(const count of [1,14,24,100])for(const width of [320,768,1440]){
- const g=rhythmGeometry(count,width);assert.equal(g.barWidth,42);assert.equal(g.height,224);assert.equal(g.frameHeight,240);
- assert.equal(g.plotHeight,160);assert(g.step>=56);assert.equal(g.left,g.right);
+ const g=rhythmGeometry(count,width);assert.equal(g.barWidth,28);assert.equal(g.height,224);assert.equal(g.frameHeight,240);
+ assert.equal(g.plotHeight,160);assert.equal(g.step,40);assert.equal(g.left,g.right);
+ assert.equal(g.width,60+count*40,'wide screens must not stretch the column gaps');
 }
 const point={x:100,y:100},geometry=rhythmGeometry(2,500),occupied=[],points=[point],original=JSON.stringify([occupied,points]);
 const placed=rhythmLineLabel(point,'40.0%',occupied,points,[],geometry);

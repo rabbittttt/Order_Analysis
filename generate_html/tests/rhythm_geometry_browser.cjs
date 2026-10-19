@@ -33,7 +33,10 @@ const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(
       if(kind.endsWith('-day'))daily.push(rows.map(n=>n.querySelector(':scope>title')?.textContent));
       else hourly.push(...[...svg.querySelectorAll('[data-rhythm-bar]>title')].map(n=>n.textContent));
       const totalLabels=[...svg.querySelectorAll('[data-rhythm-label="total"]')].map(n=>({index:Number(n.dataset.index),text:n.textContent})),spec=JSON.parse(frame.dataset.rhythmConfig);
-      return {kind,height:box.height,left:box.left,right:box.right,svgHeight:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,barWidths:[...new Set([...svg.querySelectorAll('[data-rhythm-bar]')].map(n=>n.getBoundingClientRect().width))],plotHeight:Number(svg.dataset.plotHeight),plotLeft:Number(svg.dataset.plotLeft),plotRight:Number(svg.dataset.plotRight),rows:rows.length,overlaps,totalLabels,expectedTotals:spec.rows.map(row=>typeof row.total==='number'?row.total.toLocaleString('zh-CN',{maximumFractionDigits:1}):'—'),decorations:svg.querySelectorAll('.rhythm-grid-line,.rhythm-label-background').length,labelOffsets:[...svg.querySelectorAll('[data-rhythm-label="line"]')].map(n=>Math.abs(Number(n.getAttribute('y'))-Number(n.dataset.pointY))),labelStrokes:[...new Set([...svg.querySelectorAll('.rhythm-line-label')].map(n=>parseFloat(getComputedStyle(n).strokeWidth)))]};
+      const columnPositions=rows.map((row,index)=>{const bar=row.querySelector('[data-rhythm-bar]');return bar?{index,x:bar.getBoundingClientRect().x,width:bar.getBoundingClientRect().width}:null}).filter(Boolean);
+      const columnGaps=columnPositions.slice(1).map((bar,index)=>(bar.x-columnPositions[index].x)/(bar.index-columnPositions[index].index)-bar.width);
+      const labelWeights=[...svg.querySelectorAll('.rhythm-value-label')].map(n=>Number(getComputedStyle(n).fontWeight));
+      return {kind,height:box.height,left:box.left,right:box.right,svgHeight:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,barWidths:[...new Set([...svg.querySelectorAll('[data-rhythm-bar]')].map(n=>n.getBoundingClientRect().width))],plotHeight:Number(svg.dataset.plotHeight),plotLeft:Number(svg.dataset.plotLeft),plotRight:Number(svg.dataset.plotRight),rows:rows.length,overlaps,expectedGap:Math.max(40,...spec.rows.map(row=>typeof row.total==='number'?row.total.toLocaleString('zh-CN',{maximumFractionDigits:1}).length*9*.62+8:17))-28,columnGaps,labelWeights,totalLabels,expectedTotals:spec.rows.map(row=>typeof row.total==='number'?row.total.toLocaleString('zh-CN',{maximumFractionDigits:1}):'—'),decorations:svg.querySelectorAll('.rhythm-grid-line,.rhythm-label-background').length,labelOffsets:[...svg.querySelectorAll('[data-rhythm-label="line"]')].map(n=>Math.abs(Number(n.getAttribute('y'))-Number(n.dataset.pointY))),labelStrokes:[...new Set([...svg.querySelectorAll('.rhythm-line-label')].map(n=>parseFloat(getComputedStyle(n).strokeWidth)))]};
      });return {daily,hourly,measurements,pageOverflow:document.documentElement.scrollWidth>innerWidth+2};
     });
     assert(!actual.pageOverflow,key+' page overflow at '+width);
@@ -41,11 +44,13 @@ const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(
     const edge=actual.measurements[0];
     for(const m of actual.measurements){
      assert(Math.abs(m.height-240)<.05,key+' inconsistent frame height');assert(Math.abs(m.svgHeight-224)<.05);
-     assert(Math.abs(m.left-edge.left)<.05&&Math.abs(m.right-edge.right)<.05,key+' chart frames misaligned');
+     assert(Math.abs(m.left-edge.left)<.05,key+' chart frames misaligned');
      assert(Math.abs(m.scale-1)<.001,key+' SVG scaling changes actual bar width');
-     assert(m.barWidths.every(w=>Math.abs(w-42)<.05),key+' unequal actual bar widths: '+m.barWidths);
+     assert(m.barWidths.every(w=>Math.abs(w-28)<.05),key+' unequal actual bar widths: '+m.barWidths);
      assert.equal(m.plotHeight,160);assert.equal(m.plotLeft,30);assert.equal(m.plotRight,30);
      assert.equal(m.decorations,0,key+' background stripes');
+     assert(m.columnGaps.every(gap=>Math.abs(gap-m.expectedGap)<.05),key+' gaps stretched with viewport: '+m.columnGaps);
+     assert(m.labelWeights.every(weight=>weight===400),key+' data labels still bold');
      assert.deepEqual(m.totalLabels.map(n=>n.index),m.expectedTotals.map((_,i)=>i),key+' dropped total labels');
      assert.deepEqual(m.totalLabels.map(n=>n.text),m.expectedTotals,key+' total labels no longer match values');
      assert.equal(m.overlaps,0,key+' text overlaps at '+width+' '+m.kind);
@@ -75,7 +80,7 @@ const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(
    }
   }
   // Exercise ResizeObserver on an already mounted chart, without a navigation.
-  for(const width of [1440,390,768]){await page.setViewportSize({width,height:1000});await ready();assert(await page.locator('[data-rhythm-bar]').evaluateAll(nodes=>nodes.every(n=>Math.abs(n.getBoundingClientRect().width-42)<.05)));}
+  for(const width of [1440,390,768]){await page.setViewportSize({width,height:1000});await ready();assert(await page.locator('[data-rhythm-bar]').evaluateAll(nodes=>nodes.every(n=>Math.abs(n.getBoundingClientRect().width-28)<.05)));}
   assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'geometry-report.json'),JSON.stringify({boards,checks:report.length,charts,snapshots,selections,errors,report},null,2));
   console.log(JSON.stringify({boards,checks:report.length,charts,snapshots,selections,resizes:3,errors}));
  }finally{await browser.close()}
