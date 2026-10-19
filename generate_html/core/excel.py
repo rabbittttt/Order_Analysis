@@ -410,11 +410,15 @@ def _source_key(value):
     return week[0] if week else text
 
 
+def _distinct_store_field(labels):
+    return labels[:2] in (("贡献订单门店数", "数量"), ("门店类型", "贡献门店数"))
+
+
 @lru_cache(maxsize=4096)
 def _quantity_field(labels, number_format):
     text = "|".join(map(str, labels))
     return ("%" not in number_format and "％" not in number_format
-            and "贡献订单门店数" not in labels  # Unique stores cannot be added across export shards.
+            and not _distinct_store_field(labels)  # Unique stores cannot be added across export shards.
             and not re.search(r"占比|比例|率|平均|均价|时长|天数|（天）|\(天\)", text)
             and any(label in {"数量", "订单量", "订单数", "单量", "累计锁单"} for label in labels))
 
@@ -902,7 +906,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                                     conflicts.append(example)
     # A left/right export pair contains overlapping store identities. Even equal
     # counts (or a blank/missing row) cannot establish a whole-week distinct count.
-    unknown_store_keys = [key for key in values if key[0][:2] == ("贡献订单门店数", "数量")
+    unknown_store_keys = [key for key in values if _distinct_store_field(key[0])
                           and store_period_parts.get(key[1]) == {"left", "right"}]
     for key in unknown_store_keys:
         if key in values:

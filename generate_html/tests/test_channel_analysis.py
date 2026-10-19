@@ -49,7 +49,7 @@ class ChannelAnalysisTests(unittest.TestCase):
             ["贡献订单门店数", "数量", A, 4, 2],
             [None, None, B, 1, 0],
         ])
-        with patch.dict(channel.CHANNEL_STORE_COUNTS, {A: 20, B: 10}, clear=True):
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 20, B: 10}}, clear=True):
             dashboard = self.build(self.store(book))
         row = self.row(dashboard)
         self.assertEqual(row["count"], 40)
@@ -67,6 +67,14 @@ class ChannelAnalysisTests(unittest.TestCase):
         self.assertEqual([item["value"] for item in page["kpis"][:2]], [50, 5])
         self.assertAlmostEqual(page["kpis"][2]["value"], 5 / 30 * 100)
         self.assertAlmostEqual(page["kpis"][3]["value"], 50 / 30)
+        totals = page["sections"][0]["data"]["totals"]
+        self.assertEqual(totals["store_count"], 30)
+        self.assertEqual(totals["count"], 50)
+        self.assertEqual(totals["active_count"], 5)
+        self.assertAlmostEqual(totals["active_rate"], 5 / 30)
+        self.assertAlmostEqual(totals["productivity"], 50 / 30)
+        self.assertIs(totals, page["sections"][0]["data"]["history"][-1]["totals"])
+        self.assertNotIn("active_share", row)
         for block in page["sections"]:
             self.assertEqual(block["kind"], "channel_panel")
             self.assertEqual(block["source"]["file"], "大定选配比例分析_0.xlsx")
@@ -82,7 +90,7 @@ class ChannelAnalysisTests(unittest.TestCase):
             [None, "占比", A, 0, "—", -0.1, "NaN", .5],
             ["贡献订单门店数", "数量", A, 0, None, "错误", -2, 3],
         ])
-        with patch.dict(channel.CHANNEL_STORE_COUNTS, {A: 20}, clear=True):
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 20}}, clear=True):
             dashboard = self.build(self.store(book))
         zero = self.row(dashboard, period=periods[0])
         self.assertEqual([zero[key] for key in ("count", "share", "active_count", "active_rate", "productivity")], [0] * 5)
@@ -112,21 +120,22 @@ class ChannelAnalysisTests(unittest.TestCase):
         self.assertIsNone(page["kpis"][2]["value"])
         self.assertIsNone(page["kpis"][3]["value"])
 
-    def test_configuration_priority_is_subject_then_parent_then_global(self):
+    def test_configuration_priority_is_subject_then_parent_then_brand(self):
         book = self.book(["2026-01-01"], [["门店类型", "数量", A, 40], [None, None, B, 20]])
-        with patch.dict(channel.CHANNEL_STORE_COUNTS, {A: 100, B: 50}, clear=True), patch.dict(
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 100, B: 50}, "智界": {A: 129}}, clear=True), patch.dict(
             channel.CHANNEL_STORE_COUNTS_BY_SUBJECT, {"问界": {A: 80, B: 20}, MODEL: {A: 40}}, clear=True
         ):
             dashboard = self.build(self.store(book))
             self.assertEqual(self.row(dashboard)["store_count"], 40)
             self.assertEqual(self.row(dashboard, index=1)["store_count"], 20)
-            self.assertEqual(channel._store_counts(Subject("other", "智界 S7 2026款", "generation", "智界"))[A], 100)
+            self.assertEqual(channel._store_counts(Subject("other", "智界 S7 2026款", "generation", "智界"))[A], 129)
+            self.assertNotIn(A, channel._store_counts(Subject("z", "尊界 S800 2026款", "generation", "尊界")))
 
     def test_zero_denominator_and_impossible_active_counts_remain_visible(self):
         for total, count, active in [(0, 10, 2), (2, 10, 3)]:
             with self.subTest(total=total, count=count, active=active):
                 book = self.book(["2026-01-01"], [["门店类型", "数量", A, count], ["贡献订单门店数", "数量", A, active]])
-                with patch.dict(channel.CHANNEL_STORE_COUNTS, {A: total}, clear=True), self.assertLogs(channel.LOGGER, level="WARNING"):
+                with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: total}}, clear=True), self.assertLogs(channel.LOGGER, level="WARNING"):
                     dashboard = self.build(self.store(book))
                 row = self.row(dashboard)
                 self.assertEqual(row["count"], count)
@@ -136,9 +145,84 @@ class ChannelAnalysisTests(unittest.TestCase):
 
     def test_active_store_denominator_is_configured_stores_not_retained_orders(self):
         book = self.book(["2026-01-01"], [["门店类型", "数量", A, 2], ["贡献订单门店数", "数量", A, 3]])
-        with patch.dict(channel.CHANNEL_STORE_COUNTS, {A: 20}, clear=True):
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 20}}, clear=True):
             row = self.row(self.build(self.store(book)))
         self.assertEqual(row["active_rate"], 3 / 20)
+
+    def test_brand_store_counts_match_business_configuration(self):
+        expected = {
+            "问界": {"问界用户中心": 374, "鸿蒙智行用户中心": 28, "华为旗舰店": 11,
+                   "华为授权体验店": 131, "华为智能生活馆": 425},
+            "智界": {"智界用户中心": 48, "鸿蒙智行用户中心": 334, "华为旗舰店": 11,
+                   "华为授权体验店": 129, "华为智能生活馆": 388},
+            "尊界": {"鸿蒙智行用户中心": 162, "华为旗舰店": 7, "综合店": 37, "尊界体验中心": 7},
+            "尚界": {"尚界用户中心": 221, "鸿蒙智行用户中心": 259, "华为旗舰店": 13,
+                   "华为授权体验店": 153, "华为智能生活馆": 450},
+            "享界": {"享界用户中心": 14, "鸿蒙智行用户中心": 344, "华为旗舰店": 11,
+                   "华为授权体验店": 100, "华为智能生活馆": 387},
+        }
+        for brand, counts in expected.items():
+            with self.subTest(brand=brand):
+                self.assertEqual(channel._store_counts(Subject(brand, brand, "brand", "鸿蒙智行")), counts)
+                self.assertEqual(channel._store_counts(Subject(brand, brand + "车型", "generation", brand)), counts)
+        self.assertNotIn(A, channel._store_counts(Subject("z", "尊界", "brand")))
+        self.assertNotIn("尊界用户中心", channel._store_counts(Subject("z", "尊界", "brand")))
+
+    def test_group_requires_explicit_deduplicated_configuration(self):
+        book = self.book(["2026-01-01"], [["门店类型", "数量", A, 10], [None, "贡献门店数", A, 2]], "鸿蒙智行by天")
+        dashboard = self.build(self.store(book), "鸿蒙智行", "group", None)
+        row = self.row(dashboard)
+        self.assertIsNone(row["store_count"])
+        self.assertIsNone(row["active_rate"])
+        self.assertIsNone(row["productivity"])
+        totals = dashboard.views["day"]["pages"]["2026-01-01"]["sections"][0]["data"]["totals"]
+        self.assertIsNone(totals["store_count"])
+        self.assertIsNone(totals["active_rate"])
+        self.assertIsNone(totals["productivity"])
+        with patch.dict(channel.CHANNEL_STORE_COUNTS_BY_SUBJECT, {"鸿蒙智行": {A: 50}}, clear=True):
+            configured = self.build(self.store(book), "鸿蒙智行", "group", None)
+        self.assertEqual(self.row(configured)["active_rate"], 2 / 50)
+
+    def test_totals_use_all_configured_channels_even_when_source_has_only_one(self):
+        book = self.book(["2026-01-01"], [["门店类型", "数量", A, 10], [None, "贡献门店数", A, 2]])
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 20, B: 80}}, clear=True):
+            dashboard = self.build(self.store(book))
+        data = dashboard.views["day"]["pages"]["2026-01-01"]["sections"][0]["data"]
+        self.assertEqual(data["rows"][0]["active_rate"], 2 / 20)
+        self.assertEqual(data["totals"]["store_count"], 100)
+        self.assertEqual(data["totals"]["active_rate"], 2 / 100)
+        self.assertEqual(data["totals"]["productivity"], 10 / 100)
+
+    def test_new_store_format_takes_priority_including_blank_and_zero(self):
+        periods = ["2026-01-01", "2026-01-02", "2026-01-03"]
+        for new_first in (False, True):
+            with self.subTest(new_first=new_first):
+                store_rows = [["门店类型", "贡献门店数", A, 3, None, 0],
+                              ["贡献订单门店数", "数量", A, 8, 9, 10]]
+                if not new_first:
+                    store_rows.reverse()
+                book = self.book(periods, [["门店类型", "数量", A, 20, 20, 20], *store_rows])
+                dashboard = self.build(self.store(book))
+                self.assertEqual([self.row(dashboard, period=period)["active_count"] for period in periods], [3, None, 0])
+
+    def test_mixed_format_files_preserve_old_history_and_new_explicit_blank(self):
+        old = self.book(["2026-01-01", "2026-01-02"], [
+            ["门店类型", "数量", A, 20, 20], ["贡献订单门店数", "数量", A, 4, 5]])
+        new = self.book(["2026-01-02", "2026-01-03"], [
+            ["门店类型", "数量", A, 20, 20], [None, "贡献门店数", A, None, 6]])
+        for books in ((old, new), (new, old)):
+            with self.subTest(new_first=books[0] is new):
+                dashboard = self.build(self.store(*books))
+                self.assertEqual([self.row(dashboard, period=period)["active_count"] for period in dashboard.views["day"]["periods"]], [4, None, 6])
+
+    def test_new_format_preserves_missing_and_zero_store_counts(self):
+        book = self.book(["2026-01-01", "2026-01-02", "2026-01-03"], [
+            ["门店类型", "数量", A, 0, 10, 20], [None, "贡献门店数", A, 0, "—", -3]])
+        dashboard = self.build(self.store(book))
+        self.assertEqual(self.row(dashboard, period="2026-01-01")["active_count"], 0)
+        self.assertEqual(self.row(dashboard, period="2026-01-01")["active_rate"], 0)
+        self.assertIsNone(self.row(dashboard, period="2026-01-02")["active_count"])
+        self.assertIsNone(self.row(dashboard, period="2026-01-03")["active_count"])
 
     def test_day_week_month_sorting_and_aggregate_exclusion(self):
         book = self.book([date(2026, 1, 3), "2026/1/1", to_excel(date(2026, 1, 2)), "总计", "近7天"],
@@ -185,6 +269,7 @@ class ChannelAnalysisTests(unittest.TestCase):
 
     def test_boundary_week_distinct_stores_cannot_sum_or_keep_partial_values(self):
         self.assertFalse(_quantity_field(("贡献订单门店数", "数量", A), "0"))
+        self.assertFalse(_quantity_field(("门店类型", "贡献门店数", A), "0"))
         self.assertTrue(_quantity_field(("门店类型", "数量", A), "0"))
         for period, ranges in [("26WK53", [(date(2026, 12, 28), date(2026, 12, 31)), (date(2027, 1, 1), date(2027, 1, 3))]),
                                ("26WK27", [(date(2026, 6, 29), date(2026, 6, 30)), (date(2026, 7, 1), date(2026, 7, 5))])]:
@@ -228,6 +313,29 @@ class ChannelAnalysisTests(unittest.TestCase):
                     self.assertIsNone(row["active_count"])
                     self.assertIsNone(row["active_rate"])
                     self.assertIn("无法去重", "\n".join(logs.output))
+
+    def test_boundary_week_new_and_mixed_format_store_counts_are_nonadditive(self):
+        for labels in [(("门店类型", "贡献门店数"), ("门店类型", "贡献门店数")),
+                       (("贡献订单门店数", "数量"), ("门店类型", "贡献门店数")),
+                       (("门店类型", "贡献门店数"), ("贡献订单门店数", "数量")),
+                       (("门店类型", "贡献门店数"), None)]:
+            with self.subTest(labels=labels):
+                books = []
+                for index, label in enumerate(labels):
+                    rows = [["门店类型", "数量", A, 10 + index]]
+                    if label:
+                        rows.append([*label, A, 4])
+                    books.append(self.book(["26WK27"], rows, MODEL + "by周"))
+                store = self.store(*books)
+                for item, span in zip(store.items, [(date(2026, 6, 29), date(2026, 6, 30)),
+                                                   (date(2026, 7, 1), date(2026, 7, 5))]):
+                    item._boundary_date_range = span
+                with self.assertLogs("core.excel", level="WARNING"):
+                    dashboard = self.build(store)
+                row = self.row(dashboard, grain="week")
+                self.assertEqual(row["count"], 21)
+                self.assertIsNone(row["active_count"])
+                self.assertIsNone(row["active_rate"])
 
 
 if __name__ == "__main__":

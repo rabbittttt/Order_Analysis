@@ -673,6 +673,7 @@
   }
   async function renderPage(){
     rhythmObserver?.disconnect();rhythmObserver=null;
+    channelPanelResizeObserver?.disconnect();channelPanelResizeObserver=null;
     const revision=++pageRevision,moduleId=state.module,subjectId=state.subject;
     if(state.module==="raw"){await renderRaw();return}
     const board=await getDashboard(),page=board?.views?.[state.grain]?.pages?.[state.period];
@@ -729,11 +730,13 @@
     return `<section class="page-workspace forecast-page"><div class="page-workspace-body">${renderer(item.data)}</div></section>`;
   }
   const channelPanelData=new Map();
+  let channelPanelResizeObserver=null;
   const channelKnown=value=>typeof value==='number'&&Number.isFinite(value);
-  function channelMetricOptions(metric){
-    if(metric==='sales')return [{key:'share',label:'销量占比',format:'percent',unit:'%',change:'share_change',changeFormat:'points'},{key:'count',label:'留存大定',format:'number',unit:'单',change:'count_change',changeFormat:'number'}];
-    if(metric==='stores')return [{key:'active_rate',label:'出单门店比例',format:'percent',unit:'%',change:'active_rate_change',changeFormat:'points'},{key:'active_count',label:'出单门店数',format:'number',unit:'家'}];
-    return [{key:'productivity',label:'单店产能',format:'capacity',unit:'单/店/本周期',change:'productivity_change',changeFormat:'capacity'}];
+  const channelColors={"华为授权体验店":"#3173B4","华为智能生活馆":"#218C8C","华为旗舰店":"#C27B38","鸿蒙智行用户中心":"#7B61A8","问界用户中心":"#507F3A","智界用户中心":"#C35A66","享界用户中心":"#88743B","尊界用户中心":"#4D6088","尚界用户中心":"#A55F95","未知门店类型":"#738191","综合店":"#547D9A","尊界体验中心":"#9F5943"};
+  function channelColor(name){
+    if(channelColors[name])return channelColors[name];
+    const hash=Array.from(String(name)).reduce((value,char)=>(value*31+char.charCodeAt(0))>>>0,0);
+    return Object.values(channelColors)[hash%Object.keys(channelColors).length];
   }
   function channelValue(value,format='number',signed=false){
     if(!channelKnown(value))return '—';
@@ -745,59 +748,130 @@
   }
   function channelHistory(data){
     const history=Array.isArray(data.history)?data.history:[],index=history.findIndex(item=>String(item.period)===String(data.period));
-    return index>=0?history.slice(0,index+1):[{period:data.period,rows:data.rows||[]}];
+    return index>=0?history.slice(0,index+1):[{period:data.period,rows:data.rows||[],totals:data.totals||{}}];
   }
-  function channelTable(columns,rows,caption){
-    return `<div class="table-wrap channel-table"><table class="data-table"><caption class="sr-only">${esc(caption)}</caption><thead><tr>${columns.map((column,index)=>`<th scope="col"${index?' class="num"':''}>${esc(column)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map((value,index)=>index?`<td class="num">${value}</td>`:`<th scope="row">${esc(value)}</th>`).join('')}</tr>`).join('')||`<tr><td colspan="${columns.length}">暂无数据</td></tr>`}</tbody></table></div>`;
-  }
-  function channelCurrentTable(data){
-    const rows=data.rows||[],value=channelValue;
-    if(data.metric==='sales')return channelTable(['门店渠道','留存大定（单）','销量占比','上期留存大定（单）','订单变化（单）','占比变化'],rows.map(row=>[row.channel,value(row.count),value(row.share,'percent'),value(row.previous_count),value(row.count_change,'number',true),value(row.share_change,'points',true)]),'各渠道留存大定与占比明细');
-    if(data.metric==='stores')return channelTable(['门店渠道','出单门店（家）','配置门店（家）','出单门店比例','上期出单门店比例','比例变化'],rows.map(row=>[row.channel,value(row.active_count),value(row.store_count),value(row.active_rate,'percent'),value(row.previous_active_rate,'percent'),value(row.active_rate_change,'points',true)]),'各渠道贡献订单门店明细');
-    return channelTable(['门店渠道','留存大定（单）','配置门店（家）','单店产能（单/店/本周期）','上期单店产能','产能变化（单/店）'],rows.map(row=>[row.channel,value(row.count),value(row.store_count),value(row.productivity,'capacity'),value(row.previous_productivity,'capacity'),value(row.productivity_change,'capacity',true)]),'各渠道单店产能明细');
-  }
-  function channelComparison(data,metric,selected){
-    const rows=data.rows||[],values=rows.map(row=>row[metric.key]).filter(channelKnown),max=Math.max(1,...values);
-    return `<div class="channel-comparison">${rows.map(row=>{
-      const value=row[metric.key],known=channelKnown(value),width=known?Math.max(0,Math.min(100,value/max*100)):0;
-      const detail=data.metric==='sales'?`${channelValue(row.count)} 单 · ${channelValue(row.share,'percent')}`:data.metric==='stores'?`${channelValue(row.active_count)} / ${channelValue(row.store_count)} 家`:`${channelValue(row.count)} 单 / ${channelValue(row.store_count)} 家`;
-      const change=metric.change?row[metric.change]:null;
-      return `<button type="button" class="channel-bar-row${row.channel===selected?' selected':''}" data-channel-choose="${esc(row.channel)}" aria-pressed="${row.channel===selected}" aria-label="查看${esc(row.channel)}的${esc(metric.label)}历史趋势"><span class="channel-bar-name">${esc(row.channel)}</span><span class="channel-bar-track" aria-hidden="true"><i style="width:${width.toFixed(3)}%"></i></span><span class="channel-bar-value"><b>${channelValue(value,metric.format)}</b><small>${esc(detail)}</small></span>${metric.change?`<span class="channel-bar-change ${channelKnown(change)?change>0?'rising':change<0?'falling':'flat':'missing'}">${channelValue(change,metric.changeFormat,true)}</span>`:''}</button>`;
-    }).join('')||'<p class="channel-empty">暂无渠道数据</p>'}</div>`;
-  }
-  function channelTrend(data,metric,selected){
-    const history=channelHistory(data),rows=history.map(item=>({period:item.period,value:(item.rows||[]).find(row=>row.channel===selected)?.[metric.key]})),known=rows.filter(row=>channelKnown(row.value));
-    const table=channelTable(['周期',metric.label+(metric.format==='percent'?'':`（${metric.unit}）`)],rows.map(row=>[row.period,channelValue(row.value,metric.format)]),`${selected}的${metric.label}历史数值`);
-    const details=`<details class="channel-details"><summary>查看历史数值（${rows.length} 个周期）</summary>${table}</details>`;
-    if(!known.length)return `<div class="channel-empty" data-channel-chart role="status">此渠道暂无${esc(metric.label)}数据</div>${details}`;
-    const W=Math.max(460,rows.length*62+84),H=224,left=64,right=20,top=24,bottom=180,max=metric.format==='percent'?Math.max(1,...known.map(row=>row.value)):Math.max(...known.map(row=>row.value))*1.12||1;
-    const point=(row,index)=>({x:left+(rows.length>1?index/(rows.length-1)*(W-left-right):(W-left-right)/2),y:bottom-row.value/max*(bottom-top)});
-    let path='',connected=false;
-    rows.forEach((row,index)=>{if(!channelKnown(row.value)){connected=false;return}const p=point(row,index);path+=`${connected?'L':'M'}${p.x.toFixed(2)} ${p.y.toFixed(2)} `;connected=true;});
-    const grid=[0,.5,1].map(part=>{const y=bottom-part*(bottom-top);return `<line x1="${left}" x2="${W-right}" y1="${y}" y2="${y}"/><text x="${left-10}" y="${y+4}" text-anchor="end">${channelValue(max*part,metric.format)}</text>`}).join('');
-    const lastKnown=rows.findLastIndex(row=>channelKnown(row.value)),points=rows.map((row,index)=>{
-      if(!channelKnown(row.value))return '';
-      const p=point(row,index),description=`${row.period} · ${selected} · ${metric.label} ${channelValue(row.value,metric.format)}${metric.format==='percent'?'':' '+metric.unit}`;
-      return `<circle cx="${p.x}" cy="${p.y}" r="3.5"><title>${esc(description)}</title></circle>${index===lastKnown?`<text class="channel-last-value" x="${p.x}" y="${p.y-10}" text-anchor="${index===rows.length-1&&rows.length>1?'end':'middle'}">${channelValue(row.value,metric.format)}</text>`:''}`;
+  function channelNames(data,history){return [...new Set([...(data.rows||[]),...history.flatMap(entry=>entry.rows||[])].map(row=>row.channel).filter(Boolean))]}
+  function channelRow(entry,name){return (entry.rows||[]).find(row=>row.channel===name)}
+  function channelHistoryMatrix(data,history,names,key,label,format,unit,totalKey){
+    const valuesFor=name=>history.map(entry=>channelRow(entry,name)?.[key]);
+    const cells=values=>values.map((value,index)=>`<td data-period="${esc(history[index].period)}" data-value="${channelKnown(value)?value:''}"${index===history.length-1?' class="channel-current-period"':''}>${channelValue(value,format)}</td>`).join('');
+    const body=names.map(name=>{
+      const current=channelRow({rows:data.rows},name),stores=data.metric==='stores'?`<small>配置 ${channelValue(current?.store_count)} 家</small>`:'';
+      return `<tr data-channel="${esc(name)}"><th scope="row"><span class="channel-row-heading"><i style="background:${channelColor(name)}" aria-hidden="true"></i><span>${esc(name)}${stores}</span></span></th>${cells(valuesFor(name))}</tr>`;
     }).join('');
-    const labels=rows.map((row,index)=>{const p=point({...row,value:0},index);return `<text class="channel-axis-label" x="${p.x}" y="${bottom+24}" text-anchor="middle">${esc(String(row.period).replace(/^20(\d{2})[-/](\d{2})[-/](\d{2})$/,'$2-$3'))}<title>${esc(row.period)}</title></text>`}).join('');
-    const current=rows.at(-1),changeKey=metric.change,currentRow=(data.rows||[]).find(row=>row.channel===selected),movement=changeKey&&channelKnown(currentRow?.[changeKey])?` · 较上期 ${channelValue(currentRow[changeKey],metric.changeFormat,true)}`:'';
-    return `<p class="channel-trend-summary" aria-live="polite"><strong>${esc(selected)}</strong><span>${esc(current?.period)} · ${channelValue(current?.value,metric.format)}${metric.format==='percent'?'':' '+esc(metric.unit)}${movement}</span></p><div class="channel-trend-scroll" data-channel-chart tabindex="0" role="region" aria-label="${esc(selected)}${esc(metric.label)}历史趋势，可横向滚动"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px" role="img" aria-label="${esc(selected)}的${esc(metric.label)}历史趋势，缺失数据保留断点"><g class="channel-trend-grid">${grid}</g><path class="channel-trend-line" d="${path}"/><g class="channel-trend-points">${points}</g>${labels}</svg></div><p class="channel-history-note">截至 ${esc(data.period)} · 缺失数据以断点保留</p>${details}`;
+    const total=totalKey?`<tfoot><tr data-channel="__total__"><th scope="row">${key==='active_rate'?'整体出单率':key==='productivity'?'整体单店产能':'合计'}</th>${cells(history.map(entry=>entry.totals?.[totalKey]))}</tr></tfoot>`:'';
+    return `<section class="channel-table-block"><div class="channel-subhead"><h3>${esc(label)}</h3><span>${esc(unit)}</span></div><div class="channel-matrix-scroll" data-channel-scroll tabindex="0" role="region" aria-label="${esc(label)}历史表，渠道列固定，可横向滚动"><table class="channel-matrix" data-channel-table="${key}"><caption class="sr-only">${esc(label)}，各渠道为行、历史周期为列</caption><colgroup><col class="channel-name-col">${history.map(()=>'<col class="channel-period-col">').join('')}</colgroup><thead><tr><th scope="col">门店渠道</th>${history.map((entry,index)=>`<th scope="col" data-period="${esc(entry.period)}"${index===history.length-1?' class="channel-current-period"':''}>${esc(entry.period)}</th>`).join('')}</tr></thead><tbody>${body}</tbody>${total}</table></div></section>`;
+  }
+  function channelAxisMax(values){
+    const maximum=Math.max(0,...values.filter(channelKnown));if(!maximum)return 1;
+    const power=10**Math.floor(Math.log10(maximum)),scaled=maximum/power;
+    return (scaled<=1?1:scaled<=2?2:scaled<=5?5:10)*power;
+  }
+  function channelChartGeometry(history,names,sales){
+    const height=sales?Math.min(570,Math.max(330,names.length*28+180)):330;
+    return {width:Math.max(360,history.length*52),height,top:26,bottom:height-46,step:Math.max(360,history.length*52)/Math.max(history.length,1)};
+  }
+  function channelAxisMarkup(maximum,format,g,side){
+    return `<div class="channel-y-axis ${side}" aria-hidden="true">${[0,.25,.5,.75,1].map(ratio=>`<span style="top:${g.bottom-ratio*(g.bottom-g.top)}px">${channelValue(maximum*ratio,format)}</span>`).join('')}</div>`;
+  }
+  function channelLinePath(values,g,maximum){
+    let connected=false,path='';
+    values.forEach((value,index)=>{if(!channelKnown(value)){connected=false;return}path+=`${connected?'L':'M'}${((index+.5)*g.step).toFixed(2)} ${(g.bottom-value/maximum*(g.bottom-g.top)).toFixed(2)} `;connected=true;});
+    return path;
+  }
+  function channelPeriodDescription(data,entry,names){
+    const parts=[String(entry.period)];
+    if(data.metric==='sales')parts.push('总留存大定 '+channelValue(entry.totals?.count)+' 单');
+    names.forEach(name=>{const row=channelRow(entry,name);parts.push(data.metric==='sales'?`${name} ${channelValue(row?.count)} 单，占比 ${channelValue(row?.share,'percent')}`:data.metric==='stores'?`${name} 出单率 ${channelValue(row?.active_rate,'percent')}，${channelValue(row?.active_count)} / ${channelValue(row?.store_count)} 家`:`${name} ${channelValue(row?.productivity,'capacity')} 单/店/本周期`)});
+    return parts.join('；');
+  }
+  function channelPointOverlays(data,history,names,g){
+    return history.map((entry,index)=>`<g class="channel-period-target" data-channel-point="${index}" data-period="${esc(entry.period)}" tabindex="${index===history.length-1?'0':'-1'}" role="img" aria-label="${esc(channelPeriodDescription(data,entry,names))}"><rect x="${index*g.step}" y="${g.top-10}" width="${g.step}" height="${g.bottom-g.top+16}" fill="transparent"/><title>${esc(channelPeriodDescription(data,entry,names))}</title></g>`).join('');
+  }
+  function channelLegend(names,sales){
+    return `<div class="channel-legend">${names.map(name=>`<span><i style="background:${channelColor(name)}" aria-hidden="true"></i>${esc(name)}</span>`).join('')}${sales?'<span class="channel-total-key"><i aria-hidden="true"></i>总留存大定（右轴）</span>':''}</div>`;
+  }
+  function channelHistoryChart(data,history,names){
+    const sales=data.metric==='sales',stores=data.metric==='stores',key=stores?'active_rate':'productivity',format=stores?'percent':'capacity',g=channelChartGeometry(history,names,sales);
+    const totals=history.map(entry=>entry.totals?.count),totalMax=channelAxisMax(totals);
+    const sums=history.map(entry=>{const values=names.map(name=>channelRow(entry,name)?.share);return values.every(channelKnown)?values.reduce((sum,value)=>sum+value,0):null});
+    const lineValues=names.map(name=>history.map(entry=>channelRow(entry,name)?.[key]));
+    const leftMax=sales?Math.max(1,Math.ceil(Math.max(0,...sums.filter(channelKnown))*4-1e-10)/4):channelAxisMax(lineValues.flat());
+    if(!sales&&!lineValues.flat().some(channelKnown)){
+      const unconfigured=!(data.rows||[]).some(row=>channelKnown(row.store_count)),title=stores?'各渠道出单门店比例趋势':'各渠道单店产能趋势',message=unconfigured?'未配置该主体的门店总数':stores?'暂无可用的出单门店比例数据':'暂无可用的单店产能数据';
+      return `<section class="channel-chart-block"><div class="channel-subhead"><h3>${title}</h3></div><div class="channel-chart-empty" data-channel-chart role="status"><strong>${message}</strong><p>${unconfigured?'维护当前主体的渠道门店总数后，重新生成看板即可查看。':'当前历史范围内数据缺失，表格以 — 保留。'}</p></div>${channelLegend(names,false)}<div class="channel-tooltip" data-channel-tooltip hidden role="tooltip"></div></section>`;
+    }
+    const grid=[0,.25,.5,.75,1].map(ratio=>{const y=g.bottom-ratio*(g.bottom-g.top);return `<line x1="0" x2="${g.width}" y1="${y}" y2="${y}"/>`}).join('');
+    let marks='';
+    if(sales){
+      marks=history.map((entry,index)=>{
+        if(!channelKnown(sums[index]))return `<text class="channel-missing-mark" x="${(index+.5)*g.step}" y="${g.bottom-8}" text-anchor="middle" data-channel-missing-stack data-period="${esc(entry.period)}">缺失</text>`;
+        let cumulative=0;
+        return names.map(name=>{const row=channelRow(entry,name),value=row.share,barHeight=value/leftMax*(g.bottom-g.top),y=g.bottom-(cumulative+value)/leftMax*(g.bottom-g.top);cumulative+=value;return `<rect data-channel="${esc(name)}" data-period="${esc(entry.period)}" data-value="${value}" x="${(index+.5)*g.step-17}" y="${y}" width="34" height="${Math.max(0,barHeight)}" fill="${channelColor(name)}"><title>${esc(name)} · ${esc(entry.period)} · ${channelValue(value,'percent')}</title></rect>${barHeight>=19?`<text class="channel-stack-label" x="${(index+.5)*g.step}" y="${y+barHeight/2+3}" text-anchor="middle">${(value*100).toFixed(0)}%</text>`:''}`}).join('');
+      }).join('');
+      marks+=`<path class="channel-total-line" d="${channelLinePath(totals,g,totalMax)}"/>`+totals.map((value,index)=>channelKnown(value)?`<circle class="channel-total-point" data-channel="__total__" data-period="${esc(history[index].period)}" data-value="${value}" cx="${(index+.5)*g.step}" cy="${g.bottom-value/totalMax*(g.bottom-g.top)}" r="3.5"><title>${esc(history[index].period)} · 总留存大定 ${channelValue(value)} 单</title></circle>`:'').join('');
+    }else{
+      marks=names.map((name,series)=>`<path class="channel-series-line" data-channel="${esc(name)}" d="${channelLinePath(lineValues[series],g,leftMax)}" stroke="${channelColor(name)}"/>${lineValues[series].map((value,index)=>channelKnown(value)?`<circle class="channel-series-point" data-channel="${esc(name)}" data-period="${esc(history[index].period)}" data-value="${value}" cx="${(index+.5)*g.step}" cy="${g.bottom-value/leftMax*(g.bottom-g.top)}" r="2.6" fill="${channelColor(name)}"><title>${esc(name)} · ${esc(history[index].period)} · ${channelValue(value,format)}</title></circle>`:'').join('')}`).join('');
+    }
+    const xLabels=history.map((entry,index)=>{const x=(index+.5)*g.step,label=String(entry.period).replace(/^20(\d{2})[-/](\d{2})[-/](\d{2})$/,'$2-$3');return `<text class="channel-axis-label" x="${x}" y="${g.bottom+20}" text-anchor="middle">${esc(label)}<title>${esc(entry.period)}</title></text>`}).join('');
+    const title=sales?'渠道占比与留存大定总量':stores?'各渠道出单门店比例趋势':'各渠道单店产能趋势',leftUnit=sales?'渠道销量占比（%）':stores?'出单门店比例（%）':'单店产能（单/店/本周期）';
+    return `<section class="channel-chart-block"><div class="channel-subhead"><h3>${title}</h3></div><div class="channel-axis-units"><span>${leftUnit}</span>${sales?'<span>总留存大定（单）</span>':''}</div><div class="channel-chart-frame ${sales?'channel-dual-axis':'channel-single-axis'}" data-channel-chart style="--channel-chart-height:${g.height}px">${channelAxisMarkup(leftMax,sales||stores?'percent':'capacity',g,'left')}<div class="channel-plot-scroll" data-channel-scroll tabindex="0" role="region" aria-label="${title}，左右方向键可查看各周期"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}" role="group" aria-label="${title}"><g class="channel-chart-grid">${grid}</g>${marks}${xLabels}${channelPointOverlays(data,history,names,g)}</svg></div>${sales?channelAxisMarkup(totalMax,'number',g,'right'):''}</div>${channelLegend(names,sales)}<p class="channel-chart-note">${sales?'柱：原始销量占比；线：总留存大定。':'每条线对应一个渠道。'}悬停或聚焦周期查看明细，缺失数据保留空缺。</p><div class="channel-tooltip" data-channel-tooltip hidden role="tooltip"></div></section>`;
   }
   function renderChannelPanel(data){
-    const id=String(channelPanelData.size),options=channelMetricOptions(data.metric),metric=options[0],rows=data.rows||[],selected=rows.find(row=>channelKnown(row[metric.key])&&row[metric.key]>0)?.channel||rows[0]?.channel||'';
-    channelPanelData.set(id,data);
-    const description=data.metric==='sales'?'留存大定数量和销量占比直接取自门店类型指标。':data.metric==='stores'?'出单门店比例 = 当期出单门店数 ÷ 配置门店总数。':'单店产能 = 当期渠道留存大定 ÷ 配置门店总数。';
-    return `<div class="channel-panel" data-channel-panel="${id}" data-channel-metric="${esc(data.metric)}"><div class="channel-toolbar"><p>${description}</p><label>查看指标<select data-channel-measure aria-label="${data.metric==='sales'?'渠道销量':data.metric==='stores'?'贡献订单门店':'单店产能'}指标">${options.map(option=>`<option value="${option.key}">${option.label}</option>`).join('')}</select></label></div><div class="channel-panel-grid"><section class="channel-current"><div class="channel-subhead"><h3>当前渠道比较</h3><span>${esc(data.period)} · 点击渠道查看趋势</span></div><div data-channel-comparison>${channelComparison(data,metric,selected)}</div></section><section class="channel-history"><div class="channel-subhead"><h3>历史变化</h3><label><span class="sr-only">选择历史趋势渠道</span><select data-channel-select aria-label="选择${data.metric==='sales'?'渠道销量':data.metric==='stores'?'出单门店':'单店产能'}历史趋势渠道">${rows.map(row=>`<option value="${esc(row.channel)}"${row.channel===selected?' selected':''}>${esc(row.channel)}</option>`).join('')}</select></label></div><div data-channel-history>${channelTrend(data,metric,selected)}</div></section></div><details class="channel-details channel-current-details"><summary>查看当前周期明细（${rows.length} 个渠道）</summary>${channelCurrentTable(data)}</details></div>`;
+    const id=String(channelPanelData.size),history=channelHistory(data),names=channelNames(data,history);channelPanelData.set(id,data);
+    const tables=data.metric==='sales'?channelHistoryMatrix(data,history,names,'count','渠道留存大定','number','单','count')+channelHistoryMatrix(data,history,names,'share','渠道销量占比','percent','%'):data.metric==='stores'?channelHistoryMatrix(data,history,names,'active_rate','贡献订单门店比例','percent','%','active_rate'):channelHistoryMatrix(data,history,names,'productivity','渠道单店产能','capacity','单/店/本周期','productivity');
+    const note=data.metric==='sales'?'留存大定数量和占比直接读取门店类型指标。':data.metric==='stores'?'出单门店比例 = 当期出单门店数 ÷ 该渠道配置门店总数。':'单店产能 = 当期渠道留存大定 ÷ 该渠道配置门店总数。';
+    return `<div class="channel-panel" data-channel-panel="${id}" data-channel-metric="${esc(data.metric)}"><div class="channel-panel-intro"><p>${note}</p><span>截至 ${esc(data.period)} · ${history.length} 个周期 · 向左查看历史</span></div><div class="channel-history-grid"><div class="channel-history-tables">${tables}</div>${channelHistoryChart(data,history,names)}</div></div>`;
+  }
+  function bindChannelScrollers(scrollers){
+    channelPanelResizeObserver?.disconnect();channelPanelResizeObserver=null;
+    if(!scrollers.length)return;
+    const positions=new WeakMap();
+    channelPanelResizeObserver=new ResizeObserver(entries=>entries.forEach(({target:scroll})=>{
+      const saved=positions.get(scroll);if(!saved)return;
+      const width=scroll.clientWidth,max=Math.max(0,scroll.scrollWidth-width);
+      if(width===saved.width&&max===saved.max)return;
+      // Preserve a user's historical position; only a previously anchored view follows the end.
+      saved.width=width;saved.max=max;
+      scroll.scrollLeft=saved.atEnd?max:Math.min(saved.left,max);
+      saved.expected=scroll.scrollLeft;
+      if(saved.atEnd)saved.left=scroll.scrollLeft;
+    }));
+    scrollers.forEach(scroll=>{
+      scroll.scrollLeft=scroll.scrollWidth;
+      const saved={width:scroll.clientWidth,max:Math.max(0,scroll.scrollWidth-scroll.clientWidth),left:scroll.scrollLeft,expected:scroll.scrollLeft,atEnd:true};
+      positions.set(scroll,saved);
+      scroll.addEventListener('scroll',()=>{
+        const max=Math.max(0,scroll.scrollWidth-scroll.clientWidth);
+        // Resize-induced/clamped scroll events must not be mistaken for a user choosing the end.
+        if(scroll.clientWidth!==saved.width||max!==saved.max||Math.abs(scroll.scrollLeft-saved.expected)<1)return;
+        saved.left=scroll.scrollLeft;saved.expected=scroll.scrollLeft;saved.atEnd=max-scroll.scrollLeft<=2;
+      },{passive:true});
+      channelPanelResizeObserver.observe(scroll);
+    });
   }
   function bindChannelPanels(){
+    bindChannelScrollers([...document.querySelectorAll('.channel-panel [data-channel-scroll]')]);
     document.querySelectorAll('[data-channel-panel]').forEach(root=>{
       const data=channelPanelData.get(root.dataset.channelPanel);if(!data)return;
-      const metricControl=root.querySelector('[data-channel-measure]'),channelControl=root.querySelector('[data-channel-select]');
-      const refresh=()=>{const metric=channelMetricOptions(data.metric).find(item=>item.key===metricControl.value)||channelMetricOptions(data.metric)[0];root.querySelector('[data-channel-comparison]').innerHTML=channelComparison(data,metric,channelControl.value);root.querySelector('[data-channel-history]').innerHTML=channelTrend(data,metric,channelControl.value);const scroll=root.querySelector('.channel-trend-scroll');if(scroll)scroll.scrollLeft=scroll.scrollWidth;};
-      metricControl.onchange=refresh;channelControl.onchange=refresh;
-      root.querySelector('[data-channel-comparison]').onclick=event=>{const button=event.target.closest('[data-channel-choose]');if(!button)return;channelControl.value=button.dataset.channelChoose;refresh();root.querySelector('[data-channel-choose="'+CSS.escape(channelControl.value)+'"]')?.focus({preventScroll:true});};
-      const scroll=root.querySelector('.channel-trend-scroll');if(scroll)scroll.scrollLeft=scroll.scrollWidth;
+      const history=channelHistory(data),names=channelNames(data,history),chart=root.querySelector('.channel-chart-block'),tooltip=root.querySelector('[data-channel-tooltip]');
+      const showPoint=target=>{
+        const entry=history[Number(target.dataset.channelPoint)];if(!entry)return;
+        tooltip.innerHTML=`<strong>${esc(entry.period)}${data.metric==='sales'?` · 总留存大定 ${channelValue(entry.totals?.count)} 单`:''}</strong><ul>${names.map(name=>{const row=channelRow(entry,name),value=data.metric==='sales'?`${channelValue(row?.count)} 单 · ${channelValue(row?.share,'percent')}`:data.metric==='stores'?`${channelValue(row?.active_rate,'percent')} · ${channelValue(row?.active_count)} / ${channelValue(row?.store_count)} 家`:`${channelValue(row?.productivity,'capacity')} 单/店`;return `<li><span><i style="background:${channelColor(name)}"></i>${esc(name)}</span><b>${value}</b></li>`}).join('')}</ul>`;
+        tooltip.hidden=false;
+        const chartBox=chart.getBoundingClientRect(),pointBox=target.getBoundingClientRect(),left=Math.min(Math.max(4,pointBox.left-chartBox.left+pointBox.width/2-tooltip.offsetWidth/2),Math.max(4,chart.clientWidth-tooltip.offsetWidth-4));
+        tooltip.style.left=left+'px';tooltip.style.top=Math.max(46,pointBox.top-chartBox.top+16)+'px';
+      };
+      chart.addEventListener('pointerover',event=>{const point=event.target.closest('[data-channel-point]');if(point)showPoint(point)});
+      chart.addEventListener('pointerleave',()=>{tooltip.hidden=true});
+      chart.addEventListener('focusin',event=>{const point=event.target.closest('[data-channel-point]');if(point)showPoint(point)});
+      chart.addEventListener('focusout',event=>{if(!event.relatedTarget?.closest('[data-channel-point]'))tooltip.hidden=true});
+      chart.addEventListener('keydown',event=>{
+        if(event.key==='Escape'){tooltip.hidden=true;return}
+        const point=event.target.closest('[data-channel-point]');if(!point||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+        event.preventDefault();const points=[...chart.querySelectorAll('[data-channel-point]')],index=points.indexOf(point),next=event.key==='Home'?0:event.key==='End'?points.length-1:Math.max(0,Math.min(points.length-1,index+(event.key==='ArrowRight'?1:-1)));
+        points.forEach((item,slot)=>item.setAttribute('tabindex',slot===next?'0':'-1'));points[next]?.focus({preventScroll:true});points[next]?.scrollIntoView({block:'nearest',inline:'nearest'});
+      });
     });
   }
   function renderStackedTrend(data){

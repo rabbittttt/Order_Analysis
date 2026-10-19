@@ -11,26 +11,27 @@ from core.models import Dashboard, SourceRef, Subject
 
 LOGGER = logging.getLogger(__name__)
 
-# 示例门店总数：请在这里修改为实际渠道阵地数量；用于出单比例和单店产能。
-# 配置不负责识别/归类渠道，渠道名称直接读取 Excel 的“分类”列。
+# 品牌渠道阵地总数：可直接修改；车型默认继承父品牌，不跨品牌借用分母。
+# 渠道名称原样对应 Excel 的“分类”列，不做别名归类。
 CHANNEL_STORE_COUNTS = {
-    "华为授权体验店": 120,
-    "华为智能生活馆": 60,
-    "华为旗舰店": 12,
-    "鸿蒙智行用户中心": 80,
-    "问界用户中心": 100,
-    "智界用户中心": 45,
-    "享界用户中心": 35,
-    "尊界用户中心": 20,
-    "尚界用户中心": 55,
-    "未知门店类型": 15,
+    "问界": {"问界用户中心": 374, "鸿蒙智行用户中心": 28, "华为旗舰店": 11,
+           "华为授权体验店": 131, "华为智能生活馆": 425},
+    "智界": {"智界用户中心": 48, "鸿蒙智行用户中心": 334, "华为旗舰店": 11,
+           "华为授权体验店": 129, "华为智能生活馆": 388},
+    "尊界": {"鸿蒙智行用户中心": 162, "华为旗舰店": 7, "综合店": 37, "尊界体验中心": 7},
+    "尚界": {"尚界用户中心": 221, "鸿蒙智行用户中心": 259, "华为旗舰店": 13,
+           "华为授权体验店": 153, "华为智能生活馆": 450},
+    "享界": {"享界用户中心": 14, "鸿蒙智行用户中心": 344, "华为旗舰店": 11,
+           "华为授权体验店": 100, "华为智能生活馆": 387},
 }
 # 可选主体覆盖，例如 {"问界": {"华为授权体验店": 90},
 # "问界 M9 2026款": {"华为授权体验店": 75}}。
-# 优先级：车型自身 > 父品牌 > 上面的全局配置；未填写的渠道沿用上一级。
+# 优先级：车型自身 > 父品牌覆盖 > 上面的品牌配置。
+# 集团渠道存在品牌重叠，不能求和；仅在此显式配置“鸿蒙智行”的去重门店数。
 CHANNEL_STORE_COUNTS_BY_SUBJECT: dict[str, dict[str, int | float | None]] = {}
 
 _FIELDS = {("门店类型", "数量"): "count", ("门店类型", "占比"): "share",
+           ("门店类型", "贡献门店数"): "active_count",
            ("贡献订单门店数", "数量"): "active_count"}
 _AGGREGATE = re.compile(r"总计|合计|汇总|累计|近\s*\d+\s*(?:天|日|周|月)")
 
@@ -64,7 +65,7 @@ def _number(value, *, rate=False, number_format="") -> float | None:
     return number
 
 
-def _parse_channels(sheet, grain):
+def _period_columns(sheet, grain):
     period_label = _daily_period if grain == "day" else display_period
     columns = {}
     for column in range(4, sheet.max_column + 1):
@@ -72,9 +73,10 @@ def _parse_channels(sheet, grain):
         period = period_label(cell.value, cell.number_format)
         if period and not _AGGREGATE.search(period):
             columns[column] = period
-    periods = sorted(set(columns.values()), key=_period_sort)
-    parsed = {period: {} for period in periods}
-    channels = []
+    return columns
+
+
+def _channel_rows(sheet):
     metric = stat = ""
     for row in range(2, sheet.max_row + 1):
         metric = clean_text(sheet.cell(row, 1).value) or metric
@@ -83,9 +85,36 @@ def _parse_channels(sheet, grain):
         field = _FIELDS.get((metric, stat))
         if not field or not channel or channel in {"数量", "总计", "合计", "汇总"}:
             continue
+        yield row, channel, field, (2 if stat == "贡献门店数" else 1)
+
+
+def _parse_channels(sheet, grain):
+    columns = _period_columns(sheet, grain)
+    periods = sorted(set(columns.values()), key=_period_sort)
+    parsed = {period: {} for period in periods}
+    channels, priorities = [], {}
+    # Merged sheets manufacture blank cells where a physical row/period never
+    # existed. Only an actual new-format cell (including a blank) overrides the
+    # legacy value; a newer export must not erase old-format historical periods.
+    matches = getattr(sheet, "_source_matches", None)
+    new_cells = None
+    if matches:
+        new_cells = set()
+        for _, original in matches:
+            source_periods = _period_columns(original, grain).values()
+            for _, channel, field, priority in _channel_rows(original):
+                if field == "active_count" and priority == 2:
+                    new_cells.update((period, channel) for period in source_periods)
+    for row, channel, field, priority in _channel_rows(sheet):
         if channel not in channels:
             channels.append(channel)
         for column, period in columns.items():
+            key = period, channel, field
+            if field == "active_count" and priority == 2 and new_cells is not None and (period, channel) not in new_cells:
+                continue
+            if priority < priorities.get(key, 0):
+                continue
+            priorities[key] = priority
             cell = sheet.cell(row, column)
             parsed[period].setdefault(channel, {})[field] = _number(
                 cell.value, rate=field == "share", number_format=cell.number_format)
@@ -93,7 +122,9 @@ def _parse_channels(sheet, grain):
 
 
 def _store_counts(subject):
-    counts = dict(CHANNEL_STORE_COUNTS)
+    brand = subject.parent if subject.type == "generation" else subject.name if subject.type == "brand" else None
+    counts = dict(next((value for key, value in CHANNEL_STORE_COUNTS.items()
+                        if brand and compact_text(key) == compact_text(brand)), {}))
     subjects = ([subject.parent] if subject.type == "generation" and subject.parent else []) + [subject.name]
     for name in subjects:
         override = next((value for key, value in CHANNEL_STORE_COUNTS_BY_SUBJECT.items()
@@ -109,6 +140,22 @@ def _delta(current, previous):
 def _complete_sum(rows, field):
     values = [row[field] for row in rows]
     return sum(values) if values and all(value is not None for value in values) else None
+
+
+def _totals(rows, configured):
+    count = _complete_sum(rows, "count")
+    active = _complete_sum(rows, "active_count")
+    denominators = [_number(value) for value in configured.values()]
+    total = sum(denominators) if denominators and all(value is not None for value in denominators) else None
+    # Include every configured channel in the denominator, even if its source
+    # row is absent. An unconfigured channel with activity leaves coverage unknown.
+    if any(row["store_count"] is None and (row["count"] != 0 or row["active_count"] != 0) for row in rows):
+        total = None
+    inconsistent = any(row["active_count"] is not None and row["store_count"] is not None
+                       and row["active_count"] > row["store_count"] for row in rows)
+    return {"count": count, "active_count": active, "store_count": total,
+            "active_rate": active / total if active is not None and total and not inconsistent else None,
+            "productivity": count / total if count is not None and total else None}
 
 
 class ChannelAnalysisModule:
@@ -127,7 +174,7 @@ class ChannelAnalysisModule:
             if not channels or not any(value is not None for period in parsed.values()
                                        for row in period.values() for value in row.values()):
                 continue
-            source = SourceRef(item.path.name, sheet.title, "门店类型 / 贡献订单门店数")
+            source = SourceRef(item.path.name, sheet.title, "门店类型（数量 / 占比 / 贡献门店数，兼容原贡献订单门店数）")
             sources.append(source)
             periods = list(parsed)
             history, previous = [], {}
@@ -151,19 +198,14 @@ class ChannelAnalysisModule:
                         row[f"previous_{field}"] = prior.get(field)
                         row[f"{field}_change"] = _delta(row[field], prior.get(field))
                     rows.append(row)
-                history.append({"period": period, "rows": rows})
+                history.append({"period": period, "rows": rows, "totals": _totals(rows, configured)})
                 previous = {row["channel"]: row for row in rows}
 
             pages = {}
             for entry in history:
                 period, rows = entry["period"], entry["rows"]
-                count = _complete_sum(rows, "count")
-                active = _complete_sum(rows, "active_count")
-                total = _complete_sum(rows, "store_count")
-                rate = active / total if (active is not None and total and
-                                         all(row["active_rate"] is not None for row in rows)) else None
-                productivity = count / total if (count is not None and total and
-                                                 all(row["productivity"] is not None for row in rows)) else None
+                totals = entry["totals"]
+                count, active, rate, productivity = (totals[key] for key in ("count", "active_count", "active_rate", "productivity"))
                 pages[period] = {
                     "kpis": [
                         kpi("渠道留存大定", count, "单", "门店类型原始数量合计", "blue"),
@@ -172,7 +214,7 @@ class ChannelAnalysisModule:
                         kpi("单店产能", productivity, "单/店", "留存大定 / 配置总门店数", "orange"),
                     ],
                     "sections": [section("channel_panel", title,
-                                         {"metric": metric, "period": period, "rows": rows, "history": history},
+                                         {"metric": metric, "period": period, "rows": rows, "history": history, "totals": totals},
                                          meta, source=source)
                                  for metric, title, meta in (
                                      ("sales", "各渠道留存大定及占比", "直接读取门店类型原始数量和占比"),
