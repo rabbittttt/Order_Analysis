@@ -126,6 +126,21 @@ assert(labelled.includes('small_rate')&&labelled.includes('big_rate'),'nearby cu
 '''
         subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)
 
+    def test_rhythm_line_labels_keep_series_colors_over_bars(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        checks = r'''
+const assert=require('assert');
+const spec={title:'color',rows:[{label:'D1',total:100,values:{bar:100},rates:{rate:.5}}],maxValue:120,series:[{key:'bar',label:'bar',color:'#1677FF'}],lines:[{key:'rate',label:'rate',color:'#00B578',textColor:'#102238',digits:1}]};
+const html=renderRhythmSvg(spec,320),lineLabel=html.match(/<text class="rhythm-value-label rhythm-line-label"[^>]*>/)?.[0];
+assert(lineLabel,'line percentage label should render');
+assert(lineLabel.includes('data-series="rate"'));
+assert(lineLabel.includes('fill:#00B578'),'line label must use its series color');
+assert(!lineLabel.includes('fill:#102238'),'bar overlap must not neutralize line label color');
+'''
+        subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)
+
     def test_rhythm_preserves_every_total_before_allocating_rate_labels(self):
         node = shutil.which('node')
         if not node:

@@ -102,7 +102,7 @@
       // Rotate label priority: two close curves must not permanently hide one another.
       [...column.slice(rotation),...column.slice(0,rotation)].forEach(point=>{
         const text=(point.value*100).toFixed(point.line.digits??1)+'%',placement=rhythmLineLabel(point,text,occupied,points,segments,geometry);
-        if(placement)saveLabel({...placement,text,kind:'line',color:point.line.textColor||point.line.color,series:point.line.key,index});
+        if(placement)saveLabel({...placement,text,kind:'line',color:point.line.color,series:point.line.key,index});
       });
     });
     const bars=rows.map((row,index)=>{
@@ -124,9 +124,9 @@
     }).join('');
     const curves=lineData.map(({line,path,dots})=>`<path data-rhythm-series="${esc(line.key)}" d="${path}" fill="none" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"/>${dots.filter(Boolean).map(point=>`<circle data-rhythm-point="${esc(line.key)}" data-index="${point.index}" data-value="${point.value}" cx="${point.x}" cy="${point.y}" r="${RHYTHM_LAYOUT.pointRadius}" fill="#fff" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"><title>${esc(rows[point.index].label)} · ${esc(line.label)} ${(point.value*100).toFixed(line.digits??1)}%</title></circle>`).join('')}`).join('');
     const valueLabels=labels.map(label=>{
-      // Use a dark label over colored bars instead of a white patch/outline
-      // cutting the stack. Keep the series color on the white plot background.
-      const color=barAreas.some(area=>rhythmBoxesOverlap(label.box,area,0))?'#102238':label.color;
+      // Only bar labels use dark text over colored stacks. Line percentages
+      // always retain their series color, matching the line and legend.
+      const color=label.kind==='line'?label.color:(barAreas.some(area=>rhythmBoxesOverlap(label.box,area,0))?'#102238':label.color);
       return `<text class="rhythm-value-label rhythm-${label.kind}-label" data-rhythm-label="${label.kind}" data-index="${label.index}"${label.pointY==null?'':` data-point-y="${label.pointY}" data-series="${esc(label.series)}"`} x="${label.x}" y="${label.y}" text-anchor="middle" style="font-size:${label.fontSize}px${color?`;fill:${color}`:''}">${esc(label.text)}</text>`;
     }).join('');
     const axisStride=Math.max(1,Math.ceil((Math.max(...rows.map(row=>rhythmTextWidth(rhythmAxisText(row.label),9)),0)+10)/step)),axisBoxes=[],axisIndices=[];
