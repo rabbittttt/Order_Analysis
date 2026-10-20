@@ -1,4 +1,4 @@
-"""CLI logging must survive launcher/IDE defaults without losing G9 traces."""
+"""CLI logging keeps operational messages without the retired G9 diagnostics."""
 from pathlib import Path
 import subprocess
 import sys
@@ -35,7 +35,7 @@ SETUP
 args=SimpleNamespace(source=Path('source.xlsx'),mapping=refresh.DEFAULT_MAPPING,
  output=Path('summary.xlsx'),orders=Path('orders'),as_of_date='',force=False,debug=DEBUG)
 def build(*args):
- refresh.forecast_trace('享界 G9 2027款','测试刷新')
+ LOGGER.info('正常刷新信息')
  LOGGER.debug('DEBUG探针')
  LOGGER.warning('业务告警样例')
 book=MagicMock();book.sheetnames=[]
@@ -55,31 +55,26 @@ with patch.object(refresh,'parse_args',return_value=args), \\
         for name, setup in {'clean':'', **POLLUTED}.items():
             with self.subTest(state=name):
                 output = self.refresh(setup)
-                self.assertIn('[G9取数排查] 环节=入口日志自检', output)
-                self.assertIn('G9-20261016-v2', output)
-                self.assertIn('环节=测试刷新', output)
+                self.assertNotIn('[G9取数排查]', output)
+                self.assertIn('[INFO] 正常刷新信息', output)
                 self.assertIn('[WARNING] 业务告警样例', output)
                 self.assertNotIn('DEBUG探针', output)
-                self.assertIn('refresh_sales_forecast_data.py', output)
-                self.assertIn('forecast_summary.py', output)
 
     def test_debug_option_still_controls_debug_output(self):
         output = self.refresh(POLLUTED['root_warning'], debug=True)
         self.assertIn('[DEBUG] DEBUG探针', output)
-        self.assertIn('入口日志自检', output)
+        self.assertNotIn('[G9取数排查]', output)
 
-    def test_reuse_without_any_g9_model_still_has_unconditional_self_check(self):
+    def test_reuse_reports_status_without_retired_model_diagnostics(self):
         output = self.refresh(POLLUTED['global_disable_info'], reuse=True)
-        self.assertIn('[G9取数排查] 环节=入口日志自检', output)
-        self.assertIn('环节=复用汇总', output)
-        self.assertIn('车型基本信息未匹配到目标代际', output)
-        self.assertNotIn('环节=测试刷新', output)
+        self.assertNotIn('[G9取数排查]', output)
+        self.assertIn('销量数据汇总已是最新，跳过刷新', output)
+        self.assertNotIn('正常刷新信息', output)
 
-    def test_self_check_is_printed_even_before_source_resolution_failure(self):
+    def test_source_resolution_failure_is_reported_without_retired_self_check(self):
         output = self.refresh(POLLUTED['root_warning'], fail=True)
-        self.assertIn('[G9取数排查] 环节=入口日志自检', output)
+        self.assertNotIn('[G9取数排查]', output)
         self.assertIn('[ERROR] 刷新失败', output)
-        self.assertLess(output.index('入口日志自检'), output.index('刷新失败'))
 
     def test_parent_relays_info_into_console_and_file_without_warning_counts(self):
         for name, setup in POLLUTED.items():
@@ -94,13 +89,13 @@ SETUP
 with TemporaryDirectory() as folder:
  path=main.configure_runtime(Path(folder))
  LOGGER.info('父进程INFO正常')
- main.relay_refresh_line('[INFO] [G9取数排查] 子进程转发')
+ main.relay_refresh_line('[INFO] 正常子进程转发')
  logging.shutdown()
  content=path.read_text(encoding='utf-8')
- assert '[G9取数排查] 子进程转发' in content,content
+ assert '正常子进程转发' in content,content
  assert '父进程INFO正常' in content,content
  assert main.DIAGNOSTIC_COUNTS=={'WARNING':0,'ERROR':0},main.DIAGNOSTIC_COUNTS
  print('FILE_AND_COUNTS_OK')
 '''.replace('SETUP', setup))
-                self.assertIn('[G9取数排查] 子进程转发', output)
+                self.assertIn('正常子进程转发', output)
                 self.assertIn('FILE_AND_COUNTS_OK', output)
