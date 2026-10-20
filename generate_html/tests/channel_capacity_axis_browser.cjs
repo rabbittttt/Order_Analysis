@@ -134,6 +134,29 @@ function fixture(mode='normal',grain='week',end=39){
   check((await snapshot()).empty,'All-missing data retains existing empty state');
   await page.setViewportSize({width:390,height:900});await settle();
   check((await snapshot()).empty,'All-missing data remains stable after resize');
+  const visibility=fixture();
+  for(const panel of visibility){
+   for(const entry of panel.history){
+    entry.rows[0].store_count=0;
+    entry.rows[1].store_count=null; // Unconfigured is unknown, not a zero-store channel.
+    entry.rows[1].channel='AITO原始分类';
+   }
+  }
+  await render(visibility);
+  for(const metric of ['sales','stores','capacity']){
+   const panel=page.locator('[data-channel-metric="'+metric+'"]');
+   check(await panel.locator('[data-channel="'+channels[0]+'"]').count()===0,metric+' hides zero-store table rows and chart marks');
+   check(!(await panel.innerText()).includes(channels[0]),metric+' hides zero-store legend labels');
+   check((await panel.innerText()).includes('AITO原始分类'),metric+' keeps original unknown category name');
+   check(!(await panel.innerText()).includes('问界用户中心'),metric+' does not classify aliases');
+   const description=await panel.locator('[data-channel-point]').last().getAttribute('aria-label');
+   check(!description.includes(channels[0]),metric+' hides zero-store tooltip entries');
+  }
+  check(await page.locator('[data-channel-table="share"] tbody td').last().getAttribute('data-value')==='0.4','Source shares are not renormalized after hiding a channel');
+  for(const panel of visibility)for(const entry of panel.history)entry.rows[1].store_count=0;
+  await render(visibility);
+  check(await page.locator('.channel-matrix tbody tr').count()===0,'All-zero store configuration leaves no channel rows');
+  check(await page.locator('.channel-legend span:not(.channel-total-key)').count()===0,'All-zero store configuration leaves no channel legend entries');
   assert.deepEqual(errors,[]);checks++;
   console.log(JSON.stringify({checks,errors,template:html?'rebuilt HTML':'source template',artifacts}));
  }finally{await browser.close()}

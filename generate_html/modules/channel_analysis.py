@@ -13,6 +13,7 @@ LOGGER = logging.getLogger(__name__)
 
 # 品牌渠道阵地总数：可直接修改；车型默认继承父品牌，不跨品牌借用分母。
 # 渠道名称原样对应 Excel 的“分类”列，不做别名归类。
+# 显式设为 0 的渠道在看板中隐藏；未配置不等于 0，仍保留原始分类。
 CHANNEL_STORE_COUNTS = {
     "问界": {"问界用户中心": 374, "鸿蒙智行用户中心": 28, "华为旗舰店": 11,
            "华为授权体验店": 131, "华为智能生活馆": 425},
@@ -92,7 +93,12 @@ def _parse_channels(sheet, grain):
     columns = _period_columns(sheet, grain)
     periods = sorted(set(columns.values()), key=_period_sort)
     parsed = {period: {} for period in periods}
-    channels, priorities = [], {}
+    source_rows = list(_channel_rows(sheet))
+    # Only the original 门店类型 block defines categories and their order.
+    # Legacy contributing-store rows can fill matching names, never add aliases.
+    channels = list(dict.fromkeys(channel for _, channel, field, priority in source_rows
+                                  if field != "active_count" or priority == 2))
+    priorities = {}
     # Merged sheets manufacture blank cells where a physical row/period never
     # existed. Only an actual new-format cell (including a blank) overrides the
     # legacy value; a newer export must not erase old-format historical periods.
@@ -105,9 +111,9 @@ def _parse_channels(sheet, grain):
             for _, channel, field, priority in _channel_rows(original):
                 if field == "active_count" and priority == 2:
                     new_cells.update((period, channel) for period in source_periods)
-    for row, channel, field, priority in _channel_rows(sheet):
+    for row, channel, field, priority in source_rows:
         if channel not in channels:
-            channels.append(channel)
+            continue
         for column, period in columns.items():
             key = period, channel, field
             if field == "active_count" and priority == 2 and new_cells is not None and (period, channel) not in new_cells:

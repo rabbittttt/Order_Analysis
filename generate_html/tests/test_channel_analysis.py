@@ -131,7 +131,31 @@ class ChannelAnalysisTests(unittest.TestCase):
             self.assertEqual(channel._store_counts(Subject("other", "智界 S7 2026款", "generation", "智界"))[A], 129)
             self.assertNotIn(A, channel._store_counts(Subject("z", "尊界 S800 2026款", "generation", "尊界")))
 
-    def test_zero_denominator_and_impossible_active_counts_remain_visible(self):
+    def test_categories_only_follow_store_type_block_and_keep_source_order(self):
+        source_name, legacy_name = "AITO授权用户中心", "旧版问界中心"
+        book = self.book(["2026-01-01"], [
+            ["贡献订单门店数", "数量", legacy_name, 99],
+            [None, None, source_name, 3],
+            [None, None, A, 2],
+            ["门店类型", "占比", source_name, .37],
+            [None, None, A, .63],
+            [None, "数量", source_name, 30],
+            [None, None, A, 70],
+        ])
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {
+            "问界": {A: 20, source_name: 10, "仅配置未出现在原表": 5}
+        }, clear=True):
+            data = self.build(self.store(book)).views["day"]["pages"]["2026-01-01"]["sections"][0]["data"]
+        self.assertEqual([row["channel"] for row in data["rows"]], [source_name, A])
+        self.assertEqual([row["active_count"] for row in data["rows"]], [3, 2])
+        self.assertEqual([row["share"] for row in data["rows"]], [.37, .63])
+        self.assertEqual(data["totals"]["count"], 100)
+        self.assertEqual(data["totals"]["active_count"], 5)
+        self.assertIsNone(self.build(self.store(self.book(
+            ["2026-01-01"], [["贡献订单门店数", "数量", legacy_name, 99]]
+        ))))
+
+    def test_zero_denominator_and_impossible_active_counts_keep_original_data(self):
         for total, count, active in [(0, 10, 2), (2, 10, 3)]:
             with self.subTest(total=total, count=count, active=active):
                 book = self.book(["2026-01-01"], [["门店类型", "数量", A, count], ["贡献订单门店数", "数量", A, active]])

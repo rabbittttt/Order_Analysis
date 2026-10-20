@@ -750,7 +750,7 @@
     const history=Array.isArray(data.history)?data.history:[],index=history.findIndex(item=>String(item.period)===String(data.period));
     return index>=0?history.slice(0,index+1):[{period:data.period,rows:data.rows||[],totals:data.totals||{}}];
   }
-  function channelNames(data,history){return [...new Set([...(data.rows||[]),...history.flatMap(entry=>entry.rows||[])].map(row=>row.channel).filter(Boolean))]}
+  function channelNames(data,history){return [...new Set([...(data.rows||[]),...history.flatMap(entry=>entry.rows||[])].filter(row=>row.store_count!==0).map(row=>row.channel).filter(Boolean))]}
   function channelRow(entry,name){return (entry.rows||[]).find(row=>row.channel===name)}
   function channelHistoryMatrix(data,history,names,key,label,format,unit,totalKey){
     const valuesFor=name=>history.map(entry=>channelRow(entry,name)?.[key]);

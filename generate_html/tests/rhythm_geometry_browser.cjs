@@ -27,6 +27,7 @@ const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(
      const frames=[...document.querySelectorAll('[data-rhythm-config]')],daily=[],hourly=[];
      const measurements=frames.map(frame=>{
       const svg=frame.querySelector('svg'),box=frame.getBoundingClientRect(),kind=frame.dataset.rhythmKind;
+      const panel=frame.closest('.panel'),panelBox=panel.getBoundingClientRect(),gridBox=panel.parentElement.getBoundingClientRect(),bodyBox=panel.querySelector('.panel-body').getBoundingClientRect();
       const texts=[...svg.querySelectorAll('text')].map(n=>({text:n.textContent,box:n.getBoundingClientRect()}));let overlaps=0;
       for(let i=0;i<texts.length;i++)for(let j=i+1;j<texts.length;j++){const a=texts[i].box,b=texts[j].box;if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>2&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>2)overlaps++;}
       const rows=[...svg.querySelectorAll('[data-rhythm-row]')];
@@ -36,15 +37,17 @@ const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(
       const columnPositions=rows.map((row,index)=>{const bar=row.querySelector('[data-rhythm-bar]');return bar?{index,x:bar.getBoundingClientRect().x,width:bar.getBoundingClientRect().width}:null}).filter(Boolean);
       const columnGaps=columnPositions.slice(1).map((bar,index)=>(bar.x-columnPositions[index].x)/(bar.index-columnPositions[index].index)-bar.width);
       const labelWeights=[...svg.querySelectorAll('.rhythm-value-label')].map(n=>Number(getComputedStyle(n).fontWeight));
-      return {kind,height:box.height,left:box.left,right:box.right,svgHeight:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,barWidths:[...new Set([...svg.querySelectorAll('[data-rhythm-bar]')].map(n=>n.getBoundingClientRect().width))],plotHeight:Number(svg.dataset.plotHeight),plotLeft:Number(svg.dataset.plotLeft),plotRight:Number(svg.dataset.plotRight),rows:rows.length,overlaps,expectedGap:Math.max(40,...spec.rows.map(row=>typeof row.total==='number'?row.total.toLocaleString('zh-CN',{maximumFractionDigits:1}).length*9*.62+8:17))-28,columnGaps,labelWeights,totalLabels,expectedTotals:spec.rows.map(row=>typeof row.total==='number'?row.total.toLocaleString('zh-CN',{maximumFractionDigits:1}):'—'),decorations:svg.querySelectorAll('.rhythm-grid-line,.rhythm-label-background').length,labelOffsets:[...svg.querySelectorAll('[data-rhythm-label="line"]')].map(n=>Math.abs(Number(n.getAttribute('y'))-Number(n.dataset.pointY))),labelStrokes:[...new Set([...svg.querySelectorAll('.rhythm-line-label')].map(n=>parseFloat(getComputedStyle(n).strokeWidth)))]};
+      return {kind,height:box.height,left:box.left,right:box.right,panelLeft:panelBox.left,panelRight:panelBox.right,gridLeft:gridBox.left,gridRight:gridBox.right,bodyLeft:bodyBox.left,bodyRight:bodyBox.right,viewportWidth:frame.clientWidth,scrollWidth:frame.scrollWidth,overflowX:getComputedStyle(frame).overflowX,svgHeight:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,barWidths:[...new Set([...svg.querySelectorAll('[data-rhythm-bar]')].map(n=>n.getBoundingClientRect().width))],plotHeight:Number(svg.dataset.plotHeight),plotLeft:Number(svg.dataset.plotLeft),plotRight:Number(svg.dataset.plotRight),rows:rows.length,overlaps,expectedGap:Math.max(40,...spec.rows.map(row=>typeof row.total==='number'?row.total.toLocaleString('zh-CN',{maximumFractionDigits:1}).length*9*.62+8:17))-28,columnGaps,labelWeights,totalLabels,expectedTotals:spec.rows.map(row=>typeof row.total==='number'?row.total.toLocaleString('zh-CN',{maximumFractionDigits:1}):'—'),decorations:svg.querySelectorAll('.rhythm-grid-line,.rhythm-label-background').length,labelOffsets:[...svg.querySelectorAll('[data-rhythm-label="line"]')].map(n=>Math.abs(Number(n.getAttribute('y'))-Number(n.dataset.pointY))),labelStrokes:[...new Set([...svg.querySelectorAll('.rhythm-line-label')].map(n=>parseFloat(getComputedStyle(n).strokeWidth)))]};
      });return {daily,hourly,measurements,pageOverflow:document.documentElement.scrollWidth>innerWidth+2};
     });
     assert(!actual.pageOverflow,key+' page overflow at '+width);
     assert(actual.measurements.length,key+' missing charts');
-    const edge=actual.measurements[0];
     for(const m of actual.measurements){
      assert(Math.abs(m.height-240)<.05,key+' inconsistent frame height');assert(Math.abs(m.svgHeight-224)<.05);
-     assert(Math.abs(m.left-edge.left)<.05,key+' chart frames misaligned');
+     assert(Math.abs(m.panelLeft-m.gridLeft)<1&&Math.abs(m.panelRight-m.gridRight)<1,key+' outer rhythm card does not fill the content width');
+     assert(Math.abs((m.left+m.right)-(m.bodyLeft+m.bodyRight))<1,key+' rhythm chart is not centered within its card');
+     assert(m.left>=m.bodyLeft-1&&m.right<=m.bodyRight+1,key+' rhythm viewport escapes its card');
+     assert.equal(m.overflowX,'auto',key+' horizontal scrolling is not available');
      assert(Math.abs(m.scale-1)<.001,key+' SVG scaling changes actual bar width');
      assert(m.barWidths.every(w=>Math.abs(w-28)<.05),key+' unequal actual bar widths: '+m.barWidths);
      assert.equal(m.plotHeight,160);assert.equal(m.plotLeft,30);assert.equal(m.plotRight,30);
@@ -59,6 +62,15 @@ const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(
      if(m.kind.endsWith('-hour'))assert.equal(m.rows,24,key+' lost clock hours');charts++;
     }
     if(baseline?.snapshots[key]){assert.deepEqual({daily:actual.daily,hourly:actual.hourly},baseline.snapshots[key],key+' historical quantities/tooltips changed');snapshots++;}
+    if(width===390){
+     const scrolling=await page.locator('[data-rhythm-config]').evaluateAll(frames=>frames.map(frame=>{
+      const before=frame.innerHTML,overflow=frame.scrollWidth>frame.clientWidth+2;
+      frame.scrollLeft=frame.scrollWidth;
+      const moved=frame.scrollLeft>0,unchanged=frame.innerHTML===before;frame.scrollLeft=0;
+      return {overflow,moved,unchanged};
+     }));
+     assert(scrolling.every(item=>item.unchanged&&(!item.overflow||item.moved)),key+' narrow-screen scroll lost content or cannot move');
+    }
     if(width===1440){
      const selects=page.locator('[data-hourly-select],[data-launch-hourly-select]');
      for(let i=0;i<await selects.count();i++){

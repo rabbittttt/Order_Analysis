@@ -81,9 +81,9 @@ button {
 }
 
 .panel.full:has(.rhythm-chart) {
-  width:fit-content;
+  width:100%;
   max-width:100%;
-  justify-self:start;
+  justify-self:stretch;
   box-sizing:border-box;
 }
 
@@ -1694,6 +1694,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .hourly-toolbar {
   display:flex;
   align-items:center;
+  justify-content:center;
   gap:8px;
   margin-bottom:8px;
 }
@@ -2327,9 +2328,10 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 
 /* Daily and hourly rhythms share one SVG and one style contract. */
 .rhythm-chart {
-  width:100%;
+  width:max-content;
   min-width:0;
   max-width:100%;
+  margin-inline:auto;
   height:var(--rhythm-frame-height);
   overflow-x:auto;
   overflow-y:hidden;
@@ -2387,6 +2389,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   max-width:100%;
   flex-wrap:wrap;
   align-items:center;
+  justify-content:center;
   gap:6px 14px;
   margin-top:6px;
   line-height:1.4;
