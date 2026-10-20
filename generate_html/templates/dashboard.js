@@ -812,6 +812,10 @@
       marks+=`<path class="channel-total-line" d="${channelLinePath(totals,g,totalMax)}"/>`+totals.map((value,index)=>channelKnown(value)?`<circle class="channel-total-point" data-channel="__total__" data-period="${esc(history[index].period)}" data-value="${value}" cx="${(index+.5)*g.step}" cy="${g.bottom-value/totalMax*(g.bottom-g.top)}" r="3.5"><title>${esc(history[index].period)} · 总留存大定 ${channelValue(value)} 单</title></circle>`:'').join('');
     }else{
       marks=names.map((name,series)=>`<path class="channel-series-line" data-channel="${esc(name)}" d="${channelLinePath(lineValues[series],g,leftMax)}" stroke="${channelColor(name)}"/>${lineValues[series].map((value,index)=>channelKnown(value)?`<circle class="channel-series-point" data-channel="${esc(name)}" data-period="${esc(history[index].period)}" data-value="${value}" cx="${(index+.5)*g.step}" cy="${g.bottom-value/leftMax*(g.bottom-g.top)}" r="2.6" fill="${channelColor(name)}"><title>${esc(name)} · ${esc(history[index].period)} · ${channelValue(value,format)}</title></circle>`:'').join('')}`).join('');
+      if(!stores){
+        const clipId=`channel-capacity-plot-${channelPanelData.size}`;
+        marks=`<defs><clipPath id="${clipId}"><rect x="0" y="${g.top}" width="${g.width}" height="${g.bottom-g.top}"/></clipPath></defs><g clip-path="url(#${clipId})">${marks}</g>`;
+      }
     }
     const xLabels=history.map((entry,index)=>{const x=(index+.5)*g.step,label=String(entry.period).replace(/^20(\d{2})[-/](\d{2})[-/](\d{2})$/,'$2-$3');return `<text class="channel-axis-label" x="${x}" y="${g.bottom+20}" text-anchor="middle">${esc(label)}<title>${esc(entry.period)}</title></text>`}).join('');
     const title=sales?'渠道占比与留存大定总量':stores?'各渠道出单门店比例趋势':'各渠道单店产能趋势',leftUnit=sales?'渠道销量占比（%）':stores?'出单门店比例（%）':'单店产能（单/店/本周期）';
@@ -822,6 +826,22 @@
     const tables=data.metric==='sales'?channelHistoryMatrix(data,history,names,'count','渠道留存大定','number','单','count')+channelHistoryMatrix(data,history,names,'share','渠道销量占比','percent','%'):data.metric==='stores'?channelHistoryMatrix(data,history,names,'active_rate','贡献订单门店比例','percent','%','active_rate'):channelHistoryMatrix(data,history,names,'productivity','渠道单店产能','capacity','单/店/本周期','productivity');
     const note=data.metric==='sales'?'留存大定数量和占比直接读取门店类型指标。':data.metric==='stores'?'出单门店比例 = 当期出单门店数 ÷ 该渠道配置门店总数。':'单店产能 = 当期渠道留存大定 ÷ 该渠道配置门店总数。';
     return `<div class="channel-panel" data-channel-panel="${id}" data-channel-metric="${esc(data.metric)}"><div class="channel-panel-intro"><p>${note}</p><span>截至 ${esc(data.period)} · ${history.length} 个周期 · 向左查看历史</span></div><div class="channel-history-grid"><div class="channel-history-tables">${tables}</div>${channelHistoryChart(data,history,names)}</div></div>`;
+  }
+  function refreshChannelCapacityAxis(scroll){
+    if(!scroll.classList.contains('channel-plot-scroll'))return;
+    const root=scroll.closest('[data-channel-panel]'),data=channelPanelData.get(root?.dataset.channelPanel);
+    if(data?.metric!=='capacity'||!scroll.clientWidth)return;
+    const history=channelHistory(data),names=channelNames(data,history),g=channelChartGeometry(history,names,false),chart=scroll.closest('[data-channel-chart]');
+    const first=Math.max(0,Math.ceil(scroll.scrollLeft/g.step-.5)),last=Math.min(history.length-1,Math.floor((scroll.scrollLeft+scroll.clientWidth)/g.step-.5));
+    const series=names.map(name=>history.map(entry=>channelRow(entry,name)?.productivity));
+    const visible=series.flatMap(values=>values.slice(first,last+1)),peak=Math.max(0,...visible.filter(channelKnown));
+    // Keep zero as the baseline, with modest headroom and stable rounded steps.
+    const step=channelAxisMax([peak])/5,maximum=peak?Math.ceil(peak*1.08/step-1e-10)*step:1;
+    if(Number(chart.dataset.channelAxisMax)===maximum)return;
+    chart.dataset.channelAxisMax=String(maximum);
+    chart.querySelectorAll('.channel-y-axis.left span').forEach((label,index)=>{label.textContent=channelValue(maximum*index/4,'capacity')});
+    chart.querySelectorAll('.channel-series-line').forEach((line,index)=>{line.setAttribute('d',channelLinePath(series[index],g,maximum))});
+    chart.querySelectorAll('.channel-series-point').forEach(point=>{point.setAttribute('cy',g.bottom-Number(point.dataset.value)/maximum*(g.bottom-g.top))});
   }
   function bindChannelScrollers(scrollers){
     channelPanelResizeObserver?.disconnect();channelPanelResizeObserver=null;
@@ -836,12 +856,15 @@
       scroll.scrollLeft=saved.atEnd?max:Math.min(saved.left,max);
       saved.expected=scroll.scrollLeft;
       if(saved.atEnd)saved.left=scroll.scrollLeft;
+      refreshChannelCapacityAxis(scroll);
     }));
     scrollers.forEach(scroll=>{
       scroll.scrollLeft=scroll.scrollWidth;
       const saved={width:scroll.clientWidth,max:Math.max(0,scroll.scrollWidth-scroll.clientWidth),left:scroll.scrollLeft,expected:scroll.scrollLeft,atEnd:true};
       positions.set(scroll,saved);
+      refreshChannelCapacityAxis(scroll);
       scroll.addEventListener('scroll',()=>{
+        refreshChannelCapacityAxis(scroll);
         const max=Math.max(0,scroll.scrollWidth-scroll.clientWidth);
         // Resize-induced/clamped scroll events must not be mistaken for a user choosing the end.
         if(scroll.clientWidth!==saved.width||max!==saved.max||Math.abs(scroll.scrollLeft-saved.expected)<1)return;
