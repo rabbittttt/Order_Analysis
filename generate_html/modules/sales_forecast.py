@@ -15,7 +15,7 @@ from core.china_calendar import calendar_payload
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation, FORECAST_SOURCE_PATH
 from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type, compact_diagnostic_ranges
 from core.models import Dashboard, SourceRef, Subject
-from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, input_path, open_input, summary_scope, table_records
+from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, input_path, open_input, summary_scope, table_records, reservation_reference_shape
 
 
 LOGGER = logging.getLogger(__name__)
@@ -766,7 +766,7 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "daily_orders": daily,
                 "dates": dates,
                 "small_progress": cumulative,
-                "standard_progress": [value for value in fallback_curve if value is not None],
+                "standard_progress": reservation_reference_shape(fallback_curve)["standard_progress"],
                 "d1_share": daily[0] / max(final_total, 1) if daily and daily[0] is not None and total_complete else 0,
                 "small_hourly_curve": [],
                 "daily_actual": True,
@@ -789,20 +789,10 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 (curve for name, curve in standardized.items() if _same_model(name, model) or _same_model(name, generation)),
                 [],
             )
-            numeric_curve = [max(_number(value), 0) for value in fallback_curve if value is not None]
-            terminal = numeric_curve[-1] if numeric_curve else 0
             if total <= 0:
                 continue
-            normalized = [min(value / terminal, 1) for value in numeric_curve] if terminal > 0 else []
-            daily = []
-            previous = 0.0
-            assigned = 0
-            for index, value in enumerate(normalized):
-                count = total - assigned if index == len(normalized) - 1 else int(round(max(value - previous, 0) * total))
-                count = max(count, 0)
-                daily.append(count)
-                assigned += count
-                previous = value
+            shape = reservation_reference_shape(fallback_curve, total)
+            daily = shape["daily_orders"]
             start_date = _as_date(summary.get("小订开始日期"))
             dates = [(start_date + timedelta(days=index)).isoformat() for index in range(len(daily))] if start_date else []
             master_record = _master_record(model_master, model, generation) or {}
@@ -828,8 +818,8 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "daily_orders": daily,
                 "dates": dates,
                 "small_progress": [],
-                "standard_progress": numeric_curve,
-                "d1_share": normalized[0] if normalized else 0,
+                "standard_progress": shape["standard_progress"],
+                "d1_share": shape["d1_share"],
                 "small_hourly_curve": [],
                 "daily_actual": False,
                 "source_sheet": "小订进度",

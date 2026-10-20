@@ -109,6 +109,31 @@ def calendar_day(value):
         return ""
 
 
+def reservation_reference_shape(values, total=None):
+    """Convert complete cumulative evidence to a shape, never to actual orders.
+
+    Keep unknown Dn positions. Both raw-input and public-workbook readers use
+    this conversion so an invalid curve cannot be compressed or overallocated.
+    """
+    curve = [value if isinstance(value, (int, float)) and not isinstance(value, bool)
+             and math.isfinite(value) and value >= 0 else None for value in values]
+    while curve and curve[-1] is None:
+        curve.pop()
+    result = {"standard_progress": curve, "daily_orders": [], "d1_share": 0}
+    if (not curve or any(value is None for value in curve) or not curve[-1] > 0
+            or any(b < a for a, b in zip(curve, curve[1:]))
+            or not isinstance(total, (int, float)) or isinstance(total, bool)
+            or not math.isfinite(total) or total <= 0):
+        return result
+    # Round cumulative counts, then difference: independently rounded daily
+    # increments can exceed the known total before reaching the last day.
+    cumulative = [round(value / curve[-1] * round(total)) for value in curve]
+    result["daily_orders"] = [value - (cumulative[i-1] if i else 0)
+                              for i, value in enumerate(cumulative)]
+    result["d1_share"] = curve[0] / curve[-1]
+    return result
+
+
 def date_cell(value):
     try:
         return datetime.fromisoformat(value) if value else None
@@ -1140,17 +1165,11 @@ def read_public_forecast(book, history, today=None):
             if prefix_complete:
                 running += value
             cumulative.append(min(running / max(total, 1), 1) if prefix_complete and complete else None)
-        if not actual and curve and total > 0:
-            terminal = curve[-1] or 0
-            if terminal > 0:
-                daily, assigned, previous = [], 0, 0
-                for index, value in enumerate(curve):
-                    progress = min(max(value / terminal, 0), 1)
-                    count = max(int(round((progress-previous)*total)), 0) if index < len(curve)-1 else max(total-assigned, 0)
-                    daily.append(count)
-                    assigned += count
-                    previous = progress
-                dates = [(date.fromisoformat(start) + timedelta(days=i)).isoformat() for i in range(len(daily))] if start else []
+        shape = reservation_reference_shape(curve, total)
+        curve = shape["standard_progress"]
+        if not actual:
+            daily = shape["daily_orders"]
+            dates = [(date.fromisoformat(start) + timedelta(days=i)).isoformat() for i in range(len(daily))] if start else []
         attrs = _master_record(model_master, name, generation) or {}
         item = {"model": name, "generation": generation, "mapped": model_key(row.get("原始名称") or name) in mapping,
             "brand": attrs.get("品牌") or _brand(name), "tier": attrs.get("产品档位") or "未维护",
@@ -1166,7 +1185,7 @@ def read_public_forecast(book, history, today=None):
                 model_key(generation or name), start or "no-date", str(row.get("来源Sheet") or "no-sheet")))}
         if not actual and complete:
             item.pop("total_complete", None)
-            item["d1_share"] = min(curve[0] / curve[-1], 1) if curve and curve[-1] > 0 else 0
+            item["d1_share"] = shape["d1_share"]
         small.append(item)
     # Flat sales belongs to the primary generation, even when launch inputs
     # are split into independent editions. Derive its window without duplicating
