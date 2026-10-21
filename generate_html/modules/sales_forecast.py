@@ -1639,6 +1639,14 @@ def _forecast_event_sheets(item, mapping):
     their secondary-generation identities.
     """
     from core.excel import merge_source_sheets, _merge_matrix, _merge_records
+    physical_items = getattr(item, "_source_items", (item,))
+    physical_order = {
+        (id(origin), id(sheet)): (file_index, sheet_index)
+        for file_index, origin in enumerate(physical_items)
+        for sheet_index, sheet in enumerate(origin.workbook.worksheets)
+    }
+    physical_matches = {id(sheet): (origin, sheet)
+                        for origin in physical_items for sheet in origin.workbook.worksheets}
     groups = {}
     for index, sheet in enumerate(item.workbook.worksheets):
         grain = grain_from_sheet(sheet.title)
@@ -1654,7 +1662,11 @@ def _forecast_event_sheets(item, mapping):
             yield sheets[0]
             continue
         matches = [match for sheet in sheets for match in
-                   getattr(sheet, '_source_matches', [(item, sheet)])]
+                   getattr(sheet, '_source_matches', [physical_matches.get(id(sheet), (item, sheet))])]
+        # WorkbookStore groups identical sheet names across files first. Restore
+        # physical file/sheet precedence before joining their maintained aliases.
+        matches.sort(key=lambda pair: physical_order.get(
+            (id(pair[0]), id(pair[1])), (len(physical_order), 0)))
         if all('首销期订单节奏' in source.path.name for source, _ in matches):
             # Same calendar timestamp can be an Excel date or exported text.
             # Normalize join keys before sorting; otherwise a lower-priority
@@ -1866,7 +1878,9 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
     small_mix_item = store.find("小订选配比例")
     if small_mix_item:
         small_coverage = _source_date_ranges(small_mix_item)
-        for sheet in small_mix_item.workbook.worksheets:
+        # Resolve aliases before sparse-day filling so a later sheet cannot
+        # erase a known quantity or replace an earlier physical-source zero.
+        for sheet in _forecast_event_sheets(small_mix_item, model_mapping):
             if "图表" in sheet.title or grain_from_sheet(sheet.title) != "day":
                 continue
             model = _canonical_model(sheet_subject(sheet.title), model_mapping)

@@ -86,33 +86,47 @@ def _option_layout(sheet) -> tuple[int, int, int]:
         return cached
 
     scan_rows = range(1, min(sheet.max_row, 15) + 1)
-    scored = []
-    for row in scan_rows:
-        score = sum(
-            1 for col in range(3, sheet.max_column + 1)
-            if _is_amount_band(clean_text(sheet.cell(row, col).value))
-        )
-        if score:
-            scored.append((score, row))
-    if not scored:
+    candidates = []
+    has_band_header = False
+    for band_row in scan_rows:
+        band_columns = [
+            col for col in range(3, sheet.max_column + 1)
+            if _is_amount_band(clean_text(sheet.cell(band_row, col).value))
+        ]
+        if not band_columns:
+            continue
+        has_band_header = True
+        order_row = 0
+        explicit_order = False
+        fallback_row = 0
+        for row in range(band_row + 1, min(sheet.max_row, band_row + 6) + 1):
+            label = compact_identifier(f"{sheet.cell(row, 1).value or ''}{sheet.cell(row, 2).value or ''}")
+            values = [sheet.cell(row, col).value for col in band_columns]
+            numeric = [float(value) for value in values if isinstance(value, (int, float))]
+            if not numeric:
+                continue
+            quantity_label = re.search(r"订单|数量", label) or (
+                "金额" not in label and re.search(r"总计|合计", label)
+            )
+            if quantity_label:
+                order_row, explicit_order = row, True
+                break
+            # Legacy unlabelled quantity rows remain supported, but version
+            # amounts cannot validate a false header made from numeric zeros.
+            if not fallback_row and "金额" not in label and any(abs(value) > 1 for value in numeric):
+                fallback_row = row
+        order_row = order_row or fallback_row
+        if order_row:
+            candidates.append((explicit_order, len(band_columns), band_row, order_row))
+    if not has_band_header:
         raise ValueError("未识别到金额段表头（例如‘免费’、‘0-5000’、‘5000-以上’）")
-    band_row = max(scored)[1]
-    period_row = band_row - 1
-    band_columns = [
-        col for col in range(3, sheet.max_column + 1)
-        if _is_amount_band(clean_text(sheet.cell(band_row, col).value))
-    ]
-    order_row = 0
-    for row in range(band_row + 1, min(sheet.max_row, band_row + 6) + 1):
-        label = compact_identifier(f"{sheet.cell(row, 1).value or ''}{sheet.cell(row, 2).value or ''}")
-        values = [sheet.cell(row, col).value for col in band_columns]
-        numeric = [float(value) for value in values if isinstance(value, (int, float))]
-        if numeric and (re.search(r"订单|数量|总计|合计", label) or any(abs(value) > 1 for value in numeric)):
-            order_row = row
-            break
-    if not order_row:
+    if not candidates:
         raise ValueError("已识别金额段表头，但其后5行内未识别到订单量行")
-    layout = (period_row, band_row, order_row)
+    # A numeric zero is also a supported free-band title. Validate candidate
+    # headers with their quantity row before ranking, so real zero-valued data
+    # cannot displace the header merely by having more zero cells.
+    _, _, band_row, order_row = max(candidates)
+    layout = (band_row - 1, band_row, order_row)
     # 生成期间工作簿只读；缓存在 Worksheet 实例上，随工作簿关闭一起释放。
     setattr(sheet, "_order_analysis_option_layout", layout)
     return layout

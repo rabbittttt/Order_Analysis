@@ -110,7 +110,7 @@ def safe_number(value: Any, default: float = 0.0) -> float:
 def cell_number(cell: Any, rate: bool = False, default: float = 0.0) -> float:
     """Read a number while respecting percent-like strings and cell formats."""
     value = safe_number(cell.value, default)
-    if not rate or cell.value in (None, ""):
+    if not rate or cell.value in (None, "") or value is None:
         return value
     if isinstance(cell.value, str):
         text = clean_text(cell.value)
