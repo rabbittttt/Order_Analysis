@@ -48,6 +48,8 @@ class XxxModule:
 
 内网从 GitHub 远端 `github` 的 `main` 分支下载或拉取代码。用户要求每次修改验证通过后自动提交并同步到 `github/main`，无需再次询问；若使用独立开发分支，交付前必须将本次已验证改动合入 `main` 并推送。保留无关修改，不强推或改写已有历史，并核对远端 `main` 已包含本次提交。
 
+所有 Git 网络操作（包括 fetch、pull、push、ls-remote）必须使用与 Codex 软件当前连接相同的代理。执行前核对有效代理；代理不可用时停止并报告，禁止清空代理、通过 NO_PROXY 绕过或回退直连。本地 commit 不需要联网；代理地址按当前运行环境配置，不在共享代码中写死。
+
 ```powershell
 python -m compileall core modules main.py
 node --check templates\dashboard.js
