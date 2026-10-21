@@ -46,6 +46,8 @@ class XxxModule:
 
 ## 修改后必做
 
+内网从 GitHub 远端 `github` 的 `main` 分支下载或拉取代码。用户要求每次修改验证通过后自动提交并同步到 `github/main`，无需再次询问；若使用独立开发分支，交付前必须将本次已验证改动合入 `main` 并推送。保留无关修改，不强推或改写已有历史，并核对远端 `main` 已包含本次提交。
+
 ```powershell
 python -m compileall core modules main.py
 node --check templates\dashboard.js
