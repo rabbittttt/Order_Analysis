@@ -28,7 +28,8 @@ CHANNEL_STORE_COUNTS = {
 # 可选主体覆盖，例如 {"问界": {"华为授权体验店": 90},
 # "问界 M9 2026款": {"华为授权体验店": 75}}。
 # 优先级：车型自身 > 父品牌覆盖 > 上面的品牌配置。
-# 集团渠道存在品牌重叠，不能求和；仅在此显式配置“鸿蒙智行”的去重门店数。
+# 集团各渠道按品牌生效配置相加（含品牌覆盖，共用门店也累加）；
+# 不叠加车型覆盖，也不单独设置集团覆盖。
 CHANNEL_STORE_COUNTS_BY_SUBJECT: dict[str, dict[str, int | float | None]] = {}
 
 _FIELDS = {("门店类型", "数量"): "count", ("门店类型", "占比"): "share",
@@ -128,6 +129,14 @@ def _parse_channels(sheet, grain):
 
 
 def _store_counts(subject):
+    if subject.type == "group":
+        counts = {}
+        for brand in CHANNEL_STORE_COUNTS:
+            for name, value in _store_counts(Subject(brand, brand, "brand")).items():
+                number = _number(value)
+                previous = counts.get(name, 0)
+                counts[name] = previous + number if previous is not None and number is not None else None
+        return counts
     brand = subject.parent if subject.type == "generation" else subject.name if subject.type == "brand" else None
     counts = dict(next((value for key, value in CHANNEL_STORE_COUNTS.items()
                         if brand and compact_text(key) == compact_text(brand)), {}))

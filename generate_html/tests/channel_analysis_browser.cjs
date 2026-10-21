@@ -21,6 +21,10 @@ from openpyxl import load_workbook
 configured=json.loads(sys.argv[1])
 w=load_workbook(Path('..','..','output_file','鸿蒙智行大定选配比例分析.xlsx'),read_only=True,data_only=True)
 brands=['问界','智界','享界','尊界','尚界']
+group_config={}
+for brand in brands:
+ for channel,total in configured[brand].items():
+  group_config[channel]=group_config.get(channel,0)+total
 names=['鸿蒙智行',*brands]
 for brand in brands:
  names.append(next(n[:-3] for n in w.sheetnames if n.startswith(brand) and '款' in n and n.endswith('by天')))
@@ -51,7 +55,7 @@ def complete_sum(values):
 result=[]
 for name in names:
  brand=next((brand for brand in brands if name.startswith(brand)),None)
- config=configured.get(brand,{})
+ config=group_config if name=='鸿蒙智行' else configured.get(brand,{})
  for grain,suffix in [('day','天'),('week','周'),('month','月')]:
   sheet=w[name+'by'+suffix]
   cells=list(sheet.iter_rows())
@@ -81,7 +85,7 @@ for name in names:
       'productivity':count/total if total and count is not None else None}
    count=complete_sum([r['count'] for r in rows.values()])
    active=complete_sum([r['active_count'] for r in rows.values()])
-   # Shared group stores require their own deduplicated configuration, never brand sums.
+   # Group denominators sum the five brands, including shared stores in each brand.
    coverage_known=bool(config) and all(r['store_count'] is not None or (r['count']==0 and r['active_count']==0) for r in rows.values())
    total=sum(config.values()) if coverage_known else None
    valid_active=all(r['active_count'] is None or r['store_count'] is None or r['active_count']<=r['store_count'] for r in rows.values())
@@ -139,7 +143,7 @@ const keyFor=(channel,period)=>JSON.stringify([channel,period]);
  function verify(sample,actual){
   const label=sample.subject+'/'+sample.grain;
   equal(label+' three panels',Object.keys(actual),['sales','stores','capacity']);
-  for(const [panelName,keys] of [['sales',['count','share']],['stores',['active_rate']],['capacity',['productivity']]]){
+  for(const [panelName,keys] of [['sales',['count','share']],['stores',['active_count','active_rate']],['capacity',['productivity']]]){
    const panel=actual[panelName];
    equal(label+'/'+panelName+' no channel selector or details',panel.controls,0);
    equal(label+'/'+panelName+' table set',Object.keys(panel.tables),keys);
@@ -149,7 +153,7 @@ const keyFor=(channel,period)=>JSON.stringify([channel,period]);
     equal(label+'/'+key+' channel rows',table.rows.map(row=>row.channel),[...sample.channels,...(total?['__total__']:[])]);
     for(const row of table.rows){
      equal(label+'/'+key+'/'+row.channel+' history length',row.cells.length,sample.history.length);
-     if(panelName==='stores'&&row.channel!=='__total__'){
+     if(key==='active_rate'&&row.channel!=='__total__'){
       const denominator=sample.history.at(-1).rows[row.channel].store_count;
       check(label+'/'+row.channel+' configured denominator',row.heading.includes('配置 '+formatted(denominator)+' 家'));
      }
@@ -188,16 +192,13 @@ const keyFor=(channel,period)=>JSON.stringify([channel,period]);
    const emptyChart=panelName!=='sales'&&wantedPoints.size===0;
    if(emptyChart){
     equal(label+'/'+panelName+' empty chart has no period overlays',chart.overlays,[]);
-    check(label+'/'+panelName+' explicit missing configuration state',chart.emptyText.includes(sample.subject==='鸿蒙智行'?'未配置该主体的门店总数':'暂无可用的'));
+    const unconfigured=!Object.values(sample.history.at(-1).rows).some(row=>known(row.store_count));
+    check(label+'/'+panelName+' explicit missing data state',chart.emptyText.includes(unconfigured?'未配置该主体的门店总数':'暂无可用的'));
    }else equal(label+'/'+panelName+' chart periods',chart.overlays.map(point=>point.period),sample.periods);
    if(panelName==='stores'&&!emptyChart)for(let i=0;i<chart.overlays.length;i++)for(const channel of sample.channels){
     const row=sample.history[i].rows[channel];
     check(label+'/'+channel+'/'+sample.periods[i]+' source active count in chart description',chart.overlays[i].description.includes(channel+' 出单率 '+formatted(row.active_rate,'percent')+'，'+formatted(row.active_count)+' / '+formatted(row.store_count)+' 家'));
    }
-  }
-  if(sample.subject==='鸿蒙智行'){
-   check(label+' group rate remains unknown',actual.stores.tables.active_rate.rows.every(row=>row.cells.every(cell=>cell.text==='—')));
-   check(label+' group capacity remains unknown',actual.capacity.tables.productivity.rows.every(row=>row.cells.every(cell=>cell.text==='—')));
   }
  }
 

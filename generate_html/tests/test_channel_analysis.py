@@ -192,20 +192,41 @@ class ChannelAnalysisTests(unittest.TestCase):
         self.assertNotIn(A, channel._store_counts(Subject("z", "尊界", "brand")))
         self.assertNotIn("尊界用户中心", channel._store_counts(Subject("z", "尊界", "brand")))
 
-    def test_group_requires_explicit_deduplicated_configuration(self):
+    def test_group_sums_brand_channel_counts(self):
+        counts = channel._store_counts(Subject("g", "鸿蒙智行", "group"))
+        self.assertEqual(counts, {
+            "问界用户中心": 374, "智界用户中心": 48, "尚界用户中心": 221, "享界用户中心": 14,
+            "鸿蒙智行用户中心": 1127, "华为旗舰店": 53, "华为授权体验店": 513,
+            "华为智能生活馆": 1650, "综合店": 37, "尊界体验中心": 7,
+        })
         book = self.book(["2026-01-01"], [["门店类型", "数量", A, 10], [None, "贡献门店数", A, 2]], "鸿蒙智行by天")
         dashboard = self.build(self.store(book), "鸿蒙智行", "group", None)
         row = self.row(dashboard)
-        self.assertIsNone(row["store_count"])
-        self.assertIsNone(row["active_rate"])
-        self.assertIsNone(row["productivity"])
+        self.assertEqual(row["store_count"], 513)
+        self.assertEqual(row["active_count"], 2)
+        self.assertEqual(row["active_rate"], 2 / 513)
+        self.assertEqual(row["productivity"], 10 / 513)
         totals = dashboard.views["day"]["pages"]["2026-01-01"]["sections"][0]["data"]["totals"]
-        self.assertIsNone(totals["store_count"])
-        self.assertIsNone(totals["active_rate"])
-        self.assertIsNone(totals["productivity"])
-        with patch.dict(channel.CHANNEL_STORE_COUNTS_BY_SUBJECT, {"鸿蒙智行": {A: 50}}, clear=True):
-            configured = self.build(self.store(book), "鸿蒙智行", "group", None)
-        self.assertEqual(self.row(configured)["active_rate"], 2 / 50)
+        self.assertEqual(totals["store_count"], 4044)
+        self.assertEqual(totals["active_rate"], 2 / 4044)
+        self.assertEqual(totals["productivity"], 10 / 4044)
+
+    def test_group_uses_brand_overrides_without_adding_models_or_group_overrides(self):
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 100, B: 50}, "智界": {A: 129}}, clear=True), patch.dict(
+            channel.CHANNEL_STORE_COUNTS_BY_SUBJECT,
+            {"问界": {A: 80}, MODEL: {A: 40}, "鸿蒙智行": {A: 999}}, clear=True
+        ):
+            self.assertEqual(channel._store_counts(Subject("g", "鸿蒙智行", "group")), {A: 209, B: 50})
+
+    def test_group_preserves_unknown_and_zero_configurations(self):
+        for missing in (None, "错误", -1):
+            with self.subTest(missing=missing), patch.dict(channel.CHANNEL_STORE_COUNTS, {
+                "问界": {A: 100, B: 0}, "智界": {A: missing, B: 0, "智界用户中心": 48}
+            }, clear=True):
+                counts = channel._store_counts(Subject("g", "鸿蒙智行", "group"))
+                self.assertIsNone(counts[A])
+                self.assertEqual(counts[B], 0)
+                self.assertEqual(counts["智界用户中心"], 48)
 
     def test_totals_use_all_configured_channels_even_when_source_has_only_one(self):
         book = self.book(["2026-01-01"], [["门店类型", "数量", A, 10], [None, "贡献门店数", A, 2]])
