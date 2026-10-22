@@ -414,6 +414,21 @@ def _distinct_store_field(labels):
     return labels[:2] in (("贡献订单门店数", "数量"), ("门店类型", "贡献门店数"))
 
 
+def _distinct_store_value(value):
+    """Match channel-count input validity, and require an integer cardinality."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        value = clean_text(value).replace(",", "").replace("，", "")
+        if not re.fullmatch(r"\+?(?:\d+(?:\.\d*)?|\.\d+)", value):
+            return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) and number >= 0 and number.is_integer() else None
+
+
 @lru_cache(maxsize=4096)
 def _quantity_field(labels, number_format):
     text = "|".join(map(str, labels))
@@ -672,7 +687,7 @@ class _OverlapDiagnostics:
         self.notes = {}
         self.conflicts = {}
 
-    def conflict(self, previous, current, rows, columns, *, nonadditive=False, metric=None):
+    def conflict(self, previous, current, rows, columns, *, nonadditive=False, metric=None, handling=None):
         if _diagnostic_equal(previous[0], current[0]):
             return None
         cross_file = previous[3] != current[3]
@@ -701,7 +716,8 @@ class _OverlapDiagnostics:
         kind, example = _conflict_location(previous, current, f"{'/'.join(map(str, rows))} @ {'/'.join(map(str, columns))}")
         if week and week[3]:
             spans = [self.coverage.get(value[3]) for value in (previous, current)]
-            reason = ("缺少完整逐日日期范围" if any(span is None for span in spans)
+            reason = ("同一物理文件存在重复业务键，不能作为边界周分段累加" if not cross_file else
+                      "缺少完整逐日日期范围" if any(span is None for span in spans)
                       else "未在边界日衔接（范围跨界、重叠或缺口），或存在额外来源")
             ranges = "；".join(f"{value[3]}:{span[0]}~{span[1]}" if span else f"{value[3]}:未识别"
                               for value, span in zip((previous, current), spans))
@@ -721,6 +737,8 @@ class _OverlapDiagnostics:
                                                "cells": {}, "sample": (previous, current),
                                                "boundary": set()})
         note["keys"].add(identity)
+        if handling:
+            note["handling"] = handling
         note["periods"].add("/".join(map(str, columns)))
         note["rows"].add("/".join(map(str, rows)))
         if week and week[3]:
@@ -743,9 +761,10 @@ class _OverlapDiagnostics:
                 spans = "；".join(f"{file}:{span[0]}~{span[1]}" if (span := self.coverage.get(file)) else f"{file}:未识别"
                                   for file in dict.fromkeys(value[3] for value in note["sample"]))
                 boundary = f" | 文件日期范围={spans} | 未累加说明={'；'.join(sorted(note['boundary']))}"
-            LOGGER.warning("[%s] 指标=%s | 冲突%d项 | 全部周期=%s | 涉及业务行=%s | 定位=%s | 首处数值=%s%s | 处理=保留原文件顺序中首个非空值，不累加",
+            LOGGER.warning("[%s] 指标=%s | 冲突%d项 | 全部周期=%s | 涉及业务行=%s | 定位=%s | 首处数值=%s%s | 处理=%s",
                            label, "/".join(metric), len(note["keys"]), compact_diagnostic_ranges(note["periods"]),
-                           rows, locations, sample, boundary)
+                           rows, locations, sample, boundary,
+                           note.get("handling", "保留原文件顺序中首个非空值，不累加"))
         self.conflicts.clear()
         for (reason, first, second, _), note in self.notes.items():
             locations = "；".join(f"{file} / Sheet={sheet} / {_diagnostic_location(cells)}"
@@ -772,7 +791,7 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     conflict_count = 0
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
     boundary_parts, boundary_reports, ratio_sources, ratio_conflicts = {}, {}, {}, []
-    store_period_parts = {}
+    store_period_sources, store_observations, store_keys, store_conflicts = {}, {}, {}, []
     coverage = {item.path.name: _source_date_range(item) for item, _ in matches}
     owns_diagnostics = diagnostics is None
     diagnostics = diagnostics if diagnostics is not None else _OverlapDiagnostics(coverage)
@@ -862,8 +881,8 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
         for col, col_key in col_keys.items():
             week = _week_period(column_periods[col])
             side = _boundary_side(coverage.get(item.path.name), week) if week and week[3] else None
-            if side:
-                store_period_parts.setdefault(col_key, set()).add(side)
+            if week and week[3]:
+                store_period_sources.setdefault(col_key, {})[item.path.name] = side
         for row, row_key in row_keys.items():
             for col, col_key in col_keys.items():
                 if col < 0:
@@ -873,14 +892,27 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                                            sheet_title=sheet.title, coordinate=f"省略日期{'/'.join(col_key)}，行{row}")
                 else:
                     cell = sheet.cell(row, col)
-                if cell.value in (None, ""):
-                    continue
                 key = row_key, col_key
                 period = column_periods[col]
+                current = (cell.value, cell.number_format, cell.data_type, item.path.name, cell)
+                if len(row_key) == 3 and _distinct_store_field(row_key) and col_key in store_period_sources:
+                    # Resolve the two accepted formats within each physical
+                    # source first. An actual new-format blank is unknown and
+                    # must not fall back to an older row or the other shard.
+                    group = row_key[2], col_key
+                    store_keys.setdefault(group, set()).add(key)
+                    priority = 2 if row_key[1] == "贡献门店数" else 1
+                    sources = store_observations.setdefault(group, {})
+                    observation = sources.get(item.path.name)
+                    if observation is None or priority > observation[0]:
+                        sources[item.path.name] = (priority, [current])
+                    elif priority == observation[0]:
+                        observation[1].append(current)
+                if cell.value in (None, ""):
+                    continue
                 if len(row_key) == 3 and row_key[1] == "占比" and period and _week_period(period)[3]:
                     ratio_sources.setdefault(key, {}).setdefault(item.path.name, cell_number(cell, rate=True, default=float("nan")))
                 previous = values.get(key)
-                current = (cell.value, cell.number_format, cell.data_type, item.path.name, cell)
                 if previous is None:
                     values[key] = current
                 else:
@@ -893,6 +925,11 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                     elif previous[0] != cell.value:
                         if key in ratio_sources:
                             ratio_conflicts.append((key, previous, current))
+                        elif len(row_key) == 3 and _distinct_store_field(row_key) and col_key in store_period_sources:
+                            # A confirmed split has different statistical
+                            # scopes; decide its distinct count before logging
+                            # it as a same-period value conflict.
+                            store_conflicts.append((key, previous, current))
                         else:
                             issue = diagnostics.conflict(previous, current, row_key, col_key,
                                 metric=diagnostic_metric or (row_key[:2] if mix else None),
@@ -904,18 +941,65 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                                 conflict_kinds[kind] += 1
                                 if len(conflicts) < 3:
                                     conflicts.append(example)
-    # A left/right export pair contains overlapping store identities. Even equal
-    # counts (or a blank/missing row) cannot establish a whole-week distinct count.
-    unknown_store_keys = [key for key in values if _distinct_store_field(key[0])
-                          and store_period_parts.get(key[1]) == {"left", "right"}]
-    for key in unknown_store_keys:
-        if key in values:
-            old = values[key]
-            values[key] = (None, old[1], "n", old[3], *old[4:])
-    if unknown_store_keys:
-        LOGGER.warning("[渠道门店数无法去重] Sheet=%s | 周期=%s | 涉及%d项贡献订单门店数 | 边界周存在多个分段，合并门店数留空",
-                       matches[0][1].title,
-                       "、".join(sorted({"/".join(key[1]) for key in unknown_store_keys})), len(unknown_store_keys))
+    # Distinct stores cannot be summed across two order exports. The one exact
+    # exception is an empty set: real 0 + a known count is that known count.
+    # Never infer zero from a blank/missing row or ignore an extra source.
+    confirmed_store_pairs, reconciled_store_keys, store_notes = set(), set(), {}
+    for (channel, col_key), sources in store_observations.items():
+        period_sources = store_period_sources[col_key]
+        sides = set(period_sources.values())
+        if not {"left", "right"}.issubset(sides):
+            continue
+        pair = len(period_sources) == 2 and sides == {"left", "right"}
+        if pair:
+            confirmed_store_pairs.add(col_key)
+        counts = []
+        for source in period_sources:
+            entries = sources.get(source, (0, []))[1]
+            numbers = [_distinct_store_value(entry[0]) for entry in entries]
+            count = (numbers[0] if numbers and all(number is not None and number == numbers[0]
+                                                  for number in numbers) else None)
+            counts.append(count)
+        resolved = max(counts) if pair and all(count is not None for count in counts) and 0 in counts else None
+        reason = ("存在额外来源，无法确认唯一的前后分段" if not pair else
+                  "分段门店数缺失、无效或存在重复键差异" if any(count is None for count in counts) else
+                  "两个分段均有出单门店，缺少门店明细无法去重" if resolved is None else
+                  "已确认前后相邻分段，至少一侧贡献门店数为真实0")
+        for key in store_keys[(channel, col_key)]:
+            reconciled_store_keys.add(key)
+            old = values.get(key) or next(entry for _, entries in sources.values() for entry in entries)
+            values[key] = (resolved, old[1], "n", old[3], *old[4:])
+        note = store_notes.setdefault((col_key, reason, resolved is not None), {"channels": [], "cells": {}})
+        note["channels"].append(f"{channel}={resolved:g}" if resolved is not None else channel)
+        for _, entries in sources.values():
+            for entry in entries:
+                title, coordinate = _cell_location(entry)
+                note["cells"].setdefault((entry[3], title), set()).add(coordinate)
+    for (col_key, reason, known), note in store_notes.items():
+        channels = note["channels"]
+        ranges = "；".join(f"{source}:{span[0]}~{span[1]}" if (span := coverage.get(source)) else f"{source}:未识别"
+                           for source in store_period_sources[col_key])
+        locations = "；".join(f"{source} / Sheet={title} / {_diagnostic_location(cells)}"
+                              for (source, title), cells in note["cells"].items())
+        log = LOGGER.info if known else LOGGER.warning
+        log("[%s] Sheet=%s | 周期=%s | 涉及%d项贡献订单门店数 | 原因=%s | 来源=%s | 定位=%s | 处理=%s%s",
+            "边界周门店数合并" if known else "渠道门店数无法去重", matches[0][1].title,
+            "/".join(col_key), len(channels), reason, ranges, locations,
+            "保留可确定的全周门店数" if known else "合并门店数留空",
+            " | 示例=" + "、".join(channels[:3]) if known else "")
+    for key, previous, current in store_conflicts:
+        if key[1] in confirmed_store_pairs and previous[3] != current[3]:
+            continue
+        issue = diagnostics.conflict(previous, current, key[0], key[1],
+                                     metric=diagnostic_metric or (key[0][:2] if mix else None),
+                                     handling=("边界周全周结果见专用门店分段合并或去重说明；其他周期保留原优先值，不累加"
+                                               if key in reconciled_store_keys else None))
+        if issue:
+            kind, example = issue
+            conflict_count += 1
+            conflict_kinds[kind] += 1
+            if len(conflicts) < 3:
+                conflicts.append(example)
     # Counts are additive; percentages are not. Rebuild dimension shares from
     # merged category counts, or weight source shares by the primary order count.
     primary = next((metric for marker, metric in (("锁单", "交车锁单"), ("小订", "小订"), ("大定", "大定"))
