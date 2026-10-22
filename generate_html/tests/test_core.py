@@ -193,6 +193,7 @@ class SubjectParsingTests(unittest.TestCase):
         for row, (label, values) in enumerate((
             ("当日大定数量", (80, 120)),
             ("当日净大定数量", (70, 100)),
+            ("累计交车锁单数量", (15, 42)),
             ("累计小订转大定数量", (20, 40)),
             ("累计小订转化率", (0.1, 0.2)),
             ("累计直接大定数量", (60, 160)),
@@ -214,7 +215,8 @@ class SubjectParsingTests(unittest.TestCase):
         rate_row = next(row for row in matrix["data"]["rows"] if row[0] == "累计小订转化率")
         self.assertEqual(kpis["累计小转大率"]["value"], 20)
         self.assertEqual(kpis["累计小转大率"]["note"], "累计小转大 ÷ 总小订")
-        self.assertEqual(kpis["累计留存大定"]["value"], 170)
+        self.assertEqual(page["kpis"][1]["label"], "累计锁单")
+        self.assertEqual(kpis["累计锁单"]["value"], 42)
         self.assertTrue(any(row[0] == "当日留存大定数量" for row in matrix["data"]["rows"]))
         self.assertEqual(rate_row[-1], "20.0%")
 
@@ -241,6 +243,53 @@ class SubjectParsingTests(unittest.TestCase):
                 self.assertIsNone(phase['metrics']['当日大定数量'][-1])
                 self.assertEqual(phase['metrics']['累计直接大定数量'][-1], tail)
                 workbook.close()
+
+    def test_launch_lock_kpi_uses_last_known_cumulative_count_for_day_and_week(self):
+        for grain, periods in (("day", ("D1", "D2", "D3")),
+                               ("week", ("26WK31", "26WK32", "26WK33"))):
+            for values, expected in (((10, 30, None), 30), ((10, 30, 0), 0),
+                                     ((None, None, None), None)):
+                with self.subTest(grain=grain, values=values):
+                    workbook = Workbook()
+                    self.addCleanup(workbook.close)
+                    sheet = workbook.active
+                    sheet.title = '问界 F2N 2026款by天' if grain == "day" else '问界 F2N 2026款by周'
+                    sheet.append(['指标', *periods])
+                    sheet.append(['日期', '2026-08-01', '2026-08-02', '2026-08-03'])
+                    sheet.append(['当日大定数量', 80, 120, None])
+                    sheet.append(['当日净大定数量', 70, 100, None])
+                    sheet.append(['当日交车锁单数量', 500, 500, None])
+                    sheet.append(['累计交车锁单数量', *values])
+                    phase = LaunchRhythmModule()._build_phase(
+                        SimpleNamespace(path=Path('首销期订单节奏.xlsx')), sheet, 1, None, False, grain=grain)
+                    card = phase['page']['kpis'][1]
+                    self.assertEqual(card['label'], '累计锁单')
+                    self.assertEqual(card['value'], expected)
+                    self.assertEqual(phase['lock'], expected)
+                    self.assertEqual(phase['net'], 170)
+                    self.assertEqual(phase['metrics']['累计交车锁单数量'], list(values))
+
+    def test_launch_combined_lock_kpi_requires_known_counts_for_every_phase(self):
+        for locks, expected in (((30, 40), 70), ((0, 40), 40), ((30, None), None)):
+            with self.subTest(locks=locks):
+                phases = []
+                for index, value in enumerate(locks, start=1):
+                    workbook = Workbook()
+                    self.addCleanup(workbook.close)
+                    sheet = workbook.active
+                    sheet.title = f'问界 F2N 2026款by天第{index}期'
+                    sheet.append(['指标', 'D1', 'D2'])
+                    sheet.append(['日期', f'2026-08-{index * 2:02}', f'2026-08-{index * 2 + 1:02}'])
+                    sheet.append(['当日大定数量', 80, 120])
+                    sheet.append(['当日净大定数量', 70, 100])
+                    sheet.append(['累计交车锁单数量', 10 if value else value, value])
+                    phases.append(LaunchRhythmModule()._build_phase(
+                        SimpleNamespace(path=Path('首销期订单节奏.xlsx')), sheet, index, None, True))
+                page = LaunchRhythmModule()._combined_page(phases)
+                self.assertEqual(page['kpis'][1]['label'], '多期累计锁单')
+                self.assertEqual(page['kpis'][1]['value'], expected)
+                self.assertEqual(page['kpis'][0]['value'], 400)
+                self.assertEqual([row[-1] for row in page['sections'][0]['data']['rows']], [170, 170])
 
     def test_generated_forecast_range_uses_worksheet_filter_without_table(self):
         workbook = Workbook()

@@ -174,6 +174,8 @@ class LaunchRhythmModule:
 
         cumulative_order = sum(value for value in metrics.get("当日大定数量", []) if value is not None)
         cumulative_net = sum(value for value in metrics.get("当日留存大定数量", []) if value is not None)
+        cumulative_lock = next((value for value in reversed(metrics.get("累计交车锁单数量", []))
+                                if value is not None), None)
         cumulative_small = latest("累计小订转大定数量") or latest("累计小订转大数量")
         cumulative_small_rate = latest("累计小订转化率") or latest("累计小转大率")
         cumulative_small_base = safe_rate(cumulative_small, cumulative_small_rate) if cumulative_small_rate > 0 else 0
@@ -183,7 +185,7 @@ class LaunchRhythmModule:
         page = {
             "kpis": [
                 kpi("累计大定", cumulative_order, "单", periods[-1], "blue"),
-                kpi("累计留存大定", cumulative_net, "单", periods[-1], "green"),
+                kpi("累计锁单", cumulative_lock, "单", "累计交车锁单", "green"),
                 kpi("累计小转大率", cumulative_small_rate * 100, "%", "累计小转大 ÷ 总小订", "purple"),
                 kpi("累计直接大定占比", safe_rate(cumulative_direct, cumulative_order) * 100, "%", "累计大定来源", "blue"),
             ],
@@ -206,7 +208,7 @@ class LaunchRhythmModule:
             "phase": phase_number, "campaign_label": campaign_label, "start_date": start_date, "end_date": end_date,
             "period_label": end_date or periods[-1],
             "selector_label": f"{campaign_label or f'第{phase_number}期'} · {range_label}" if range_label else f"{campaign_label or f'第{phase_number}期'}",
-            "days": len(periods), "orders": cumulative_order, "net": cumulative_net,
+            "days": len(periods), "orders": cumulative_order, "net": cumulative_net, "lock": cumulative_lock,
             "small": cumulative_small, "small_rate": cumulative_small_rate,
             "small_base": cumulative_small_base, "direct": cumulative_direct,
             "page": page, "metrics": metrics, "periods": periods, "grain": grain,
@@ -216,7 +218,7 @@ class LaunchRhythmModule:
     @staticmethod
     def _combined_page(phases: list[dict]) -> dict:
         total_orders = sum(phase["orders"] for phase in phases)
-        total_net = sum(phase["net"] for phase in phases)
+        total_lock = sum(phase["lock"] for phase in phases) if all(phase["lock"] is not None for phase in phases) else None
         total_small = sum(phase["small"] for phase in phases)
         total_direct = sum(phase["direct"] for phase in phases)
         comparable_phases = [phase for phase in phases if phase["small_base"] > 0]
@@ -251,7 +253,7 @@ class LaunchRhythmModule:
         return {
             "kpis": [
                 kpi("多期累计大定", total_orders, "单", f"共{len(phases)}期", "blue"),
-                kpi("多期累计留存大定", total_net, "单", f"共{len(phases)}期", "green"),
+                kpi("多期累计锁单", total_lock, "单", f"共{len(phases)}期 · 累计交车锁单", "green"),
                 kpi("多期小转大率", combined_small_rate * 100, "%", "按各期总小订加权计算", "purple"),
                 kpi("多期直接大定占比", safe_rate(total_direct, total_orders) * 100, "%", "分期累计后计算", "blue"),
             ],

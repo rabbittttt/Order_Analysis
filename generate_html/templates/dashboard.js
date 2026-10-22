@@ -156,6 +156,34 @@
       charts.forEach(chart=>rhythmObserver.observe(chart));
     }
   }
+  function renderLaunchRateTrends(rows,lines){
+    if(!lines.length)return '';
+    const geometry=rhythmGeometry(rows.length,RHYTHM_LAYOUT.defaultWidth,Math.max(0,...rows.map(row=>rhythmTextWidth(rhythmKnown(row.total)?fmt(row.total):'—',RHYTHM_LAYOUT.minFontSize))));
+    const width=geometry.width+18,left=geometry.left+18,{right,step}=geometry,x=index=>left+index*step+step/2;
+    return `<div class="launch-rate-trends">${lines.map(line=>{
+      const points=rows.map((row,index)=>rhythmKnown(row.rates?.[line.key])?{index,value:row.rates[line.key],label:row.label}:null),known=points.filter(Boolean),latest=known.at(-1),first=known[0],peak=known.reduce((best,point)=>!best||point.value>best.value?point:best,null);
+      const min=known.length?Math.min(...known.map(point=>point.value)):0,max=known.length?Math.max(...known.map(point=>point.value)):1;
+      const padding=max>min?(max-min)*.12:Math.max(Math.abs(max)*.1,.01),low=min>=0?Math.max(0,min-padding):min-padding,high=max<=1?Math.min(1,max+padding):max+padding;
+      const rough=Math.max(high-low,.0001)/4,magnitude=10**Math.floor(Math.log10(rough)),tick=([1,2,5,10].find(value=>value>=rough/magnitude)||10)*magnitude;
+      const axisMin=known.length?Math.floor(low/tick+1e-9)*tick:0,axisMax=known.length?Math.max(axisMin+tick,Math.ceil(high/tick-1e-9)*tick):1,y=value=>98-(value-axisMin)/(axisMax-axisMin)*80;
+      const axisText=value=>Number((value*100).toPrecision(4))+'%',bounds=`<text class="launch-rate-bound" data-rate-bound="max" x="${left-6}" y="21" text-anchor="end">${axisText(axisMax)}</text><text class="launch-rate-bound" data-rate-bound="min" x="${left-6}" y="101" text-anchor="end">${axisText(axisMin)}</text>`;
+      let path='',previous=false;
+      points.forEach(point=>{if(!point){previous=false;return}path+=(previous?'L':'M')+x(point.index)+','+y(point.value)+' ';previous=true});
+      const text=value=>(value*100).toFixed(line.digits??1)+'%',occupied=[],labelIndices=new Set([first?.index,latest?.index,peak?.index]);
+      const labels=known.filter(point=>labelIndices.has(point.index)).map(point=>{
+        const value=text(point.value),cx=x(point.index),cy=y(point.value)-9,box=rhythmLabelBox(value,cx,cy,10);
+        if(occupied.some(other=>rhythmBoxesOverlap(box,other)))return '';occupied.push(box);
+        return `<text class="launch-rate-value" x="${cx}" y="${cy}" text-anchor="middle">${value}</text>`;
+      }).join('');
+      const dots=known.map(point=>{const tip=`${point.label} · ${line.label} ${text(point.value)}`;return `<circle data-launch-rate-point="${esc(line.key)}" data-index="${point.index}" data-value="${point.value}" cx="${x(point.index)}" cy="${y(point.value)}" r="3" tabindex="0" role="img" aria-label="${esc(tip)}"><title>${esc(tip)}</title></circle>`}).join('');
+      const stride=Math.max(1,Math.ceil((Math.max(0,...rows.map(row=>rhythmTextWidth(rhythmAxisText(row.label),9)))+10)/step)),axisBoxes=[];
+      const axis=[...new Set([0,rows.length-1,...rows.map((_,index)=>index).filter(index=>index%stride===0)])].map(index=>{
+        const value=rhythmAxisText(rows[index].label),box=rhythmLabelBox(value,x(index),118,9);if(axisBoxes.some(other=>rhythmBoxesOverlap(box,other)))return '';axisBoxes.push(box);
+        return `<text class="rhythm-axis-label" x="${x(index)}" y="118" text-anchor="middle">${esc(value)}<title>${esc(rows[index].label)}</title></text>`;
+      }).join('');
+      return `<section class="launch-rate-trend" data-launch-rate="${esc(line.key)}" style="--rate-color:${line.color}"><div class="launch-rate-heading"><h3>${esc(line.label)}</h3><div><strong>${latest?text(latest.value):'—'}</strong><span>${latest?`截至 ${esc(latest.label)}`:'暂无比例数据'}</span></div></div><div class="launch-rate-history" tabindex="0" role="region" aria-label="${esc(line.label)}历史趋势，可横向滚动"><svg width="${width}" height="128" viewBox="0 0 ${width} 128" style="width:${width}px;height:128px" data-rate-min="${axisMin}" data-rate-max="${axisMax}" role="img" aria-label="${esc(line.label)}，百分比范围${axisText(axisMin)}至${axisText(axisMax)}"><line class="rhythm-axis-line" x1="${left}" y1="98" x2="${width-right}" y2="98"/>${bounds}<path data-launch-rate-line="${esc(line.key)}" d="${path}" fill="none"/>${dots}${labels}${axis}</svg></div></section>`;
+    }).join('')}</div>`;
+  }
   function avoidLabelY(baseY,occupied=[],minY=12,maxY=280,gap=14){
     let y=Math.min(Math.max(baseY,minY),maxY);
     for(let attempt=0;attempt<occupied.length*2+2;attempt++){
@@ -1009,7 +1037,7 @@
     const lines=[];
     if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:'#A65300',textColor:'#A65300',digits:1});
     if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定进度',color:'#200036',textColor:'#200036',digits:1});
-    return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源，比例线为累计口径`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:colors.green},{key:'direct',label:unit+'直接大定',color:colors.blue}],lines});
+    return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:colors.green},{key:'direct',label:unit+'直接大定',color:colors.blue}],lines:[]})+renderLaunchRateTrends(rows,lines);
   }
   function renderSmallOrderRhythm(rows){
     if(!rows?.length)return '<div class="empty-image">暂无小订期节奏数据</div>';

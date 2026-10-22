@@ -2450,6 +2450,96 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   line-height:1.4;
 }
 
+.panel:has(.launch-rate-trends) {
+  max-height:none;
+}
+
+.launch-rate-trends {
+  display:grid;
+  gap:14px;
+  margin-top:18px;
+}
+
+.launch-rate-trend {
+  min-width:0;
+  padding-top:12px;
+  border-top:1px solid var(--line);
+}
+
+.launch-rate-heading {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  align-items:center;
+  gap:6px 16px;
+  margin-bottom:6px;
+}
+
+.launch-rate-heading h3 {
+  margin:0;
+  color:var(--rate-color);
+  font-size:12px;
+  font-weight:600;
+}
+
+.launch-rate-heading>div {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  gap:8px;
+}
+
+.launch-rate-heading strong {
+  color:var(--rate-color);
+  font-size:18px;
+  font-variant-numeric:tabular-nums;
+}
+
+.launch-rate-heading span {
+  color:var(--muted);
+  font-size:11px;
+}
+
+.launch-rate-history {
+  width:max-content;
+  max-width:100%;
+  margin-inline:auto;
+  overflow-x:auto;
+  overflow-y:hidden;
+}
+
+.launch-rate-history svg {
+  display:block;
+  max-width:none;
+}
+
+.launch-rate-history path,.launch-rate-history circle {
+  stroke:var(--rate-color);
+  stroke-width:2;
+}
+
+.launch-rate-history circle {
+  fill:#fff;
+}
+
+.launch-rate-value {
+  fill:var(--rate-color);
+  font-size:10px;
+  font-weight:400;
+  font-variant-numeric:tabular-nums;
+}
+
+.launch-rate-bound {
+  fill:#64748b;
+  font-size:9px;
+  font-variant-numeric:tabular-nums;
+}
+
+.launch-rate-history:focus-visible,.launch-rate-history circle:focus-visible {
+  outline:2px solid var(--rate-color);
+  outline-offset:2px;
+}
+
 .rhythm-legend span {
   display:inline-flex;
   align-items:center;

@@ -16,7 +16,7 @@ function readBoard(block){
 }
 (async()=>{
  fs.mkdirSync(out,{recursive:true});const browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[],report=[];
- let boards=0,charts=0,snapshots=0,selections=0,rankings=0,toolbars=0;
+ let boards=0,charts=0,snapshots=0,selections=0,rankings=0,toolbars=0,ratePanels=0;
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});page.on('pageerror',error=>errors.push(error.message));
   const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
@@ -58,7 +58,15 @@ function readBoard(block){
       return {right:box.right,wrapRight:wrap.right,left:box.left,wrapLeft:wrap.left,top:box.top,headBottom:head.bottom,flexWrap:getComputedStyle(toolbar).flexWrap,label:select.getAttribute('aria-label')};
      });
      const ranking=document.querySelector('.cancel-ranking'),rankingCheck=ranking?{kind:ranking.closest('.panel').dataset.sectionKind,sourceIndex:Number(ranking.querySelector('[data-panel-source]')?.dataset.panelSource),rows:[...ranking.querySelectorAll('.bar-row')].map(row=>({label:row.querySelector('label').textContent,value:row.querySelector('b').textContent})),columns:getComputedStyle(ranking.querySelector('.bars')).gridTemplateColumns.split(' ').length,clipped:[...ranking.querySelectorAll('.bar-row label')].some(node=>node.scrollHeight>node.clientHeight+1),standalone:[...document.querySelectorAll('.panel-head h2')].some(n=>n.textContent==='选配退订率排行')}:null;
-     return {daily,hourly,measurements,toolbarChecks,rankingCheck,period:document.querySelector('#periodSelect').value,pageOverflow:document.documentElement.scrollWidth>innerWidth+2};
+     const launchFrame=frames.find(frame=>frame.dataset.rhythmKind==='launch-day'),launchSpec=launchFrame?JSON.parse(launchFrame.dataset.rhythmConfig):null;
+     const launchRates=[...document.querySelectorAll('[data-launch-rate]')].map(panel=>{
+      const key=panel.dataset.launchRate,history=panel.querySelector('.launch-rate-history'),svg=history.querySelector('svg'),line=svg.querySelector('[data-launch-rate-line]'),color=getComputedStyle(line).stroke,title=panel.querySelector('h3').textContent;
+      const expected=launchSpec.rows.map((row,index)=>({index,value:row.rates?.[key],label:row.label})).filter(point=>typeof point.value==='number'&&Number.isFinite(point.value));
+      const points=[...panel.querySelectorAll('[data-launch-rate-point]')].map(point=>({index:Number(point.dataset.index),value:Number(point.dataset.value),y:Number(point.getAttribute('cy')),title:point.querySelector('title').textContent,aria:point.getAttribute('aria-label'),focusable:point.getAttribute('tabindex')==='0',color:getComputedStyle(point).stroke}));
+      const box=history.getBoundingClientRect(),body=panel.closest('.panel-body').getBoundingClientRect(),latest=expected.at(-1),labels=[...svg.querySelectorAll('.launch-rate-value')];
+      return {key,title,color,points,expected:expected.map(point=>({index:point.index,value:point.value,title:`${point.label} · ${title} ${(point.value*100).toFixed(1)}%`})),labels:labels.length,labelColors:labels.map(label=>getComputedStyle(label).fill),latest:panel.querySelector('strong').textContent,expectedLatest:latest?(latest.value*100).toFixed(1)+'%':'—',asOf:panel.querySelector('.launch-rate-heading span').textContent,expectedAsOf:latest?'截至 '+latest.label:'暂无比例数据',path:line.getAttribute('d'),expectedMoves:expected.filter((point,index)=>!index||point.index!==expected[index-1].index+1).length,axisMin:Number(svg.dataset.rateMin),axisMax:Number(svg.dataset.rateMax),bounds:[...svg.querySelectorAll('[data-rate-bound]')].map(node=>node.textContent),height:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,overflowX:getComputedStyle(history).overflowX,left:box.left,right:box.right,bodyLeft:body.left,bodyRight:body.right};
+     });
+     return {daily,hourly,measurements,toolbarChecks,rankingCheck,launchRates,period:document.querySelector('#periodSelect').value,pageOverflow:document.documentElement.scrollWidth>innerWidth+2};
     });
     assert(!actual.pageOverflow,key+' page overflow at '+width);
     assert(actual.measurements.length,key+' missing charts');
@@ -92,6 +100,25 @@ function readBoard(block){
      assert.equal(toolbar.flexWrap,'wrap');assert.equal(toolbar.label,'分时口径');toolbars++;
     }
     const sections=boardData[key].views.day.pages[actual.period].sections,rankingIndex=sections.findIndex(item=>item.kind==='bars'&&item.title==='选配退订率排行');
+    const launch=sections.find(item=>item.kind==='launch_composite'),metrics=launch?.data.metrics;
+    if(metrics){
+     const expectedKeys=[['smallRate',metrics['累计小订转化率']||metrics['累计小转大率']],['bigRate',metrics['累计直接大定进度']]].filter(([,values])=>Array.isArray(values)&&values.length).map(([name])=>name);
+     assert.deepEqual(actual.launchRates.map(panel=>panel.key),expectedKeys,key+' missing independent rate trends');
+     assert(actual.measurements.filter(m=>m.kind==='launch-day').every(m=>m.lineColors.length===0),key+' rates still overlap the source columns');
+    }
+    for(const panel of actual.launchRates){
+     assert.deepEqual(panel.points.map(({index,value,title})=>({index,value,title})),panel.expected,key+' rate history or tooltip changed');
+     assert(panel.points.every(point=>point.aria===point.title&&point.focusable&&point.color===panel.color),key+' rate point lost its accessible value or fixed color');
+     assert(panel.labelColors.every(color=>color===panel.color)&&panel.labels<=3,key+' rate labels overlap or alternate colors');
+     assert.equal(panel.latest,panel.expectedLatest);assert.equal(panel.asOf,panel.expectedAsOf);
+     assert(Number.isFinite(panel.axisMin)&&Number.isFinite(panel.axisMax)&&panel.axisMax>panel.axisMin,key+' unstable rate axis');
+     assert.deepEqual(panel.bounds,[panel.axisMax,panel.axisMin].map(value=>Number((value*100).toPrecision(4))+'%'),key+' rate axis bounds are not visible percentages');
+     assert(panel.points.every(point=>point.y>=18-.001&&point.y<=98+.001&&Math.abs(point.y-(98-(point.value-panel.axisMin)/(panel.axisMax-panel.axisMin)*80))<.001),key+' rate point is clipped or no longer uses its true value');
+     if(panel.points.length>1&&Math.max(...panel.points.map(point=>point.value))-Math.min(...panel.points.map(point=>point.value))>=.001)assert(Math.max(...panel.points.map(point=>point.y))-Math.min(...panel.points.map(point=>point.y))>=30,key+' varying rate trend is compressed by an oversized axis');
+     assert.equal((panel.path.match(/M/g)||[]).length,panel.expectedMoves,key+' missing rate values are not gaps');assert(!panel.path.includes('NaN'));
+     assert.equal(panel.height,128);assert(Math.abs(panel.scale-1)<.001);assert.equal(panel.overflowX,'auto');
+     assert(Math.abs((panel.left+panel.right)-(panel.bodyLeft+panel.bodyRight))<1&&panel.left>=panel.bodyLeft-1&&panel.right<=panel.bodyRight+1,key+' rate chart escapes or is not centered');ratePanels++;
+    }
     if(rankingIndex>=0&&sections.some(item=>item.kind==='daily_cancel')){
      const ranking=actual.rankingCheck;assert(ranking,key+' missing integrated option ranking');
      assert.equal(ranking.kind,'daily_cancel');assert.equal(ranking.sourceIndex,rankingIndex);assert(!ranking.standalone&&!ranking.clipped,key+' ranking is standalone or truncates labels');
@@ -127,7 +154,7 @@ function readBoard(block){
      const panels=page.locator('.panel').filter({has:page.locator('[data-rhythm-config]')});
      for(let i=0;i<await panels.count();i++)await panels.nth(i).screenshot({path:path.join(out,`after-${module}-${width}-${i+1}.png`)});
     }
-    report.push({width,key,measurements:actual.measurements,toolbars:actual.toolbarChecks,ranking:actual.rankingCheck});
+    report.push({width,key,measurements:actual.measurements,toolbars:actual.toolbarChecks,ranking:actual.rankingCheck,launchRates:actual.launchRates});
    }
   }
   // Exercise ResizeObserver on an already mounted chart, without a navigation.
@@ -137,10 +164,16 @@ function readBoard(block){
   if(weeklyKey){
    const url=new URL(base);url.search=new URLSearchParams({subject:weeklyKey.split('|')[0],module:'launch_rhythm',grain:'week'});
    await page.setViewportSize({width:1440,height:1000});await page.goto(url.href);await ready();
-   const colors=await page.locator('[data-rhythm-config]').evaluateAll(frames=>frames.map(frame=>({bars:[...frame.querySelectorAll('[data-rhythm-bar]')].map(n=>getComputedStyle(n).fill),lines:[...frame.querySelectorAll('[data-rhythm-series]')].map(n=>getComputedStyle(n).stroke)})));
-   assert(colors.some(item=>item.lines.length),'weekly launch chart has no rate lines');
-   assert(colors.every(item=>item.lines.every(color=>!item.bars.includes(color))),weeklyKey+' weekly line shares a column color');weekChecks++;
-   await page.locator('.panel').filter({has:page.locator('[data-rhythm-series]')}).first().screenshot({path:path.join(out,'after-launch-week-1440.png')});
+   const trends=page.locator('[data-launch-rate]');assert(await trends.count()>0,'weekly launch chart has no separate rate trends');
+   assert.equal(await page.locator('[data-rhythm-kind="launch-day"] [data-rhythm-series]').count(),0,'weekly rates still overlap source columns');
+   const weeklyPeriod=await page.locator('#periodSelect').inputValue(),weekly=boardData[weeklyKey].views.week.pages[weeklyPeriod].sections.find(item=>item.kind==='launch_composite').data;
+   for(const [rate,values] of [['smallRate',weekly.metrics['累计小订转化率']||weekly.metrics['累计小转大率']],['bigRate',weekly.metrics['累计直接大定进度']]]){
+    if(!Array.isArray(values)||!values.length)continue;
+    const actual=await page.locator(`[data-launch-rate="${rate}"] [data-launch-rate-point]`).evaluateAll(points=>points.map(point=>({index:Number(point.dataset.index),value:Number(point.dataset.value)})));
+    assert.deepEqual(actual,weekly.periods.map((_,index)=>({index,value:values[index]})).filter(point=>typeof point.value==='number'&&Number.isFinite(point.value)),weeklyKey+' weekly rate history changed');
+   }
+   const keyboardPoint=page.locator('[data-launch-rate-point]').last();await keyboardPoint.focus();assert(await keyboardPoint.evaluate(point=>document.activeElement===point),'rate point cannot receive keyboard focus');weekChecks++;
+   await page.locator('.panel').filter({has:page.locator('[data-launch-rate]')}).first().screenshot({path:path.join(out,'after-launch-week-1440.png')});
   }
   if(rankingKey){
    const url=new URL(base);url.search=new URLSearchParams({subject:rankingKey.split('|')[0],module:'cancellation',grain:'day'});
@@ -150,7 +183,7 @@ function readBoard(block){
    const selected=await page.evaluate(()=>{const file=window.DASHBOARD_DATA.raw_files[Number(document.querySelector('#rawFile').value)];return {file:file.name,sheet:file.sheets[Number(document.querySelector('#rawSheet').value)]};});
    assert.equal(selected.file,source.file);assert(selected.sheet.name===source.sheet||selected.sheet.source_sheet===source.sheet,'ranking source opened the wrong sheet');sourceClicks++;
   }
-  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'geometry-report.json'),JSON.stringify({boards,checks:report.length,charts,snapshots,selections,rankings,toolbars,weekChecks,sourceClicks,representative,errors,report},null,2));
-  console.log(JSON.stringify({boards,checks:report.length,charts,snapshots,selections,rankings,toolbars,weekChecks,sourceClicks,representative,resizes:3,errors}));
+  assert.deepEqual(errors,[]);fs.writeFileSync(path.join(out,'geometry-report.json'),JSON.stringify({boards,checks:report.length,charts,snapshots,selections,rankings,toolbars,ratePanels,weekChecks,sourceClicks,representative,errors,report},null,2));
+  console.log(JSON.stringify({boards,checks:report.length,charts,snapshots,selections,rankings,toolbars,ratePanels,weekChecks,sourceClicks,representative,resizes:3,errors}));
  }finally{await browser.close()}
 })().catch(error=>{console.error(error);process.exitCode=1});

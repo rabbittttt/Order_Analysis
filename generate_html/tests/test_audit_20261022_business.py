@@ -42,7 +42,8 @@ class LaunchUnknownRateTests(TestCase):
                 self.assertEqual(metrics["当日大定数量"], [100, 200])
                 self.assertEqual(metrics["当日留存大定数量"], [80, 160])
                 self.assertEqual(metrics["累计小订转化率"], [.1, None])
-                self.assertEqual([item["value"] for item in page["kpis"][:2]], [300, 240])
+                self.assertEqual([item["value"] for item in page["kpis"][:2]], [300, None])
+                self.assertEqual(page["kpis"][1]["label"], "累计锁单")
 
     def test_real_zero_and_existing_percent_encodings_are_preserved(self):
         for rate, expected in ((0, 0), (.25, .25), (25, .25), ("25%", .25), ("25％", .25), ("25", .25)):
