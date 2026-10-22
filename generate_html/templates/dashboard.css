@@ -2465,18 +2465,19 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 .launch-rate-summaries {
-  display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));
-  gap:10px 24px;
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:center;
+  gap:10px 32px;
 }
 
 .launch-rate-heading {
   display:flex;
   flex-wrap:wrap;
-  justify-content:space-between;
+  justify-content:center;
   align-items:center;
-  gap:6px 16px;
-  margin-bottom:6px;
+  gap:6px 8px;
+  max-width:100%;
 }
 
 .launch-rate-heading h3 {
