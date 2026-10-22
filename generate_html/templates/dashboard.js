@@ -688,7 +688,7 @@
       return;
     }
     channelPanelData.clear();
-    $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${page.sections.map(renderSection).join("")}</div>`;
+    $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
     bindRhythmCharts();
     bindChannelPanels();
     alignOverviewChartScrollbars();
@@ -718,12 +718,24 @@
     const movement=comparison.rate==null?`${fmt(Math.abs(comparison.delta))}${esc(item.unit)}`:`${Math.abs(comparison.rate*100).toFixed(1)}%`;
     return `<div class="kpi-compare ${direction}"><span>较上周期</span><b>${arrow} ${verb} ${movement}</b><em>上期 ${fmt(comparison.previous)}</em></div>`;
   }
-  function renderSection(item,index){
+  function renderSections(items){
+    const rankingIndex=state.module==='cancellation'?items.findIndex(item=>item.kind==='bars'&&item.title==='选配退订率排行'):-1;
+    const trendIndex=rankingIndex>=0?items.findIndex(item=>item.kind==='daily_cancel'):-1;
+    return items.map((item,index)=>{
+      if(trendIndex>=0&&index===rankingIndex)return '';
+      const ranking=index===trendIndex?items[rankingIndex]:null;
+      const appendix=ranking?`<section class="cancel-ranking" aria-label="${esc(ranking.title)}"><div class="cancel-ranking-head"><div><h3>${esc(ranking.title)}</h3><span>${esc(ranking.meta)}</span></div>${renderPanelSource(ranking,rankingIndex)}</div>${renderBars(ranking.data)}</section>`:'';
+      return renderSection(item,index,appendix);
+    }).join('');
+  }
+  function renderPanelSource(item,index){
+    return item.source?`<button class="panel-source" data-panel-source="${index}" aria-label="查看${esc(item.title)}的来源数据" title="跳转到底表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7m0-7-9 9M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/></svg><span>来源数据</span></button>`:"";
+  }
+  function renderSection(item,index,appendix=''){
     const pieBars=item.kind==='bars'&&item.title==='门店渠道订单量';
     const renderer=pieBars?renderPieChart:({channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_heatmap:renderComboHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
     const body=renderer(item.data);
-    const sourceButton=item.source?`<button class="panel-source" data-panel-source="${index}" aria-label="查看${esc(item.title)}的来源数据" title="跳转到底表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7m0-7-9 9M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/></svg><span>来源数据</span></button>`:"";
-    return `<article class="panel ${item.width==="half"?"":"full"}" data-section-kind="${esc(item.kind||"")}"><div class="panel-head"><div><h2>${esc(item.title)}</h2><span>${esc(item.meta)}</span></div>${sourceButton}</div><div class="panel-body">${body}</div></article>`;
+    return `<article class="panel ${item.width==="half"?"":"full"}${appendix?' has-cancel-ranking':''}" data-section-kind="${esc(item.kind||"")}"><div class="panel-head"><div><h2>${esc(item.title)}</h2><span>${esc(item.meta)}</span></div>${renderPanelSource(item,index)}</div><div class="panel-body">${body}${appendix}</div></article>`;
   }
   function renderWorkspacePage(item){
     const renderer={forecast_workspace:renderForecastWorkspaceV2}[item.kind]||renderUnknown;
@@ -995,8 +1007,8 @@
       return {label,total,values:{small:small[index],direct:direct[index]},rates:{smallRate:smallRate?.[index],bigRate:bigRate?.[index]},tooltip:known(total)?`${label} · ${unit}直接大定 ${fmt(direct[index])} · ${unit}小订转大 ${fmt(small[index])} · 来源合计 ${fmt(total)}`:`${label} · ${unit}来源数据尚未更新或不完整，不按0绘制`};
     });
     const lines=[];
-    if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:colors.green,textColor:'#087858',digits:1});
-    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定进度',color:colors.purple,textColor:'#6930bd',digits:1});
+    if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:'#A65300',textColor:'#A65300',digits:1});
+    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定进度',color:'#200036',textColor:'#200036',digits:1});
     return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源，比例线为累计口径`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:colors.green},{key:'direct',label:unit+'直接大定',color:colors.blue}],lines});
   }
   function renderSmallOrderRhythm(rows){
@@ -1014,7 +1026,7 @@
       const small=Math.max(Number(row.daily||0),0),big=Math.max(Number(row.big_daily||0),0),small_rate=Number(row.small_rate||0),big_rate=Number(row.big_rate||0);
       return {label:row.period,total:small+big,values:{small,big},rates:{small_rate,big_rate},tooltip:`${row.period} · 当日小订退 ${fmt(small)} · 当日大定退 ${fmt(big)} · 退订合计 ${fmt(small+big)} · 小订退率 ${(small_rate*100).toFixed(1)}% · 大定退率 ${(big_rate*100).toFixed(1)}%`};
     });
-    return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:colors.coral},{key:'big',label:'当日大定退',color:colors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:'#0070C0',textColor:'#075fa8',digits:1},{key:'big_rate',label:'大定退率',color:colors.orange,textColor:'#9b5000',digits:1}]});
+    return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:colors.coral},{key:'big',label:'当日大定退',color:colors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:'#0070C0',textColor:'#075fa8',digits:1},{key:'big_rate',label:'大定退率',color:colors.purple,textColor:'#6930bd',digits:1}]});
   }
   function renderHourlyChart(rows,day){
     const filtered=day==="总计"?(rows||[]):(rows||[]).filter(row=>String(row.period||"")===day);
@@ -1029,7 +1041,7 @@
   function renderHourly(rows){
     const days=[...new Set((rows||[]).map(row=>String(row.period||"")).filter(Boolean))];
     const options=["总计",...days].map(day=>`<option value="${esc(day)}">${esc(String(day).replace(/[ T]00:00:00$/, ""))}</option>`).join("");
-    return `<div class="hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-hourly-select data-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-hourly-body>${renderHourlyChart(rows,"总计")}</div></div>`;
+    return `<div class="hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-hourly-select aria-label="分时口径" data-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-hourly-body>${renderHourlyChart(rows,"总计")}</div></div>`;
   }
   function renderLaunchHourlyChart(rows,day){
     const filtered=day==="总计"?(rows||[]):(rows||[]).filter(row=>String(row.period||"")===day);
@@ -1044,7 +1056,7 @@
   function renderLaunchHourly(rows){
     const days=[...new Set((rows||[]).map(row=>String(row.period||"")).filter(Boolean))];
     const options=["总计",...days].map(day=>`<option value="${esc(day)}">${esc(String(day).replace(/[ T]00:00:00$/, ""))}</option>`).join("");
-    return `<div class="hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-launch-hourly-select data-launch-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-launch-hourly-body>${renderLaunchHourlyChart(rows,"总计")}</div></div>`;
+    return `<div class="hourly-wrap"><div class="hourly-toolbar"><span>分时口径</span><select data-launch-hourly-select aria-label="分时口径" data-launch-hourly-rows="${esc(JSON.stringify(rows||[]))}">${options}</select></div><div data-launch-hourly-body>${renderLaunchHourlyChart(rows,"总计")}</div></div>`;
   }
   function renderColumns(rows,color){const known=row=>row.value!=null&&Number.isFinite(Number(row.value)),max=chartMax(rows.filter(known).map(row=>row.value));return `<div class="trend">${rows.map(row=>`<div class="trend-col"><i style="height:${known(row)?Number(row.value)/max*100:0}%;background:${color}"><b class="column-data-label"${known(row)?'':' title="该周期数据未提供"'}>${known(row)?fmt(row.value):"—"}</b></i><span>${esc(row.label)}</span></div>`).join("")}</div>`}
   function renderCancelCards(groups){return `<div class="cancel-grid">${groups.map((group,index)=>`<section class="structure-card"><h3>${esc(group.name)}</h3>${renderBars({color:["orange","coral","purple","blue","coral","green","orange"][index%7],rows:group.rows})}</section>`).join("")}</div>`}
