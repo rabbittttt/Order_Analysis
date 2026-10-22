@@ -333,7 +333,7 @@
     function render(){
       const target=context.targetState(),imported=importedForecastRows.get(target.name),today=context.todayIso(),actual=context.actualForTarget(target);
       const rawRate=root.querySelector('[data-forecast-input="lock"]')?.value;
-      const lockRate=rawRate!=null&&rawRate.trim()!==''?Number(rawRate)/100:NaN,validRate=Number.isFinite(lockRate)&&lockRate<=1&&(lockRate>0||(lockRate===0&&root._forecastTouched?.has(forecastDraftControlKey(root.querySelector('[data-forecast-input="lock"]')))));
+      const lockRate=rawRate!=null&&rawRate.trim()!==''?Number(rawRate)/100:NaN,validRate=Number.isFinite(lockRate)&&lockRate>=0&&lockRate<=1;
       for(const {stage,unit,card} of cards){
         card.querySelector('[data-forecast-import-clear]').disabled=!imported?.rows.length;
         card.querySelector('[data-forecast-import-undo]').hidden=!importedForecastUndo.has(target.name);
@@ -969,7 +969,7 @@
     const current=options[state.grain]?state.grain:(options[data.default]?data.default:(Object.keys(options)[0]||"week"));
     return `<div class="history-wrap"><div data-history-body>${renderHistoryBody(options,current)}</div></div>`;
   }
-  function formatTableCell(value,type){const number=Number(value);if(type==="percent"&&Number.isFinite(number))return `${(number*100).toFixed(1)}%`;if(type==="signed_percent"&&Number.isFinite(number)){const result=number*100;return `<span class="change ${result>=0?"pos":"neg"}">${result>=0?"+":""}${result.toFixed(1)}%</span>`}if(type==="number"&&Number.isFinite(number))return number.toLocaleString("zh-CN",{maximumFractionDigits:1});return fmt(value)}
+  function formatTableCell(value,type){if(["number","percent","signed_percent"].includes(type)&&(value==null||typeof value==="string"&&!value.trim()))return '—';const number=Number(value);if(type==="percent"&&Number.isFinite(number))return `${(number*100).toFixed(1)}%`;if(type==="signed_percent"&&Number.isFinite(number)){const result=number*100;return `<span class="change ${result>=0?"pos":"neg"}">${result>=0?"+":""}${result.toFixed(1)}%</span>`}if(type==="number"&&Number.isFinite(number))return number.toLocaleString("zh-CN",{maximumFractionDigits:1});return fmt(value)}
   function shareValue(row){const value=Number(row.share??row.value??0);return Math.abs(value)<=1.5?value*100:value}
   function renderBars(data){
     const rows=data?.rows||[],max=Math.max(...rows.map(shareValue),1),color=colors[data.color]||colors.blue;
@@ -1420,7 +1420,7 @@
       }else if(stage.key==='d1'){
         const bucket=(actual?.small_hourly_days||[]).find(row=>row.date===target.smallStartDate);if(!bucket?.hours?.length){message='小订D1分时数据缺失，当前不使用完整日数据冒充分时快照。';}else{hourly=window.ForecastMath.smallHourlyForecast({hours:bucket.hours,references:selectedRefs('hourly'),startHour:hourlyContext().startHour});if(hourly.error)message=hourly.error;else{d1=hourly.total;const d1Share=referenceCompletion(1,targetDays);if(!Number.isFinite(d1Share)||d1Share<=0)message='所选累计参考缺少有效D1占比，无法由D1推算总小订。';else{total=targetDays===1?d1:d1/d1Share;actualTotal=hourly.observed;completion=actualTotal/Math.max(total,1);confidence='中高置信度 · 已发生＋剩余小时预测';}}}
       }else if(stage.key==='ended'){
-        total=Number(transitionTotal||(current?.total_complete!==false?current?.total:0)||(!checked.missing.length?actualTotal:0)||0);d1=daily.length?Number(daily[0]):NaN;actualTotal=total;completion=total>0?1:NaN;confidence='真实终值';if(total<=0)message='小订期已结束，但汇总中没有明确最终总量或完整真实日合计。';
+        total=Number(transitionTotal||(current?.total_complete!==false?current?.total:0)||(!checked.missing.length?actualTotal:0)||0);d1=actualRows.find(row=>row.date===target.smallStartDate)?.orders??NaN;actualTotal=total;completion=total>0?1:NaN;confidence='真实终值';if(total<=0)message='小订期已结束，但汇总中没有明确最终总量或完整真实日合计。';
       }else{
         if(!actualRows.length){message='小订D1已过，但汇总中没有已结束日期的真实小订。'}else{completion=referenceCompletion(checked.expected,targetDays);if(!Number.isFinite(completion)||completion<=0)message=`参考车型D${checked.expected}累计完成率不可用。`;else{total=Math.max(actualTotal,actualTotal/completion);d1=actualRows[0].orders;confidence=actualRows.length>=3?'高置信度 · 真实进度':'中置信度 · 早期进度';}}
       }
