@@ -136,7 +136,7 @@ class ConversionModule:
                 loss_stages = [stage for stage in cohort["stages"][1:] if stage["loss"] is not None and stage["loss"] > 0]
                 largest_loss = max(loss_stages, key=lambda stage: stage["loss"], default={"label": "-", "loss": 0})
                 loss_bars = [
-                    {"label": stage["label"], "share": _observed_rate(stage["loss"], order), "count": stage["loss"]}
+                    {"label": "待" + stage["label"], "share": _observed_rate(stage["loss"], order), "count": stage["loss"]}
                     for stage in loss_stages if order is not None and order > 0
                 ]
                 pages[cohort["period"]] = {
