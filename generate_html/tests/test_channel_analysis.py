@@ -179,7 +179,8 @@ class ChannelAnalysisTests(unittest.TestCase):
                    "华为授权体验店": 131, "华为智能生活馆": 425},
             "智界": {"智界用户中心": 48, "鸿蒙智行用户中心": 334, "华为旗舰店": 11,
                    "华为授权体验店": 129, "华为智能生活馆": 388},
-            "尊界": {"鸿蒙智行用户中心": 162, "华为旗舰店": 7, "综合店": 37, "尊界体验中心": 7},
+            "尊界": {"鸿蒙智行用户中心": 162, "华为旗舰店": 7, "华为授权体验店": 3,
+                   "华为智能生活馆": 34, "尊界用户中心": 7},
             "尚界": {"尚界用户中心": 221, "鸿蒙智行用户中心": 259, "华为旗舰店": 13,
                    "华为授权体验店": 153, "华为智能生活馆": 450},
             "享界": {"享界用户中心": 14, "鸿蒙智行用户中心": 344, "华为旗舰店": 11,
@@ -189,23 +190,23 @@ class ChannelAnalysisTests(unittest.TestCase):
             with self.subTest(brand=brand):
                 self.assertEqual(channel._store_counts(Subject(brand, brand, "brand", "鸿蒙智行")), counts)
                 self.assertEqual(channel._store_counts(Subject(brand, brand + "车型", "generation", brand)), counts)
-        self.assertNotIn(A, channel._store_counts(Subject("z", "尊界", "brand")))
-        self.assertNotIn("尊界用户中心", channel._store_counts(Subject("z", "尊界", "brand")))
+        self.assertNotIn("综合店", channel._store_counts(Subject("z", "尊界", "brand")))
+        self.assertNotIn("尊界体验中心", channel._store_counts(Subject("z", "尊界", "brand")))
 
     def test_group_sums_brand_channel_counts(self):
         counts = channel._store_counts(Subject("g", "鸿蒙智行", "group"))
         self.assertEqual(counts, {
             "问界用户中心": 374, "智界用户中心": 48, "尚界用户中心": 221, "享界用户中心": 14,
-            "鸿蒙智行用户中心": 1127, "华为旗舰店": 53, "华为授权体验店": 513,
-            "华为智能生活馆": 1650, "综合店": 37, "尊界体验中心": 7,
+            "鸿蒙智行用户中心": 1127, "华为旗舰店": 53, "华为授权体验店": 516,
+            "华为智能生活馆": 1684, "尊界用户中心": 7,
         })
         book = self.book(["2026-01-01"], [["门店类型", "数量", A, 10], [None, "贡献门店数", A, 2]], "鸿蒙智行by天")
         dashboard = self.build(self.store(book), "鸿蒙智行", "group", None)
         row = self.row(dashboard)
-        self.assertEqual(row["store_count"], 513)
+        self.assertEqual(row["store_count"], 516)
         self.assertEqual(row["active_count"], 2)
-        self.assertEqual(row["active_rate"], 2 / 513)
-        self.assertEqual(row["productivity"], 10 / 513)
+        self.assertEqual(row["active_rate"], 2 / 516)
+        self.assertEqual(row["productivity"], 10 / 516)
         totals = dashboard.views["day"]["pages"]["2026-01-01"]["sections"][0]["data"]["totals"]
         self.assertEqual(totals["store_count"], 4044)
         self.assertEqual(totals["active_rate"], 2 / 4044)
