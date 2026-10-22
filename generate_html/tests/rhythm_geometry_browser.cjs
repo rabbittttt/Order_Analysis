@@ -60,13 +60,15 @@ function readBoard(block){
      const ranking=document.querySelector('.cancel-ranking'),rankingCheck=ranking?{kind:ranking.closest('.panel').dataset.sectionKind,sourceIndex:Number(ranking.querySelector('[data-panel-source]')?.dataset.panelSource),rows:[...ranking.querySelectorAll('.bar-row')].map(row=>({label:row.querySelector('label').textContent,value:row.querySelector('b').textContent})),columns:getComputedStyle(ranking.querySelector('.bars')).gridTemplateColumns.split(' ').length,clipped:[...ranking.querySelectorAll('.bar-row label')].some(node=>node.scrollHeight>node.clientHeight+1),standalone:[...document.querySelectorAll('.panel-head h2')].some(n=>n.textContent==='选配退订率排行')}:null;
      const launchFrame=frames.find(frame=>frame.dataset.rhythmKind==='launch-day'),launchSpec=launchFrame?JSON.parse(launchFrame.dataset.rhythmConfig):null;
      const launchRates=[...document.querySelectorAll('[data-launch-rate]')].map(panel=>{
-      const key=panel.dataset.launchRate,history=panel.querySelector('.launch-rate-history'),svg=history.querySelector('svg'),line=svg.querySelector('[data-launch-rate-line]'),color=getComputedStyle(line).stroke,title=panel.querySelector('h3').textContent;
+      const key=panel.dataset.launchRate,history=panel.closest('.launch-rate-history'),svg=panel.ownerSVGElement,line=panel.querySelector('[data-launch-rate-line]'),summary=document.querySelector(`[data-launch-rate-summary="${key}"]`),color=getComputedStyle(line).stroke,title=summary.querySelector('h3').textContent;
       const expected=launchSpec.rows.map((row,index)=>({index,value:row.rates?.[key],label:row.label})).filter(point=>typeof point.value==='number'&&Number.isFinite(point.value));
       const points=[...panel.querySelectorAll('[data-launch-rate-point]')].map(point=>({index:Number(point.dataset.index),value:Number(point.dataset.value),y:Number(point.getAttribute('cy')),title:point.querySelector('title').textContent,aria:point.getAttribute('aria-label'),focusable:point.getAttribute('tabindex')==='0',color:getComputedStyle(point).stroke}));
-      const box=history.getBoundingClientRect(),body=panel.closest('.panel-body').getBoundingClientRect(),latest=expected.at(-1),labels=[...svg.querySelectorAll('.launch-rate-value')];
-      return {key,title,color,points,expected:expected.map(point=>({index:point.index,value:point.value,title:`${point.label} · ${title} ${(point.value*100).toFixed(1)}%`})),labels:labels.length,labelColors:labels.map(label=>getComputedStyle(label).fill),latest:panel.querySelector('strong').textContent,expectedLatest:latest?(latest.value*100).toFixed(1)+'%':'—',asOf:panel.querySelector('.launch-rate-heading span').textContent,expectedAsOf:latest?'截至 '+latest.label:'暂无比例数据',path:line.getAttribute('d'),expectedMoves:expected.filter((point,index)=>!index||point.index!==expected[index-1].index+1).length,axisMin:Number(svg.dataset.rateMin),axisMax:Number(svg.dataset.rateMax),bounds:[...svg.querySelectorAll('[data-rate-bound]')].map(node=>node.textContent),height:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,overflowX:getComputedStyle(history).overflowX,left:box.left,right:box.right,bodyLeft:body.left,bodyRight:body.right};
+      const box=history.getBoundingClientRect(),body=panel.closest('.panel-body').getBoundingClientRect(),latest=expected.at(-1),labels=[...panel.querySelectorAll('.launch-rate-value')];
+      const textBoxes=[...svg.querySelectorAll('text')].map(node=>node.getBoundingClientRect());let overlaps=0;
+      for(let i=0;i<textBoxes.length;i++)for(let j=i+1;j<textBoxes.length;j++){const a=textBoxes[i],b=textBoxes[j];if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1)overlaps++;}
+      return {key,title,color,points,expected:expected.map(point=>({index:point.index,value:point.value,title:`${point.label} · ${title} ${(point.value*100).toFixed(1)}%`})),labels:labels.map(label=>({index:Number(label.dataset.index),text:label.textContent,offset:Math.abs(Number(label.getAttribute('y'))-Number(label.dataset.pointY)),visible:getComputedStyle(label).visibility==='visible'&&getComputedStyle(label).display!=='none'&&Number(getComputedStyle(label).opacity)>0})),overlaps,labelColors:labels.map(label=>getComputedStyle(label).fill),latest:summary.querySelector('strong').textContent,expectedLatest:latest?(latest.value*100).toFixed(1)+'%':'—',asOf:summary.querySelector('span').textContent,expectedAsOf:latest?'截至 '+latest.label:'暂无比例数据',path:line.getAttribute('d'),expectedMoves:expected.filter((point,index)=>!index||point.index!==expected[index-1].index+1).length,axisMin:Number(svg.dataset.rateMin),axisMax:Number(svg.dataset.rateMax),bounds:[...svg.querySelectorAll('[data-rate-bound]')].map(node=>node.textContent),height:svg.getBoundingClientRect().height,scale:svg.getScreenCTM().a,overflowX:getComputedStyle(history).overflowX,left:box.left,right:box.right,bodyLeft:body.left,bodyRight:body.right};
      });
-     return {daily,hourly,measurements,toolbarChecks,rankingCheck,launchRates,period:document.querySelector('#periodSelect').value,pageOverflow:document.documentElement.scrollWidth>innerWidth+2};
+     return {daily,hourly,measurements,toolbarChecks,rankingCheck,launchRates,rateCharts:document.querySelectorAll('.launch-rate-history').length,period:document.querySelector('#periodSelect').value,pageOverflow:document.documentElement.scrollWidth>innerWidth+2};
     });
     assert(!actual.pageOverflow,key+' page overflow at '+width);
     assert(actual.measurements.length,key+' missing charts');
@@ -103,20 +105,23 @@ function readBoard(block){
     const launch=sections.find(item=>item.kind==='launch_composite'),metrics=launch?.data.metrics;
     if(metrics){
      const expectedKeys=[['smallRate',metrics['累计小订转化率']||metrics['累计小转大率']],['bigRate',metrics['累计直接大定进度']]].filter(([,values])=>Array.isArray(values)&&values.length).map(([name])=>name);
-     assert.deepEqual(actual.launchRates.map(panel=>panel.key),expectedKeys,key+' missing independent rate trends');
+     assert.deepEqual(actual.launchRates.map(panel=>panel.key),expectedKeys,key+' missing rate series');
+     assert.equal(actual.rateCharts,expectedKeys.length?1:0,key+' rate series are not combined into one chart');
+     assert.equal(new Set(actual.launchRates.map(panel=>panel.axisMin+'|'+panel.axisMax)).size,expectedKeys.length?1:0,key+' rate lines do not share one percentage axis');
      assert(actual.measurements.filter(m=>m.kind==='launch-day').every(m=>m.lineColors.length===0),key+' rates still overlap the source columns');
     }
     for(const panel of actual.launchRates){
      assert.deepEqual(panel.points.map(({index,value,title})=>({index,value,title})),panel.expected,key+' rate history or tooltip changed');
      assert(panel.points.every(point=>point.aria===point.title&&point.focusable&&point.color===panel.color),key+' rate point lost its accessible value or fixed color');
-     assert(panel.labelColors.every(color=>color===panel.color)&&panel.labels<=3,key+' rate labels overlap or alternate colors');
+     assert(panel.labelColors.every(color=>color===panel.color),key+' rate labels change their series color');
+     assert.deepEqual(panel.labels.map(({index,text})=>({index,text})),panel.expected.map(point=>({index:point.index,text:(point.value*100).toFixed(1)+'%'})),key+' known rate labels were hidden, sampled or changed');
+     assert(panel.labels.every(label=>label.visible&&label.offset<=18.01),key+' rate label is hidden or too far from its point');assert.equal(panel.overlaps,0,key+' combined rate labels overlap');
      assert.equal(panel.latest,panel.expectedLatest);assert.equal(panel.asOf,panel.expectedAsOf);
      assert(Number.isFinite(panel.axisMin)&&Number.isFinite(panel.axisMax)&&panel.axisMax>panel.axisMin,key+' unstable rate axis');
      assert.deepEqual(panel.bounds,[panel.axisMax,panel.axisMin].map(value=>Number((value*100).toPrecision(4))+'%'),key+' rate axis bounds are not visible percentages');
-     assert(panel.points.every(point=>point.y>=18-.001&&point.y<=98+.001&&Math.abs(point.y-(98-(point.value-panel.axisMin)/(panel.axisMax-panel.axisMin)*80))<.001),key+' rate point is clipped or no longer uses its true value');
-     if(panel.points.length>1&&Math.max(...panel.points.map(point=>point.value))-Math.min(...panel.points.map(point=>point.value))>=.001)assert(Math.max(...panel.points.map(point=>point.y))-Math.min(...panel.points.map(point=>point.y))>=30,key+' varying rate trend is compressed by an oversized axis');
+     assert(panel.points.every(point=>point.y>=30-.001&&point.y<=170+.001&&Math.abs(point.y-(170-(point.value-panel.axisMin)/(panel.axisMax-panel.axisMin)*140))<.001),key+' rate point is clipped or no longer uses its true value');
      assert.equal((panel.path.match(/M/g)||[]).length,panel.expectedMoves,key+' missing rate values are not gaps');assert(!panel.path.includes('NaN'));
-     assert.equal(panel.height,128);assert(Math.abs(panel.scale-1)<.001);assert.equal(panel.overflowX,'auto');
+     assert.equal(panel.height,224);assert(Math.abs(panel.scale-1)<.001);assert.equal(panel.overflowX,'auto');
      assert(Math.abs((panel.left+panel.right)-(panel.bodyLeft+panel.bodyRight))<1&&panel.left>=panel.bodyLeft-1&&panel.right<=panel.bodyRight+1,key+' rate chart escapes or is not centered');ratePanels++;
     }
     if(rankingIndex>=0&&sections.some(item=>item.kind==='daily_cancel')){
@@ -129,7 +134,7 @@ function readBoard(block){
     }
     if(baseline?.snapshots[key]){assert.deepEqual({daily:actual.daily,hourly:actual.hourly},baseline.snapshots[key],key+' historical quantities/tooltips changed');snapshots++;}
     if(width===390){
-     const scrolling=await page.locator('[data-rhythm-config]').evaluateAll(frames=>frames.map(frame=>{
+     const scrolling=await page.locator('[data-rhythm-config],.launch-rate-history').evaluateAll(frames=>frames.map(frame=>{
       const before=frame.innerHTML,overflow=frame.scrollWidth>frame.clientWidth+2;
       frame.scrollLeft=frame.scrollWidth;
       const moved=frame.scrollLeft>0,unchanged=frame.innerHTML===before;frame.scrollLeft=0;
@@ -164,7 +169,7 @@ function readBoard(block){
   if(weeklyKey){
    const url=new URL(base);url.search=new URLSearchParams({subject:weeklyKey.split('|')[0],module:'launch_rhythm',grain:'week'});
    await page.setViewportSize({width:1440,height:1000});await page.goto(url.href);await ready();
-   const trends=page.locator('[data-launch-rate]');assert(await trends.count()>0,'weekly launch chart has no separate rate trends');
+   const trends=page.locator('[data-launch-rate]');assert(await trends.count()>0,'weekly launch chart has no rate trends');assert.equal(await page.locator('.launch-rate-history').count(),1,'weekly rate lines are not combined');
    assert.equal(await page.locator('[data-rhythm-kind="launch-day"] [data-rhythm-series]').count(),0,'weekly rates still overlap source columns');
    const weeklyPeriod=await page.locator('#periodSelect').inputValue(),weekly=boardData[weeklyKey].views.week.pages[weeklyPeriod].sections.find(item=>item.kind==='launch_composite').data;
    for(const [rate,values] of [['smallRate',weekly.metrics['累计小订转化率']||weekly.metrics['累计小转大率']],['bigRate',weekly.metrics['累计直接大定进度']]]){

@@ -2456,14 +2456,18 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 
 .launch-rate-trends {
   display:grid;
+  grid-template-columns:minmax(0,1fr);
   gap:14px;
   margin-top:18px;
-}
-
-.launch-rate-trend {
   min-width:0;
   padding-top:12px;
   border-top:1px solid var(--line);
+}
+
+.launch-rate-summaries {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));
+  gap:10px 24px;
 }
 
 .launch-rate-heading {
@@ -2502,6 +2506,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 
 .launch-rate-history {
   width:max-content;
+  min-width:0;
   max-width:100%;
   margin-inline:auto;
   overflow-x:auto;
@@ -2536,7 +2541,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 .launch-rate-history:focus-visible,.launch-rate-history circle:focus-visible {
-  outline:2px solid var(--rate-color);
+  outline:2px solid var(--rate-color,#1677ff);
   outline-offset:2px;
 }
 
