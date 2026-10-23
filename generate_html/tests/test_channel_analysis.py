@@ -179,8 +179,8 @@ class ChannelAnalysisTests(unittest.TestCase):
                    "华为授权体验店": 131, "华为智能生活馆": 425},
             "智界": {"智界用户中心": 48, "鸿蒙智行用户中心": 334, "华为旗舰店": 11,
                    "华为授权体验店": 129, "华为智能生活馆": 388},
-            "尊界": {"鸿蒙智行用户中心": 162, "华为旗舰店": 7, "华为授权体验店": 3,
-                   "华为智能生活馆": 34, "尊界用户中心": 7},
+            "尊界": {"鸿蒙智行用户中心": 157, "华为旗舰店": 7, "华为授权体验店": 3,
+                   "华为智能生活馆": 35, "尊界用户中心": 9, "智界用户中心": 1, "问界用户中心": 2},
             "尚界": {"尚界用户中心": 221, "鸿蒙智行用户中心": 259, "华为旗舰店": 13,
                    "华为授权体验店": 153, "华为智能生活馆": 450},
             "享界": {"享界用户中心": 14, "鸿蒙智行用户中心": 344, "华为旗舰店": 11,
@@ -196,9 +196,9 @@ class ChannelAnalysisTests(unittest.TestCase):
     def test_group_sums_brand_channel_counts(self):
         counts = channel._store_counts(Subject("g", "鸿蒙智行", "group"))
         self.assertEqual(counts, {
-            "问界用户中心": 374, "智界用户中心": 48, "尚界用户中心": 221, "享界用户中心": 14,
-            "鸿蒙智行用户中心": 1127, "华为旗舰店": 53, "华为授权体验店": 516,
-            "华为智能生活馆": 1684, "尊界用户中心": 7,
+            "问界用户中心": 376, "智界用户中心": 49, "尚界用户中心": 221, "享界用户中心": 14,
+            "鸿蒙智行用户中心": 1122, "华为旗舰店": 53, "华为授权体验店": 516,
+            "华为智能生活馆": 1685, "尊界用户中心": 9,
         })
         book = self.book(["2026-01-01"], [["门店类型", "数量", A, 10], [None, "贡献门店数", A, 2]], "鸿蒙智行by天")
         dashboard = self.build(self.store(book), "鸿蒙智行", "group", None)
@@ -208,9 +208,9 @@ class ChannelAnalysisTests(unittest.TestCase):
         self.assertEqual(row["active_rate"], 2 / 516)
         self.assertEqual(row["productivity"], 10 / 516)
         totals = dashboard.views["day"]["pages"]["2026-01-01"]["sections"][0]["data"]["totals"]
-        self.assertEqual(totals["store_count"], 4044)
-        self.assertEqual(totals["active_rate"], 2 / 4044)
-        self.assertEqual(totals["productivity"], 10 / 4044)
+        self.assertEqual(totals["store_count"], 4045)
+        self.assertEqual(totals["active_rate"], 2 / 4045)
+        self.assertEqual(totals["productivity"], 10 / 4045)
 
     def test_group_uses_brand_overrides_without_adding_models_or_group_overrides(self):
         with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 100, B: 50}, "智界": {A: 129}}, clear=True), patch.dict(
