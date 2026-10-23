@@ -190,7 +190,7 @@ class LaunchRhythmModule:
                 kpi("累计锁单", cumulative_lock, "单", "累计交车锁单", "green"),
                 kpi("累计小转大率", cumulative_small_rate * 100, "%", "累计小转大 ÷ 总小订", "purple"),
                 kpi("累计直接大定进度", direct_progress * 100 if direct_progress is not None else None,
-                    "%", "原表累计直接大定进度", "blue"),
+                    "%", "累计直接大定 ÷ 累计总大定", "blue"),
             ],
             "sections": [
                 section("launch_composite", f"{campaign_label or f'第{phase_number}期'} · 首销订单来源" if show_phase else "首销订单来源", {"periods": periods, "metrics": metrics, "grain": grain}, f"{start_date or '日期缺失'} 至 {end_date or '日期缺失'} · {source_note}" if show_phase else source_note, source=source),
