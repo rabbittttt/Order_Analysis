@@ -173,6 +173,107 @@ class ChannelAnalysisTests(unittest.TestCase):
             row = self.row(self.build(self.store(book)))
         self.assertEqual(row["active_rate"], 3 / 20)
 
+    def test_inconsistent_store_logs_group_channels_across_day_week_month_without_changing_values(self):
+        periods_by_grain = {
+            "day": ("天", ["2026-01-01", "2026-01-02"]),
+            "week": ("周", ["26WK01", "26WK02"]),
+            "month": ("月", ["26-01", "26-02"]),
+        }
+        rows = [["门店类型", "数量", A, 40, 60], [None, None, B, 10, 20],
+                [None, "占比", A, .123, .234], [None, None, B, .877, .766],
+                [None, "贡献门店数", A, 21, 22], [None, None, B, 10, 11]]
+        book = self.book(periods_by_grain["day"][1], rows)
+        for grain in ("week", "month"):
+            suffix, periods = periods_by_grain[grain]
+            sheet = book.create_sheet(MODEL + "by" + suffix)
+            sheet.append(["指标", "统计类型", "分类", *periods])
+            for row in rows:
+                sheet.append(row)
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 20, B: 10}}, clear=True), \
+                self.assertLogs(channel.LOGGER, level="WARNING") as logs:
+            dashboard = self.build(self.store(book))
+        self.assertEqual(len(logs.records), 2)
+        by_channel = {name: next(record.getMessage() for record in logs.records
+                                 if f"渠道={name}" in record.getMessage()) for name in (A, B)}
+        self.assertIn("共6项", by_channel[A])
+        self.assertIn("共3项", by_channel[B])
+        for message in by_channel.values():
+            self.assertIn(f"主体={MODEL}", message)
+            self.assertIn("大定选配比例分析_0.xlsx", message)
+            self.assertIn("相关出单比例留空", message)
+            for suffix, _ in periods_by_grain.values():
+                self.assertIn(MODEL + "by" + suffix, message)
+        self.assertIn("日=2026-01-01～2026-01-02", by_channel[A])
+        self.assertIn("周=26WK01～26WK02", by_channel[A])
+        self.assertIn("月=26-01、26-02", by_channel[A])
+        for grain, (_, periods) in periods_by_grain.items():
+            for index, period in enumerate(periods):
+                bad = self.row(dashboard, grain=grain, period=period)
+                self.assertEqual([bad[key] for key in ("count", "share", "active_count", "store_count")],
+                                 [[40, .123, 21, 20], [60, .234, 22, 20]][index])
+                self.assertIsNone(bad["active_rate"])
+                self.assertEqual(bad["productivity"], [2, 3][index])
+                other = self.row(dashboard, grain=grain, period=period, index=1)
+                self.assertEqual(other["active_rate"], 1 if index == 0 else None)
+                page = dashboard.views[grain]["pages"][period]
+                self.assertEqual([item["value"] for item in page["kpis"][:2]],
+                                 [[50, 31], [80, 33]][index])
+                self.assertIsNone(page["kpis"][2]["value"])
+                self.assertEqual(page["kpis"][3]["value"], [50 / 30, 80 / 30][index])
+
+    def test_inconsistent_store_log_ranges_keep_gaps_and_limit_only_examples(self):
+        days = ["2026-01-01", "2026-01-02", "2026-01-04", "2026-01-06", "2026-01-07"]
+        book = self.book(days, [["门店类型", "数量", A, 101, 102, 103, 104, 105],
+                                [None, "贡献门店数", A, 21, 22, 23, 24, 25]])
+        week = book.create_sheet(MODEL + "by周")
+        week.append(["指标", "统计类型", "分类", "25WK52", "26WK01", "26WK03"])
+        week.append(["门店类型", "数量", A, 106, 107, 108])
+        week.append([None, "贡献门店数", A, 26, 27, 28])
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 20}}, clear=True), \
+                self.assertLogs(channel.LOGGER, level="WARNING") as logs:
+            self.build(self.store(book))
+        self.assertEqual(len(logs.records), 1)
+        message = logs.records[0].getMessage()
+        self.assertIn("共8项", message)
+        self.assertIn("日=2026-01-01～2026-01-02、2026-01-04、2026-01-06～2026-01-07", message)
+        self.assertIn("周=25WK52～26WK01、26WK03", message)
+        self.assertNotIn("2026-01-01～2026-01-07", message)
+        self.assertNotIn("25WK52～26WK03", message)
+        examples = message.split("示例=", 1)[1].split("| 处理=", 1)[0]
+        self.assertEqual(examples.count("留存大定="), 3)
+        self.assertEqual(examples.count("出单门店="), 3)
+        self.assertEqual(examples.count("总门店="), 3)
+
+    def test_inconsistent_store_logs_are_local_to_each_build_and_subject(self):
+        other_model = "智界 R7 2026款"
+        book = self.book(["2026-01-01"], [["门店类型", "数量", A, 40],
+                                        [None, "贡献门店数", A, 21]])
+        other = book.create_sheet(other_model + "by天")
+        other.append(["指标", "统计类型", "分类", "2026-01-01"])
+        other.append(["门店类型", "数量", A, 60])
+        other.append([None, "贡献门店数", A, 22])
+        store, module = self.store(book), channel.ChannelAnalysisModule()
+        with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: 20}, "智界": {A: 20}}, clear=True), \
+                self.assertLogs(channel.LOGGER, level="WARNING") as logs:
+            for name, parent in ((MODEL, "问界"), (MODEL, "问界"), (other_model, "智界")):
+                module.build(store, Subject(name, name, "generation", parent))
+        self.assertEqual(len(logs.records), 3)
+        for record, name in zip(logs.records, (MODEL, MODEL, other_model)):
+            message = record.getMessage()
+            self.assertIn(f"主体={name}", message)
+            self.assertIn("共1项", message)
+            self.assertNotIn(other_model if name == MODEL else MODEL, message)
+
+    def test_no_inconsistent_store_warning_for_valid_zero_or_unknown_counts(self):
+        for total, active in ((20, 20), (20, 0), (0, 0), (None, 21), (20, None)):
+            with self.subTest(total=total, active=active):
+                book = self.book(["2026-01-01"], [["门店类型", "数量", A, 40],
+                                                [None, "贡献门店数", A, active]])
+                with patch.dict(channel.CHANNEL_STORE_COUNTS, {"问界": {A: total}}, clear=True), \
+                        self.assertNoLogs(channel.LOGGER, level="WARNING"):
+                    row = self.row(self.build(self.store(book)))
+                self.assertEqual(row["active_count"], active)
+
     def test_brand_store_counts_match_business_configuration(self):
         expected = {
             "问界": {"问界用户中心": 374, "鸿蒙智行用户中心": 28, "华为旗舰店": 11,

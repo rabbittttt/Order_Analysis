@@ -5,7 +5,7 @@ import math
 import re
 
 from core.components import kpi, section
-from core.excel import WorkbookStore, _daily_period, _period_sort, clean_text, compact_text, display_period
+from core.excel import WorkbookStore, _daily_period, _period_sort, clean_text, compact_diagnostic_ranges, compact_text, display_period
 from core.models import Dashboard, SourceRef, Subject
 
 
@@ -180,6 +180,7 @@ class ChannelAnalysisModule:
 
     def build(self, store: WorkbookStore, subject: Subject) -> Dashboard | None:
         views, sources = {}, []
+        inconsistencies = {}
         configured = _store_counts(subject)
         for grain in ("day", "week", "month"):
             found = store.find_subject_sheet("大定选配比例", subject.name, grain)
@@ -203,8 +204,14 @@ class ChannelAnalysisModule:
                     denominator = total if total is not None and total > 0 else None
                     inconsistent = active is not None and total is not None and active > total
                     if inconsistent:
-                        LOGGER.warning("[渠道门店数据不一致] %s | %s | %s | 留存大定=%s | 出单门店=%s | 总门店=%s | 出单比例留空",
-                                       subject.name, period, channel, count, active, total)
+                        issue = inconsistencies.setdefault(channel, {"periods": {}, "sources": [], "examples": [], "count": 0})
+                        issue["count"] += 1
+                        issue["periods"].setdefault(grain, []).append(period)
+                        if source not in issue["sources"]:
+                            issue["sources"].append(source)
+                        if len(issue["examples"]) < 3:
+                            issue["examples"].append(
+                                f"{period}: 留存大定={count}, 出单门店={active}, 总门店={total}")
                     row = {"channel": channel, "count": count, "share": share, "store_count": total,
                            "active_count": active,
                            "active_rate": active / denominator if active is not None and denominator and not inconsistent else None,
@@ -238,4 +245,12 @@ class ChannelAnalysisModule:
                                      ("capacity", "单店产能", "留存大定 / 该渠道总门店数"))],
                 }
             views[grain] = {"periods": periods, "default_period": periods[-1], "pages": pages}
+        grain_labels = {"day": "日", "week": "周", "month": "月"}
+        for channel, issue in inconsistencies.items():
+            periods = "；".join(f"{grain_labels[grain]}="
+                               f"{compact_diagnostic_ranges(values)}（{len(values)}项）"
+                               for grain, values in issue["periods"].items())
+            locations = "；".join(f"{source.file} / Sheet={source.sheet}" for source in issue["sources"])
+            LOGGER.warning("[渠道门店数据不一致] 主体=%s | 渠道=%s | 共%d项 | 全部周期=%s | 来源=%s | 示例=%s | 处理=相关出单比例留空",
+                           subject.name, channel, issue["count"], periods, locations, "；".join(issue["examples"]))
         return Dashboard(self.id, subject.id, views, sources) if views else None
