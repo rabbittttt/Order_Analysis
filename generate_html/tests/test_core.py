@@ -233,13 +233,14 @@ class SubjectParsingTests(unittest.TestCase):
                 sheet.append(['累计小订转大定数量', 20, 40, tail])
                 sheet.append(['累计小订转化率', .1, .2, tail])
                 sheet.append(['累计直接大定数量', 60, 160, tail])
+                sheet.append(['累计直接大定进度', .4, .9, tail])
                 phase = LaunchRhythmModule()._build_phase(
                     SimpleNamespace(path=Path('首销期订单节奏.xlsx')), sheet, 1, None, False)
                 kpis = {k['label']: k['value'] for k in phase['page']['kpis']}
                 self.assertEqual(kpis['累计大定'], 200)
                 self.assertEqual(kpis['累计小转大率'], rate)
                 self.assertEqual(phase['direct'], direct)
-                self.assertEqual(kpis['累计直接大定占比'], direct / 2)
+                self.assertEqual(kpis['累计直接大定进度'], 90 if tail is None else 0)
                 self.assertIsNone(phase['metrics']['当日大定数量'][-1])
                 self.assertEqual(phase['metrics']['累计直接大定数量'][-1], tail)
                 workbook.close()
@@ -289,7 +290,7 @@ class SubjectParsingTests(unittest.TestCase):
                 self.assertEqual(page['kpis'][1]['label'], '多期累计锁单')
                 self.assertEqual(page['kpis'][1]['value'], expected)
                 self.assertEqual(page['kpis'][0]['value'], 400)
-                self.assertEqual([row[-1] for row in page['sections'][0]['data']['rows']], [170, 170])
+                self.assertEqual([row[6] for row in page['sections'][0]['data']['rows']], [170, 170])
 
     def test_generated_forecast_range_uses_worksheet_filter_without_table(self):
         workbook = Workbook()

@@ -180,6 +180,8 @@ class LaunchRhythmModule:
         cumulative_small_rate = latest("累计小订转化率") or latest("累计小转大率")
         cumulative_small_base = safe_rate(cumulative_small, cumulative_small_rate) if cumulative_small_rate > 0 else 0
         cumulative_direct = latest("累计直接大定数量")
+        direct_progress = next((value for value in reversed(metrics.get("累计直接大定进度", []))
+                                if value is not None), None)
         source_note = f"{'当周' if grain == 'week' else '当日'}直接大定 / {'当周' if grain == 'week' else '当日'}小订转大 · 数量不累计，转化率和进度仍为累计口径"
         matrix_rows = [[name, *[f"{value * 100:.1f}%" if value is not None and ("率" in name or "进度" in name) else value for value in values]] for name, values in metrics.items()]
         page = {
@@ -187,7 +189,8 @@ class LaunchRhythmModule:
                 kpi("累计大定", cumulative_order, "单", periods[-1], "blue"),
                 kpi("累计锁单", cumulative_lock, "单", "累计交车锁单", "green"),
                 kpi("累计小转大率", cumulative_small_rate * 100, "%", "累计小转大 ÷ 总小订", "purple"),
-                kpi("累计直接大定占比", safe_rate(cumulative_direct, cumulative_order) * 100, "%", "累计大定来源", "blue"),
+                kpi("累计直接大定进度", direct_progress * 100 if direct_progress is not None else None,
+                    "%", "原表累计直接大定进度", "blue"),
             ],
             "sections": [
                 section("launch_composite", f"{campaign_label or f'第{phase_number}期'} · 首销订单来源" if show_phase else "首销订单来源", {"periods": periods, "metrics": metrics, "grain": grain}, f"{start_date or '日期缺失'} 至 {end_date or '日期缺失'} · {source_note}" if show_phase else source_note, source=source),
@@ -210,7 +213,7 @@ class LaunchRhythmModule:
             "selector_label": f"{campaign_label or f'第{phase_number}期'} · {range_label}" if range_label else f"{campaign_label or f'第{phase_number}期'}",
             "days": len(periods), "orders": cumulative_order, "net": cumulative_net, "lock": cumulative_lock,
             "small": cumulative_small, "small_rate": cumulative_small_rate,
-            "small_base": cumulative_small_base, "direct": cumulative_direct,
+            "small_base": cumulative_small_base, "direct": cumulative_direct, "direct_progress": direct_progress,
             "page": page, "metrics": metrics, "periods": periods, "grain": grain,
             "source": source, "sources": phase_sources,
         }
@@ -220,7 +223,6 @@ class LaunchRhythmModule:
         total_orders = sum(phase["orders"] for phase in phases)
         total_lock = sum(phase["lock"] for phase in phases) if all(phase["lock"] is not None for phase in phases) else None
         total_small = sum(phase["small"] for phase in phases)
-        total_direct = sum(phase["direct"] for phase in phases)
         comparable_phases = [phase for phase in phases if phase["small_base"] > 0]
         combined_small_rate = safe_rate(
             sum(phase["small"] for phase in comparable_phases),
@@ -236,11 +238,11 @@ class LaunchRhythmModule:
                     gap = max((current - previous).days - 1, 0)
                 except ValueError:
                     pass
-            summary_rows.append([phase.get("campaign_label") or f"第{phase['phase']}期", phase["start_date"] or "日期缺失", phase["end_date"] or "日期缺失", phase["days"], gap, phase["orders"], phase["net"]])
+            summary_rows.append([phase.get("campaign_label") or f"第{phase['phase']}期", phase["start_date"] or "日期缺失", phase["end_date"] or "日期缺失", phase["days"], gap, phase["orders"], phase["net"], phase["direct_progress"]])
         sections = [section(
             "table", "阶段概览",
-            table(["阶段", "开始日期", "结束日期", "周期数", "距上期空档(天)", "累计大定", "累计留存大定"], summary_rows,
-                  formats=["text", "text", "text", "number", "number", "number", "number"]),
+            table(["阶段", "开始日期", "结束日期", "周期数", "距上期空档(天)", "累计大定", "累计留存大定", "累计直接大定进度"], summary_rows,
+                  formats=["text", "text", "text", "number", "number", "number", "number", "percent"]),
             "按绝对日期展示阶段边界；空档不计为0，也不参与趋势连线", source=phases[0]["source"],
         )]
         for phase in phases:
@@ -255,7 +257,7 @@ class LaunchRhythmModule:
                 kpi("多期累计大定", total_orders, "单", f"共{len(phases)}期", "blue"),
                 kpi("多期累计锁单", total_lock, "单", f"共{len(phases)}期 · 累计交车锁单", "green"),
                 kpi("多期小转大率", combined_small_rate * 100, "%", "按各期总小订加权计算", "purple"),
-                kpi("多期直接大定占比", safe_rate(total_direct, total_orders) * 100, "%", "分期累计后计算", "blue"),
+                kpi("累计直接大定进度", None, "%", "各期原表进度见阶段概览", "blue"),
             ],
             "sections": sections,
         }
