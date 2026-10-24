@@ -2161,7 +2161,9 @@ def _profile_from_history(
     # confirmed launch date so the browser does not discard valid D1 values as
     # belonging to another or missing absolute date.
     launch = _as_date(target_launch_date) or _as_date(item.get("launch_date"))
-    daily_orders = list(item.get("daily_orders") or [])
+    # A curve attached from launch actuals is useful reference evidence, but
+    # cannot become a higher-priority maintained-history quantity source.
+    daily_orders = [] if item.get("_daily_orders_from_actuals") else list(item.get("daily_orders") or [])
     daily_small = list(item.get("daily_small") or [])
     daily_direct = list(item.get("daily_direct") or [])
     cancel_progress = list(item.get("cancel_progress") or [])
@@ -2699,8 +2701,19 @@ def _attach_actual_shapes(history: list[dict[str, Any]], profiles: list[dict[str
             item["hourly_curve"] = []
             continue
         if not item.get("daily_orders"):
-            item["daily_orders"] = [row["gross"] for row in profile.get("days", [])
-                                    if row.get("date", "") < (today or date.today()).isoformat()]
+            start, finish = _as_date(item.get("launch_date")), _as_date(item.get("end_date"))
+            if start and finish is None and (span := _positive_day_count(item.get("days"))):
+                finish = start + timedelta(days=span-1)
+            # Preserve Dn calendar positions. An omitted D1 or internal day is
+            # unknown, rather than moving a later observation into that slot.
+            by_date = {day: row.get("gross") for row in profile.get("days", [])
+                       if start and (day := _as_date(row.get("date"))) is not None
+                       and start <= day < (today or date.today())
+                       and (finish is None or day <= finish)}
+            if by_date:
+                item["daily_orders"] = [by_date.get(start + timedelta(days=index))
+                                        for index in range((max(by_date)-start).days+1)]
+                item["_daily_orders_from_actuals"] = True
         first_hourly = next((row for row in profile.get("hourly_days", [])
                              if row.get("date") == item.get("launch_date")
                              and row.get("date", "") < (today or date.today()).isoformat()), {})

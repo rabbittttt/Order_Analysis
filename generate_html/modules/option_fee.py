@@ -500,7 +500,7 @@ class OptionFeeModule:
                 kpi("权益金额", round(rights_amount), "元", "当前权益", "purple"),
             ],
             "sections": [
-                section("fee_period_bands", "价格敏感度分析", {"periods": periods, "series": band_series, "actual_total": actual_total}, "月度选配金额段结构 · 实际金额总计", "half", penetration_source),
+                section("fee_period_bands", "价格敏感度分析", {"periods": periods, "series": band_series, "actual_total": actual_total, "actual_totals": [totals_by_period[period][1] for period in periods]}, "月度选配金额段结构 · 实际金额总计", "half", penetration_source),
                 section("fee_heatmap", "选配项渗透率热力图", {"periods": periods, "rows": penetration_rows}, "月度变化", "half", penetration_source),
                 section("rights", "当前权益", {"amount": rights_amount, "text": rights_text}, "代际专属权益", "half", penetration_source),
                 section("table", "版本选配金额与实际金额", table(["版本", "选配金额", "实际金额", "权益抵扣率"], version_rows, formats=["text", "number", "number", "percent"]), f"{latest} 权益抵扣效果", "half", penetration_source),

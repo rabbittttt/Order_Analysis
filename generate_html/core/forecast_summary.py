@@ -290,8 +290,8 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
             add(model, target.get("history_model"), day, "小订", "逐日小订", raw.get("small_daily_sources", {}).get(day.get("date")),
                 {"小订数量": day.get("orders")})
     for item in data.get("history", []):
-        if item["model"] in references.get(GROSS_DAILY_SHEET, {}):
-            continue  # The explicit quantity table below owns this history field.
+        if item.get("_daily_orders_from_actuals") or item["model"] in references.get(GROSS_DAILY_SHEET, {}):
+            continue  # Actual fallbacks keep their raw source; explicit history owns its field below.
         for index, value in enumerate(item.get("daily_orders", [])):
             start = item.get("launch_date")
             day = {"day": f"D{index + 1}", "date": (date.fromisoformat(start) + timedelta(days=index)).isoformat() if start else None}
