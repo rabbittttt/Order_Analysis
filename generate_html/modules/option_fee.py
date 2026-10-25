@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections import defaultdict
 from functools import lru_cache
@@ -248,16 +249,14 @@ def _period_amount_value(sheet, row: int, start: int, end: int) -> float:
         if clean_text(sheet.cell(band_row, col).value) in AGGREGATE_PERIODS
     ]
     ordered = total_columns + [col for col in range(start, end + 1) if col not in total_columns]
-    fallback = 0.0
     for col in ordered:
         raw = sheet.cell(row, col).value
-        if raw in (None, ""):
+        if raw in (None, "") or isinstance(raw, bool):
             continue
-        value = safe_number(raw)
-        if value:
+        value = safe_number(raw, float("nan"))
+        if math.isfinite(value):
             return value
-        fallback = value
-    return fallback
+    return 0.0
 
 
 def _version_rows_by_period(sheet, periods: list[str]) -> dict[str, list[list]]:

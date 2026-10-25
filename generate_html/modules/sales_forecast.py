@@ -1370,14 +1370,22 @@ def _progress_rows(workbook, sheet_name: str, *legacy_names: str) -> dict[str, l
         return {}
     sheet = workbook[sheet_name]
     headers = [str(cell.value or "").strip() for cell in sheet[1]]
-    day_columns = [(index, header) for index, header in enumerate(headers) if re.fullmatch(r"D\d+", header)]
+    numbered_columns = [(int(header[1:]), index) for index, header in enumerate(headers)
+                        if re.fullmatch(r"D\d+", header) and int(header[1:]) > 0]
+    day_columns = {}
+    for day, index in numbered_columns:
+        day_columns[day] = index if day not in day_columns else None
+    last_day = max(day_columns, default=0)
     result: dict[str, list[float | None]] = {}
     for values in sheet.iter_rows(min_row=2, values_only=True):
         if not values or not values[0]:
             continue
         record = dict(zip(headers, values))
         name = stage_name(record) if "二级代际名" in headers else str(values[0])
-        result[name] = [_optional_number(values[index]) for index, _ in day_columns]
+        # Missing or repeated physical Dn columns are unknown days, not
+        # permission to shift observations or choose one conflicting column.
+        result[name] = [_optional_number(values[day_columns[day]]) if day_columns.get(day) is not None else None
+                        for day in range(1, last_day+1)]
     return result
 
 
