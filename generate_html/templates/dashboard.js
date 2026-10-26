@@ -59,16 +59,27 @@
       return high>=box.top-1&&low<=box.bottom+1;
     });
   }
-  function rhythmLineLabel(point,text,occupied,points,segments,geometry){
+  function rhythmLineLabel(point,text,occupied,points,segments,geometry,complete=false){
     for(const fontSize of [RHYTHM_LAYOUT.fontSize,RHYTHM_LAYOUT.minFontSize])for(const offset of [-10,-16,-RHYTHM_LAYOUT.lineLabelMaxOffset,18,RHYTHM_LAYOUT.lineLabelMaxOffset]){
       const y=point.y+offset,box=rhythmLabelBox(text,point.x,y,fontSize);
       if(box.top<5||box.bottom>geometry.bottom-4||!rhythmLabelClear(box,occupied,points,segments))continue;
       return {x:point.x,y,box,fontSize,pointY:point.y};
     }
+    if(complete){
+      // This two-rate chart must keep every label. Wider date columns isolate
+      // their text; search nearby vertical slots before relaxing line avoidance.
+      const fontSize=RHYTHM_LAYOUT.minFontSize,candidates=Array.from({length:geometry.bottom-fontSize-8},(_,index)=>index+fontSize+7).sort((a,b)=>Math.abs(a-point.y)-Math.abs(b-point.y));
+      for(const avoidLines of [true,false])for(const y of candidates){
+        if(avoidLines&&Math.abs(y-point.y)>48)continue;
+        const box=rhythmLabelBox(text,point.x,y,fontSize);
+        if(box.bottom>geometry.bottom-4||!rhythmLabelClear(box,occupied,points,avoidLines?segments:[]))continue;
+        return {x:point.x,y,box,fontSize,pointY:point.y,leader:Math.abs(y-point.y)>RHYTHM_LAYOUT.lineLabelMaxOffset};
+      }
+    }
     return null;
   }
   function renderRhythmSvg(spec,availableWidth){
-    const rows=spec.rows||[],geometry=rhythmGeometry(rows.length,availableWidth,Math.max(0,...rows.map(row=>rhythmTextWidth(rhythmKnown(row.total)?fmt(row.total):'—',RHYTHM_LAYOUT.minFontSize)))),{width,height,left,right,bottom,plotHeight,step,barWidth}=geometry;
+    const rows=spec.rows||[],complete=spec.kind==='cancel-day',labelWidths=rows.flatMap(row=>[rhythmTextWidth(rhythmKnown(row.total)?fmt(row.total):'—',complete?RHYTHM_LAYOUT.fontSize:RHYTHM_LAYOUT.minFontSize),...(complete?(spec.lines||[]).filter(line=>rhythmKnown(row.rates?.[line.key])).map(line=>rhythmTextWidth((row.rates[line.key]*100).toFixed(line.digits??1)+'%')):[])]),geometry=rhythmGeometry(rows.length,availableWidth,Math.max(0,...labelWidths)),{width,height,left,right,bottom,plotHeight,step,barWidth}=geometry;
     const x=index=>left+index*step+step/2,barY=value=>bottom-value/spec.maxValue*plotHeight,rateY=value=>bottom-Math.min(Math.max(value,0),1)*plotHeight;
     const series=spec.series||[],lines=spec.lines||[],occupied=[],labels=[],points=[],segments=[],barAreas=[];
     const lineData=lines.map(line=>{
@@ -101,7 +112,7 @@
       const column=points.filter(point=>point.index===index).sort((a,b)=>b.y-a.y),rotation=index%Math.max(column.length,1);
       // Rotate label priority: two close curves must not permanently hide one another.
       [...column.slice(rotation),...column.slice(0,rotation)].forEach(point=>{
-        const text=(point.value*100).toFixed(point.line.digits??1)+'%',placement=rhythmLineLabel(point,text,occupied,points,segments,geometry);
+        const text=(point.value*100).toFixed(point.line.digits??1)+'%',placement=rhythmLineLabel(point,text,occupied,points,segments,geometry,complete);
         if(placement)saveLabel({...placement,text,kind:'line',color:point.line.color,series:point.line.key,index});
       });
     });
@@ -123,6 +134,7 @@
       return `<g data-rhythm-row="${index}" data-total="${row.total}"><title>${title}</title>${rectangles}</g>`;
     }).join('');
     const curves=lineData.map(({line,path,dots})=>`<path data-rhythm-series="${esc(line.key)}" d="${path}" fill="none" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"/>${dots.filter(Boolean).map(point=>`<circle data-rhythm-point="${esc(line.key)}" data-index="${point.index}" data-value="${point.value}" cx="${point.x}" cy="${point.y}" r="${RHYTHM_LAYOUT.pointRadius}" fill="#fff" stroke="${line.color}" stroke-width="${RHYTHM_LAYOUT.lineWidth}"><title>${esc(rows[point.index].label)} · ${esc(line.label)} ${(point.value*100).toFixed(line.digits??1)}%</title></circle>`).join('')}`).join('');
+    const labelLinks=labels.filter(label=>label.leader).map(label=>`<line data-rhythm-label-link="${esc(label.series)}" data-index="${label.index}" aria-hidden="true" x1="${label.x}" x2="${label.x}" y1="${label.pointY+(label.y<label.pointY?-4:4)}" y2="${label.y+(label.y<label.pointY?4:-label.fontSize-2)}" stroke="${label.color}" stroke-width="1" opacity=".55"/>`).join('');
     const valueLabels=labels.map(label=>{
       // Only bar labels use dark text over colored stacks. Line percentages
       // always retain their series color, matching the line and legend.
@@ -135,7 +147,7 @@
       if(axisBoxes.some(other=>rhythmBoxesOverlap(box,other)))return;axisBoxes.push(box);axisIndices.push(index);
     });
     const axis=axisIndices.sort((a,b)=>a-b).map(index=>`<text class="rhythm-axis-label" x="${x(index)}" y="${bottom+20}" text-anchor="middle">${esc(rhythmAxisText(rows[index].label))}<title>${esc(rows[index].label)}</title></text>`).join('');
-    return `<svg class="rhythm-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="width:${width}px;height:${height}px" data-plot-left="${left}" data-plot-right="${right}" data-plot-height="${plotHeight}" role="img" aria-label="${esc(spec.title)}"><line aria-hidden="true" class="rhythm-axis-line" x1="${left}" y1="${bottom}" x2="${width-right}" y2="${bottom}"/>${bars}${curves}${valueLabels}${axis}</svg>`;
+    return `<svg class="rhythm-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="width:${width}px;height:${height}px" data-plot-left="${left}" data-plot-right="${right}" data-plot-height="${plotHeight}" role="img" aria-label="${esc(spec.title)}"><line aria-hidden="true" class="rhythm-axis-line" x1="${left}" y1="${bottom}" x2="${width-right}" y2="${bottom}"/>${bars}${curves}${labelLinks}${valueLabels}${axis}</svg>`;
   }
   function renderRhythmChart(spec){
     const legend=[...(spec.series||[]),...(spec.lines||[]).map(line=>({...line,line:true}))].map(item=>`<span><i${item.line?' class="line-key"':''} style="background:${item.color}"></i>${esc(item.label)}</span>`).join('');
@@ -1090,8 +1102,9 @@
   function renderDailyCancel(rows){
     if(!rows?.length)return '<div class="empty-image">暂无日度退订数据</div>';
     const data=rows.map(row=>{
-      const small=Math.max(Number(row.daily||0),0),big=Math.max(Number(row.big_daily||0),0),small_rate=Number(row.small_rate||0),big_rate=Number(row.big_rate||0);
-      return {label:row.period,total:small+big,values:{small,big},rates:{small_rate,big_rate},tooltip:`${row.period} · 当日小订退 ${fmt(small)} · 当日大定退 ${fmt(big)} · 退订合计 ${fmt(small+big)} · 小订退率 ${(small_rate*100).toFixed(1)}% · 大定退率 ${(big_rate*100).toFixed(1)}%`};
+      const small=Math.max(Number(row.daily||0),0),big=Math.max(Number(row.big_daily||0),0),small_rate=row.small_rate==null||row.small_rate===''?null:Number(row.small_rate),big_rate=row.big_rate==null||row.big_rate===''?null:Number(row.big_rate);
+      const rateText=value=>rhythmKnown(value)?(value*100).toFixed(1)+'%':'—';
+      return {label:row.period,total:small+big,values:{small,big},rates:{small_rate,big_rate},tooltip:`${row.period} · 当日小订退 ${fmt(small)} · 当日大定退 ${fmt(big)} · 退订合计 ${fmt(small+big)} · 小订退率 ${rateText(small_rate)} · 大定退率 ${rateText(big_rate)}`};
     });
     return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:colors.coral},{key:'big',label:'当日大定退',color:colors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:'#0070C0',textColor:'#075fa8',digits:1},{key:'big_rate',label:'大定退率',color:colors.purple,textColor:'#6930bd',digits:1}]});
   }

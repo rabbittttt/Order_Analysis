@@ -122,7 +122,19 @@ assert(rhythmLineLabel(completed,'100.0%',[],[completed],[],geometry),'100% endp
 assert.equal(rhythmLineLabel(point,'40.0%',[{left:0,right:500,top:0,bottom:260}],points,[],geometry),null,'hide instead of moving away from its point');
 const close=renderDailyCancel(Array.from({length:14},(_,i)=>({period:'D'+(i+1),daily:10,big_daily:10,small_rate:.06,big_rate:.02})));
 const labelled=[...close.matchAll(/data-rhythm-label="line"[^>]*data-series="([^"]+)"/g)].map(match=>match[1]);
-assert(labelled.includes('small_rate')&&labelled.includes('big_rate'),'nearby curves must share the limited label space');
+assert.equal(labelled.filter(key=>key==='small_rate').length,14);assert.equal(labelled.filter(key=>key==='big_rate').length,14,'nearby curves must retain every label');
+const scenarios=[[0,0],[1,1],[.5,.5],[.06,.02],[null,0],['0','0.7'],[undefined,''],['invalid',null]];
+for(const values of scenarios){
+ const rows=Array.from({length:100},(_,i)=>({period:'D'+(i+1),daily:i%3?10:0,big_daily:i%2?10:0,small_rate:values[0],big_rate:values[1]})),before=JSON.stringify(rows),html=renderDailyCancel(rows);
+ const known=values.filter(value=>value!=null&&value!==''&&Number.isFinite(Number(value))).length;
+ assert.equal((html.match(/data-rhythm-point=/g)||[]).length,100*known);
+ assert.equal((html.match(/data-rhythm-label="line"/g)||[]).length,100*known,'all valid rates including zero need labels');
+ assert.equal(JSON.stringify(rows),before,'display must not modify source values');
+}
+const missing=renderDailyCancel([{period:'D1',daily:1,big_daily:2,small_rate:null,big_rate:0},{period:'D2',daily:1,big_daily:2,small_rate:.1,big_rate:null},{period:'D3',daily:1,big_daily:2,small_rate:null,big_rate:1}]);
+assert(missing.includes('小订退率 — · 大定退率 0.0%'));
+assert.equal((missing.match(/data-rhythm-label="line"/g)||[]).length,3);
+assert.equal((missing.match(/>0.0%<\/text>/g)||[]).length,1);
 '''
         subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)
 
