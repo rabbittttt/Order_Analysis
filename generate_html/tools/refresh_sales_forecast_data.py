@@ -29,7 +29,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
 
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records, iso_day
-from core.forecast_summary import GROSS_DAILY_SHEET, GROSS_PROGRESS_SHEET
+from core.forecast_summary import GROSS_DAILY_SHEET, GROSS_PROGRESS_SHEET, LAUNCH_CANCEL_SHEET, SMALL_CANCEL_SHEET, SMALL_CANCEL_DAILY_SHEET
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook, compact_diagnostic_ranges, reset_conflict_diagnostics
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -112,12 +112,17 @@ PROGRESS_SPECS = {
     "small": {"preferred": "小转大进度", "title_aliases": ("小转大", "小订转大定"), "forbidden": ()},
     "direct": {"preferred": "直接大定进度", "title_aliases": ("直接大定",), "forbidden": ()},
     "gross": {"preferred": GROSS_DAILY_SHEET, "title_aliases": ("大定当日数量", "大定进度", "总大定"), "forbidden": ("直接",)},
-    "cancel": {"preferred": "退订当日数量", "title_aliases": ("退订", "退定"), "forbidden": ()},
+    "cancel": {"preferred": "首销期退订进度", "title_aliases": ("退订", "退定"), "forbidden": ("小订期",)},
+    "small_cancel": {"preferred": "小订期退订进度", "title_aliases": ("小订期退订", "小订期退定"), "forbidden": ("首销",)},
 }
 
 
 class InputFormatError(ValueError):
     """Raised when a required logical table cannot be recognized from the source workbook."""
+
+
+class MissingProgressSheet(InputFormatError):
+    """An optional stage has no recognizable quantity table."""
 
 
 def normalize(value: Any) -> str:
@@ -266,13 +271,16 @@ def find_progress_sheet(
             continue
         title_key = header_key(sheet.title)
         name_score = 20 if any(header_key(alias) in title_key for alias in spec["title_aliases"]) else 0
+        if role in {"cancel", "small_cancel"} and (not name_score or any(
+                header_key(term) in title_key for term in spec["forbidden"])):
+            continue
         if any(header_key(term) in title_key for term in spec["forbidden"]):
             name_score -= 30
         if sheet.title == spec["preferred"]:
             name_score += 30
         candidates.append((name_score + min(len(day_columns), 10), sheet, row_number, headers, day_columns))
     if not candidates:
-        raise InputFormatError(
+        raise MissingProgressSheet(
             f"未找到{spec['preferred']}对应的当日数量表；允许Sheet轻微改名，但表头必须含车型和D1/D2…列。"
             f"现有Sheet：{'、'.join(workbook.sheetnames)}"
         )
@@ -733,14 +741,23 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
 
         raw_curves: dict[str, dict[str, list[Any]]] = {}
         day_counts = []
-        for target_name in ("small", "direct", "gross", "cancel"):
-            curves, count, recognized_sheet, header_row = extract_quantity_table(
-                source_workbook,
-                header_index,
-                target_name,
-            )
+        small_cancel_days = 0
+        for target_name in ("small", "direct", "gross", "cancel", "small_cancel"):
+            try:
+                curves, count, recognized_sheet, header_row = extract_quantity_table(
+                    source_workbook, header_index, target_name,
+                )
+            except MissingProgressSheet:
+                if target_name not in {"cancel", "small_cancel"}:
+                    raise
+                raw_curves[target_name] = {}
+                LOGGER.debug("整理表缺少%s，按对应阶段从小订退订分析补缺", PROGRESS_SPECS[target_name]["preferred"])
+                continue
             raw_curves[target_name] = curves
-            day_counts.append(count)
+            if target_name == "small_cancel":
+                small_cancel_days = count
+            else:
+                day_counts.append(count)
             LOGGER.debug(
                 "识别%s：Sheet=%s，表头行=%d，%d条曲线、D1-D%d",
                 PROGRESS_SPECS[target_name]["preferred"], recognized_sheet, header_row, len(curves), count,
@@ -799,7 +816,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
             )
 
     base_rows = []
-    daily_small_rows, daily_direct_rows, daily_gross_rows, daily_cancel_rows = [], [], [], []
+    daily_small_rows, daily_direct_rows, daily_gross_rows, daily_cancel_rows, small_cancel_rows = [], [], [], [], []
     model_data: list[dict[str, Any]] = []
     for record in summary:
         model = str(record["车型"]).strip()
@@ -865,6 +882,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         direct_curve = pad_curve(curve_for(model, raw_curves["direct"], mapping, aliases, "直接大定"), day_count)
         gross_curve = pad_curve(curve_for(model, raw_curves["gross"], mapping, aliases, "总大定"), day_count)
         cancel_curve = pad_curve(curve_for(model, raw_curves["cancel"], mapping, aliases, "退订"), day_count)
+        small_cancel_curve = pad_curve(curve_for(model, raw_curves["small_cancel"], mapping, aliases, "小订期退订"), small_cancel_days)
         # Fill by day only when BOTH observed components are present.
         combined = combine_daily(small_curve, direct_curve)
         gross_curve = [value if value not in (None, "") else combined[index]
@@ -873,10 +891,12 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         daily_direct_rows.append([model, *direct_curve])
         daily_gross_rows.append([model, *gross_curve])
         daily_cancel_rows.append([model, *cancel_curve])
+        small_cancel_rows.append([model, *small_cancel_curve])
         model_data.append({
             "model": model, "generation": generation, "mapping_status": mapping_status, "tier": tier, "days": int(as_number(record.get("首销期天数"), 0)),
             "total_small": total_small, "small_to_big": small_to_big, "gross": gross, "direct": direct,
             "cancel": cancel, "small_curve": small_curve, "direct_curve": direct_curve, "gross_curve": gross_curve, "cancel_curve": cancel_curve,
+            "small_cancel_curve": small_cancel_curve,
             "quality_status": quality_status, "quality_issues": quality_issues,
         })
 
@@ -896,7 +916,8 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         ["直接大定", "累计完成度", "累计当日直接大定数量/总直接大定", "直接大定当日数量+传播名汇总"],
         ["总大定", "累计完成度", "累计(当日小转大+当日直接大定)/总大定", "小转大当日数量+直接大定当日数量+预测基准总表"],
         ["小订转化", "累计小订转化率", "Python刷新时逐日累计：累计小转大当日数量/总小订", "小转大当日数量+预测基准总表"],
-        ["退订", "累计退订率", "生成时按历史逐日退订累计/总小订计算；汇总文件保留累计参考曲线", "累计退订率+预测基准总表"],
+        ["小订退订", LAUNCH_CANCEL_SHEET, "首销窗口的小订退订累计/总小订；整理表首销期退订进度优先，缺值取小订退订分析", source.name],
+        ["小订退订", SMALL_CANCEL_SHEET, "小订窗口的小订退订累计/总小订；整理表小订期退订进度优先，缺值取小订退订分析", source.name],
         ["直接大定", "累计直接大定占比", "累计直接大定/累计总大定", "小转大当日数量+直接大定当日数量"],
         ["直接大定", "每日直接大定占比", "当日直接大定/当日总大定", "小转大当日数量+直接大定当日数量"],
         ["D1/D2", "预测指标", "从历史首销逐日数量提取D1、D2；口径不一致时保留原数量但不生成结构指标", "历史首销参考数量"],
@@ -955,6 +976,11 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     write_rows(workbook, "直接大定当日数量", ["传播名", *day_headers], daily_direct_rows, "DailyDirect")
     write_rows(workbook, GROSS_DAILY_SHEET, ["传播名", *day_headers], daily_gross_rows, "DailyGross")
     write_rows(workbook, "退订当日数量", ["传播名", *day_headers], daily_cancel_rows, "DailyCancel")
+    small_cancel_headers = [f"D{i+1}" for i in range(small_cancel_days)]
+    write_rows(workbook, SMALL_CANCEL_DAILY_SHEET, ["传播名", *small_cancel_headers], small_cancel_rows, "SmallDailyCancel")
+    write_rows(workbook, SMALL_CANCEL_SHEET, ["传播名", *small_cancel_headers],
+               [[item["model"], *cumulative(item["small_cancel_curve"], item["total_small"])] for item in model_data],
+               "SmallCumulativeCancelRate", set(small_cancel_headers))
 
     derived_specs = [
         ("小转大累计完成度", "small_curve", "small_to_big", "SmallCompletion"),
@@ -984,7 +1010,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     ]
     write_rows(
         workbook,
-        "累计退订率",
+        LAUNCH_CANCEL_SHEET,
         ["传播名", *day_headers],
         cumulative_cancel_rows,
         "CumulativeCancelRate",
@@ -1413,7 +1439,7 @@ def audit_source_retention(workbook, raw_profiles):
                   for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, "退订当日数量")}
     metrics = {r.get("订单分析代际名"): r for r in table_records(workbook, D12_SHEET)}
     curves = {name: {r.get("订单分析代际名") or r.get("传播名"): r for r in table_records(workbook, name)}
-              for name in ("小转大累计完成度", "直接大定累计完成度", GROSS_PROGRESS_SHEET, "累计小订转化率", "累计退订率")}
+              for name in ("小转大累计完成度", "直接大定累计完成度", GROSS_PROGRESS_SHEET, "累计小订转化率", LAUNCH_CANCEL_SHEET)}
     for model, master in masters.items():
         start, end = calendar_day(master.get("首销开始")), calendar_day(master.get("首销结束"))
         if not start or not end or end < start:
@@ -1424,7 +1450,7 @@ def audit_source_retention(workbook, raw_profiles):
             for label, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", GROSS_DAILY_SHEET), ("退订数量", "退订当日数量")):
                 if label == "退订数量" and i == 1:
                     seed = quantities[sheet].get(model, {}).get("D1")
-                    rate = curves["累计退订率"].get(model, {}).get("D1")
+                    rate = curves[LAUNCH_CANCEL_SHEET].get(model, {}).get("D1")
                     denominator = master.get("总小订")
                     if valid(rate) and valid(denominator) and denominator > 0:
                         if not valid(seed) or not math.isclose(seed, rate*denominator, rel_tol=1e-12, abs_tol=1e-8):
@@ -1449,7 +1475,7 @@ def audit_source_retention(workbook, raw_profiles):
         for sheet, label, denominator in (("小转大累计完成度", "小转大", "总小转大"),
                 ("直接大定累计完成度", "直接大定", "总直接大定"),
                 (GROSS_PROGRESS_SHEET, "大定", "总大定"),
-                ("累计小订转化率", "小转大", "总小订"), ("累计退订率", "退订数量", "总小订")):
+                ("累计小订转化率", "小转大", "总小订"), (LAUNCH_CANCEL_SHEET, "退订数量", "总小订")):
             if not valid(master.get(denominator)) or master[denominator] <= 0:
                 continue
             for i, row in enumerate(selected, 1):
@@ -1579,7 +1605,7 @@ def append_forecast_views(path, as_of_date, workbook=None):
     data["mix_daily"] = mix_daily
     data["reference_daily"] = {
         name: {row[0]: list(row[1:]) for row in book[name].iter_rows(min_row=2, values_only=True) if row[0]}
-        for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, "退订当日数量") if name in book.sheetnames
+        for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, "退订当日数量", SMALL_CANCEL_DAILY_SHEET) if name in book.sheetnames
     }
 
     def emit(name, headers, rows, percent_headers=None):
@@ -1657,7 +1683,7 @@ def compact_source_sheets(workbook):
         grouped[(kind, filename)].append(original)
     for sheet in list(workbook.worksheets):
         if sheet.title.startswith("源_") or sheet.title in {
-            "车型汇总", "小订by天", "小订进度", "总大定当日数量", GROSS_DAILY_SHEET, "退订当日数量",
+            "车型汇总", "小订by天", "小订进度", "总大定当日数量", GROSS_DAILY_SHEET, "退订当日数量", SMALL_CANCEL_DAILY_SHEET,
         }:
             workbook.remove(sheet)
     workbook.remove(workbook[INDEX_SHEET])
@@ -1711,7 +1737,7 @@ def reorder_summary_sheets(workbook):
     """Keep a stable, readable progression without changing any source values."""
     first = [
         GUIDE_SHEET, "车型基本信息", "小订by时", "首销by时", DAILY_SHEET, WEEKLY_SHEET,
-        "小订当日数量", "小订累计完成度", D12_SHEET,
+        "小订当日数量", "小订累计完成度", SMALL_CANCEL_SHEET, D12_SHEET,
         "汇总说明", "字段说明", "车型基本信息", "数据来源目录",
         "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时",
         "预测基准总表",
@@ -1731,7 +1757,7 @@ def reorder_summary_sheets(workbook):
     ordered.extend(raw_sheets)
     if INDEX_SHEET in existing and existing[INDEX_SHEET] not in ordered:
         ordered.append(existing[INDEX_SHEET])
-    last_sheet = existing.get("累计退订率")
+    last_sheet = existing.get(LAUNCH_CANCEL_SHEET) or existing.get("累计退订率")
     remaining = [sheet for sheet in workbook.worksheets if sheet not in ordered and sheet is not last_sheet]
     workbook._sheets = ordered + remaining
     if last_sheet is not None:

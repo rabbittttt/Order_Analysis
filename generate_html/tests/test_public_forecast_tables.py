@@ -258,7 +258,7 @@ class PublicForecastTablesTests(TestCase):
                 sheet = book[MASTER_SHEET]
                 headers = [c.value for c in sheet[1]]
                 sheet.cell(2, headers.index('首销开始') + 1).value = invalid
-                book['累计退订率'].cell(2, 2).value = .1
+                book['首销期累计退订率'].cell(2, 2).value = .1
                 history = [{'model': '历史车', 'generation': '测试车'}]
                 profiles, windows, _, _ = read_public_forecast(book, history)
                 self.assertEqual(windows[model_key('测试车')]['launch_date'], '')
@@ -299,7 +299,7 @@ class PublicForecastTablesTests(TestCase):
 
     def test_valid_launch_date_still_applies_relative_cancel_curve(self):
         book = self.make_public()
-        book['累计退订率'].cell(2, 2).value = .1
+        book['首销期累计退订率'].cell(2, 2).value = .1
         history = [{'model': '历史车', 'generation': '测试车'}]
         profiles, _, _, _ = read_public_forecast(book, history)
         self.assertEqual(profiles[0]['days'][0]['cancel'], 10)

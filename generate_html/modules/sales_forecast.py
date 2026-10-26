@@ -15,7 +15,7 @@ from core.china_calendar import calendar_payload
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation, FORECAST_SOURCE_PATH
 from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type, compact_diagnostic_ranges
 from core.models import Dashboard, SourceRef, Subject
-from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, input_path, open_input, summary_scope, table_records, reservation_reference_shape
+from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, LAUNCH_CANCEL_SHEET, input_path, open_input, summary_scope, table_records, reservation_reference_shape
 
 
 LOGGER = logging.getLogger(__name__)
@@ -1538,7 +1538,8 @@ def _read_history() -> tuple[Path | None, list[dict[str, Any]]]:
             "small_progress": _progress_rows(workbook, "小转大累计完成度" if processed else "小转大进度"),
             "direct_progress": _progress_rows(workbook, "直接大定累计完成度" if processed else "直接大定进度"),
             "direct_share_progress": _progress_rows(workbook, "累计直接大定占比" if processed else "大定进度"),
-            "cancel_progress": _progress_rows(workbook, "累计退订率" if processed else "退订进度"),
+            "cancel_progress": (_progress_rows(workbook, LAUNCH_CANCEL_SHEET, "累计退订率") if processed
+                                else _progress_rows(workbook, "首销期退订进度", "退订进度")),
             "gross_progress": _progress_rows(workbook, "大定累计完成度", "累计大定完成度"),
             "daily_orders": _progress_rows(workbook, "大定当日数量", "总大定当日数量"),
             "daily_small": _progress_rows(workbook, "小转大当日数量"),

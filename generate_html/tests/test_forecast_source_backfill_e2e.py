@@ -417,10 +417,10 @@ class SourceBackfillEndToEndTests(TestCase):
             book[sheet].cell(row, headers.index(field)+1).value = None
         clear('小转大当日数量', 'D1')
         clear(D12_SHEET, 'D2直接大')
-        clear('累计退订率', 'D2')
+        clear('首销期累计退订率', 'D2')
         clear(MASTER_SHEET, '总直接大定')
         details = '\n'.join(audit_source_retention(book, raw))
-        for label in ('小转大当日数量', 'D2', '累计退订率', '总直接大定'):
+        for label in ('小转大当日数量', 'D2', '首销期累计退订率', '总直接大定'):
             self.assertIn(label, details)
         headers = [c.value for c in book[DAILY_SHEET][1]]
         for cells in book[DAILY_SHEET].iter_rows(min_row=2):

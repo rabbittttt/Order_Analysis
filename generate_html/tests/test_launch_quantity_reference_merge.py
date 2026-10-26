@@ -129,10 +129,10 @@ class LaunchQuantityReferenceMergeTests(TestCase):
         self.assertIn('大定累计完成度', book.sheetnames)
         self.assertNotIn('累计大定完成度', book.sheetnames)
         self.assertNotIn('总大定当日数量', book.sheetnames)
-        self.assertEqual(book.sheetnames[-1], '累计退订率')
+        self.assertEqual(book.sheetnames[-1], '首销期累计退订率')
         self.assertEqual(book['退订当日数量']['C2'].value, 2)
         self.assertNotIn('%', book['退订当日数量']['C2'].number_format)
-        self.assertIn('%', book['累计退订率']['B2'].number_format)
+        self.assertIn('%', book['首销期累计退订率']['B2'].number_format)
         self.assertTrue(all(sheet.sheet_state == 'visible' for sheet in book))
 
     def test_web_reads_canonical_and_legacy_sheet_names_without_losing_values(self):
