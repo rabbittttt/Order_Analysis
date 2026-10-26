@@ -59,7 +59,16 @@
 
   function positiveDays(value) {
     const count = Number(value);
-    return typeof value !== 'boolean' && Number.isInteger(count) && count > 0 ? count : 0;
+    return typeof value !== 'boolean' && Number.isSafeInteger(count) && count > 0 ? count : 0;
+  }
+
+  function shiftCalendarDate(start, count) {
+    const first=dateNumber(start), days=positiveDays(count);
+    if(!Number.isFinite(first)||!days)return '';
+    const last=new Date(first+(days-1)*86400000);
+    if(!Number.isFinite(last.getTime()))return '';
+    const value=last.toISOString().slice(0,10);
+    return Number.isFinite(dateNumber(value))?value:'';
   }
 
   // UTC date-only arithmetic: the contract matches Python's calendar dates,
@@ -69,11 +78,12 @@
     const unknown = label => ({key:'unknown',label,day:0,days:0,start:Number.isFinite(start)?launchDate:'',end:''});
     if (!Number.isFinite(start)) return unknown('时间缺失');
     if (endDate && !Number.isFinite(dateNumber(endDate))) return unknown('首销结束日期无效');
-    const end = endDate ? dateNumber(endDate) : count ? start+(count-1)*86400000 : NaN;
+    const finish = endDate || shiftCalendarDate(launchDate,count);
+    const end = dateNumber(finish);
     if (end < start) return {...unknown('首销窗口冲突'),end:endDate};
     if (!Number.isFinite(end)) return unknown('首销截止日期与天数缺失');
     if (!Number.isFinite(current)) return unknown('判定日期无效');
-    const span = (end-start)/86400000+1, finish = new Date(end).toISOString().slice(0,10);
+    const span = (end-start)/86400000+1;
     const key = current < start ? 'before' : current > end ? 'ended' : 'active';
     return {key,label:{before:'首销期未开始',active:'首销期进行中',ended:'首销期已结束'}[key],
       day:key==='before'?0:key==='ended'?span:(current-start)/86400000+1,days:span,start:launchDate,end:finish};
@@ -147,9 +157,7 @@
   }
 
   function forecastWindows(configured = {}, values = {}) {
-    const parse = dateNumber;
-    const shift = (start, count) => Number.isFinite(parse(start)) && count > 0
-      ? new Date(parse(start)+(count-1)*86400000).toISOString().slice(0,10) : '';
+    const shift = shiftCalendarDate;
     const launchDate = values.launchDate ?? configured.launch_date ?? '';
     const days = positiveDays(values.days ?? configured.days ?? configured.launch_days);
     const smallStartDate = values.smallStartDate ?? configured.small_start_date ?? '';

@@ -299,12 +299,13 @@ def load_data_workbook(path: Path, cache_dir: Path | None = None):
             raise ValueError("incomplete workbook cache")
         return result
 
-    if cache is not None and cache.exists():
+    if cache is not None:
         try:
-            with gzip.open(cache, "rt", encoding="utf-8") as stream:
-                result = restore(stream)
-            LOGGER.debug("Excel解析缓存命中: %s", path.name)
-            return result
+            if cache.exists():
+                with gzip.open(cache, "rt", encoding="utf-8") as stream:
+                    result = restore(stream)
+                LOGGER.debug("Excel解析缓存命中: %s", path.name)
+                return result
         except (OSError, EOFError, ValueError, TypeError, IndexError, KeyError):
             LOGGER.debug("Excel解析缓存失效，重新读取: %s", path.name)
 
@@ -316,6 +317,18 @@ def load_data_workbook(path: Path, cache_dir: Path | None = None):
     result.remove(result.active)
     pending = None
     writer = None
+
+    def close_writer():
+        nonlocal writer
+        stream, writer = writer, None
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                LOGGER.debug("Excel解析缓存关闭失败，当前读取结果仍有效: %s", path.name)
+                return False
+        return True
+
     try:
         if cache is not None:
             try:
@@ -326,16 +339,16 @@ def load_data_workbook(path: Path, cache_dir: Path | None = None):
                 writer = gzip.open(pending, "wt", encoding="utf-8", compresslevel=1)
                 writer.write(json.dumps(signature) + "\n")
             except OSError:
+                close_writer()
                 LOGGER.debug("Excel解析缓存不可写，将直接读取: %s", path.name)
 
         def write(record):
-            nonlocal writer
             if writer is not None:
                 try:
                     writer.write(json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n")
                 except OSError:
-                    writer.close()
-                    writer = None
+                    close_writer()
+                    LOGGER.debug("Excel解析缓存写入失败，当前读取结果仍有效: %s", path.name)
 
         from datetime import time, timedelta
         for raw in source.worksheets:
@@ -365,24 +378,26 @@ def load_data_workbook(path: Path, cache_dir: Path | None = None):
                 if entries:
                     write(["row", row_number, entries])
         write(["end"])
-        if writer is not None:
-            writer.close()
-            writer = None
+        if writer is not None and close_writer():
             # Never commit a cache for a source edited while it was being read.
-            after = path.stat()
-            if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) == (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns):
-                try:
+            try:
+                after = path.stat()
+                if (after.st_size, after.st_mtime_ns, after.st_ctime_ns) == (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns):
                     os.replace(pending, cache)
                     pending = None
-                except OSError:
-                    LOGGER.debug("Excel解析缓存提交失败，当前读取结果仍有效: %s", path.name)
+            except OSError:
+                LOGGER.debug("Excel解析缓存提交失败，当前读取结果仍有效: %s", path.name)
         return result
     finally:
-        source.close()
-        if writer is not None:
-            writer.close()
-        if pending is not None:
-            pending.unlink(missing_ok=True)
+        try:
+            source.close()
+        finally:
+            close_writer()
+            if pending is not None:
+                try:
+                    pending.unlink(missing_ok=True)
+                except OSError:
+                    LOGGER.debug("Excel解析缓存临时文件清理失败: %s", path.name)
 
 
 @lru_cache(maxsize=4096)
@@ -1842,6 +1857,7 @@ def parse_metric_sheet(sheet: Any) -> dict[str, dict[str, Any]]:
                else header for header in headers]
     periods = [header for header in headers if header]
     result = {period: {"metrics": {}, "structures": {}} for period in periods}
+    counts = {}
     current_metric = ""
     current_stat = ""
     for row in range(2, sheet.max_row + 1):
@@ -1865,9 +1881,12 @@ def parse_metric_sheet(sheet: Any) -> dict[str, dict[str, Any]]:
                     {"label": category, "share": cell_number(cell, rate=True), "count": None}
                 )
             elif current_stat == "数量":
-                rows = result[period]["structures"].setdefault(current_metric, [])
-                target = next((entry for entry in rows if entry["label"] == category), None)
-                if target:
-                    target["count"] = cell_number(cell)
+                result[period]["structures"].setdefault(current_metric, [])
+                counts[period, current_metric, category] = cell_number(cell)
+    # Counts and shares are independent blocks; their row order is not a contract.
+    for period, data in result.items():
+        for metric, rows in data["structures"].items():
+            for entry in rows:
+                entry["count"] = counts.get((period, metric, entry["label"]))
     _METRIC_SHEET_CACHE[sheet] = result
     return result
