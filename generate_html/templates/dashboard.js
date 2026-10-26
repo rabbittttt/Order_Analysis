@@ -112,6 +112,7 @@
       const column=points.filter(point=>point.index===index).sort((a,b)=>b.y-a.y),rotation=index%Math.max(column.length,1);
       // Rotate label priority: two close curves must not permanently hide one another.
       [...column.slice(rotation),...column.slice(0,rotation)].forEach(point=>{
+        if(complete&&point.value===0)return;
         const text=(point.value*100).toFixed(point.line.digits??1)+'%',placement=rhythmLineLabel(point,text,occupied,points,segments,geometry,complete);
         if(placement)saveLabel({...placement,text,kind:'line',color:point.line.color,series:point.line.key,index});
       });
