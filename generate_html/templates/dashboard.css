@@ -500,6 +500,33 @@ button {
   border-radius:4px;
 }
 
+.sku-heatmap-scroll {
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  overflow-x:auto;
+  overflow-y:hidden;
+  cursor:grab;
+  scrollbar-width:thin;
+}
+.sku-heatmap-scroll.is-dragging {cursor:grabbing;user-select:none}
+.sku-heatmap-scroll:focus-visible {outline:2px solid #1677ff;outline-offset:2px}
+.sku-heatmap {
+  width:max-content;
+  min-width:100%;
+  overflow:visible;
+}
+.sku-heatmap .heatmap-row {
+  grid-template-columns:90px repeat(var(--cols),minmax(72px,1fr));
+  min-width:calc(90px + var(--cols)*75px);
+}
+.sku-heatmap .heatmap-row>div:first-child {
+  position:sticky;
+  left:0;
+  z-index:1;
+  box-shadow:3px 0 0 #fff;
+}
+
 .heat-head,.heat-label {
   background:#f4f6f9;
   color:#687589;

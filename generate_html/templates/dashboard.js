@@ -724,6 +724,7 @@
     $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
     bindRhythmCharts();
     bindChannelPanels();
+    bindSkuHeatmaps();
     alignOverviewChartScrollbars();
     document.querySelectorAll("[data-panel-source]").forEach(button=>button.onclick=()=>jumpToSource(page.sections[Number(button.dataset.panelSource)]?.source));
     document.querySelectorAll("[data-combo-switch]").forEach(button=>button.onclick=()=>{
@@ -1015,9 +1016,40 @@
     const periods=data?.periods||[],rows=data?.rows||[],columns=Math.max(periods.length,1);
     return `<div class="fee-heatmap"><div class="fee-heat-row" style="--cols:${columns}"><div class="heat-head">选配项</div>${periods.map(period=>`<div class="heat-head">${esc(period)}</div>`).join("")}</div>${rows.map(row=>`<div class="fee-heat-row" style="--cols:${columns}"><div class="heat-label" title="${esc(row.group)} · ${esc(row.label)}"><small>${esc(row.group)}</small>${esc(row.label)}</div>${periods.map((_,index)=>{const value=Number(row.values[index]||0);return `<div class="fee-heat-cell" style="background:rgba(22,119,255,${.08+Math.min(value,1)*.68})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div>`;
   }
+  function bindSkuHeatmaps(){
+    document.querySelectorAll('[data-sku-scroll]').forEach(scroll=>{
+      if(scroll._skuHeatmapBound)return;scroll._skuHeatmapBound=true;
+      const selected=[...scroll.querySelectorAll('[data-sku-period]')].find(cell=>cell.dataset.skuPeriod===String(state.period));
+      scroll.scrollLeft=selected?Math.max(0,selected.getBoundingClientRect().right-scroll.getBoundingClientRect().right+scroll.scrollLeft):scroll.scrollWidth;
+      let drag=null;
+      const stop=event=>{
+        if(!drag||event.pointerId!==drag.id)return;
+        const id=drag.id;drag=null;scroll.classList.remove('is-dragging');
+        if(scroll.hasPointerCapture(id))scroll.releasePointerCapture(id);
+      };
+      scroll.addEventListener('pointerdown',event=>{
+        if(event.pointerType!=='mouse'||event.button!==0||scroll.scrollWidth<=scroll.clientWidth+1)return;
+        const box=scroll.getBoundingClientRect();
+        if(event.clientY>=box.top+scroll.clientHeight||event.clientX>=box.left+scroll.clientWidth)return;
+        drag={id:event.pointerId,x:event.clientX,left:scroll.scrollLeft};
+        scroll.focus({preventScroll:true});scroll.classList.add('is-dragging');scroll.setPointerCapture(event.pointerId);event.preventDefault();
+      });
+      scroll.addEventListener('pointermove',event=>{
+        if(!drag||event.pointerId!==drag.id)return;
+        scroll.scrollLeft=drag.left+drag.x-event.clientX;event.preventDefault();
+      });
+      ['pointerup','pointercancel','lostpointercapture'].forEach(type=>scroll.addEventListener(type,stop));
+      scroll.addEventListener('keydown',event=>{
+        if(event.target!==scroll||event.altKey||event.ctrlKey||event.metaKey)return;
+        const targets={ArrowLeft:scroll.scrollLeft-75,ArrowRight:scroll.scrollLeft+75,Home:0,End:scroll.scrollWidth};
+        if(!Object.hasOwn(targets,event.key))return;
+        scroll.scrollLeft=targets[event.key];event.preventDefault();
+      });
+    });
+  }
   function renderSkuHeatmap(data){
     const periods=data?.periods||[],rows=data?.rows||[],columns=Math.max(periods.length,1);
-    return `<div class="heatmap"><div class="heatmap-row" style="--cols:${columns}"><div class="heat-head">累计锁单</div>${periods.map(p=>`<div class="heat-head">${esc(p)}</div>`).join("")}</div>${rows.map(row=>`<div class="heatmap-row" style="--cols:${columns}"><div class="heat-label">${esc(row.label)}</div>${periods.map((_,index)=>{const raw=row.values[index];if(raw==null||!Number.isFinite(Number(raw)))return '<div title="该周期未提供累计锁单占比">—</div>';const value=Number(raw);return `<div style="background:rgba(0,181,120,${.12+value*.72})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div>`;
+    return `<div class="sku-heatmap-scroll" data-sku-scroll tabindex="0" role="region" aria-label="SKU累计锁单占比历史表，首列固定，可左右拖动或使用左右方向键查看全部周期"><div class="heatmap sku-heatmap"><div class="heatmap-row" style="--cols:${columns}"><div class="heat-head">累计锁单</div>${periods.map(p=>`<div class="heat-head" data-sku-period="${esc(p)}">${esc(p)}</div>`).join("")}</div>${rows.map(row=>`<div class="heatmap-row" style="--cols:${columns}"><div class="heat-label">${esc(row.label)}</div>${periods.map((_,index)=>{const raw=row.values[index];if(raw==null||!Number.isFinite(Number(raw)))return '<div title="该周期未提供累计锁单占比">—</div>';const value=Number(raw);return `<div style="background:rgba(0,181,120,${.12+value*.72})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div></div>`;
   }
   function renderComboHeatmap(data){
     const periods=data?.periods||[],rows=data?.rows||[],index=Math.max(periods.length-1,0);
