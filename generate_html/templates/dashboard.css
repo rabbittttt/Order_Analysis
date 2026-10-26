@@ -168,6 +168,7 @@ button {
 }
 .channel-matrix .channel-name-col {width:var(--channel-name-width)}
 .channel-matrix .channel-period-col {width:72px}
+.channel-matrix .channel-store-col {width:64px}
 .channel-matrix th,.channel-matrix td {
   min-width:72px;
   padding:3px 8px;
@@ -197,6 +198,16 @@ button {
   overflow-wrap:anywhere;
   box-shadow:2px 0 3px rgba(29,55,82,.06);
 }
+.channel-matrix .channel-store-count {
+  position:sticky;
+  left:var(--channel-name-width);
+  z-index:2;
+  width:64px;
+  min-width:64px;
+  max-width:64px;
+  box-shadow:2px 0 3px rgba(29,55,82,.06);
+}
+.channel-matrix thead .channel-store-count {z-index:3;background:#e9f2fd}
 .channel-matrix thead tr>th:first-child {z-index:3;background:#e9f2fd}
 .channel-matrix tbody th {font-weight:500}
 .channel-matrix .channel-current-period {background:#f0f7ff}

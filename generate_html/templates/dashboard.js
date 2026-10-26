@@ -798,14 +798,16 @@
   function channelNames(data,history){return [...new Set([...(data.rows||[]),...history.flatMap(entry=>entry.rows||[])].filter(row=>row.store_count!==0).map(row=>row.channel).filter(Boolean))]}
   function channelRow(entry,name){return (entry.rows||[]).find(row=>row.channel===name)}
   function channelHistoryMatrix(data,history,names,key,label,format,unit,totalKey){
+    const showStores=key==='productivity';
+    const storeCell=value=>showStores?`<td class="channel-store-count" data-store-count="${channelKnown(value)?value:''}">${channelValue(value)}</td>`:'';
     const valuesFor=name=>history.map(entry=>channelRow(entry,name)?.[key]);
     const cells=values=>values.map((value,index)=>`<td data-period="${esc(history[index].period)}" data-value="${channelKnown(value)?value:''}"${index===history.length-1?' class="channel-current-period"':''}>${channelValue(value,format)}</td>`).join('');
     const body=names.map(name=>{
       const current=channelRow({rows:data.rows},name),stores=key==='active_rate'?`<small>配置 ${channelValue(current?.store_count)} 家</small>`:'';
-      return `<tr data-channel="${esc(name)}"><th scope="row"><span class="channel-row-heading"><i style="background:${channelColor(name)}" aria-hidden="true"></i><span>${esc(name)}${stores}</span></span></th>${cells(valuesFor(name))}</tr>`;
+      return `<tr data-channel="${esc(name)}"><th scope="row"><span class="channel-row-heading"><i style="background:${channelColor(name)}" aria-hidden="true"></i><span>${esc(name)}${stores}</span></span></th>${storeCell(current?.store_count)}${cells(valuesFor(name))}</tr>`;
     }).join('');
-    const total=totalKey?`<tfoot><tr data-channel="__total__"><th scope="row">${key==='active_rate'?'整体出单率':key==='productivity'?'整体单店产能':'合计'}</th>${cells(history.map(entry=>entry.totals?.[totalKey]))}</tr></tfoot>`:'';
-    return `<section class="channel-table-block"><div class="channel-subhead"><h3>${esc(label)}</h3><span>${esc(unit)}</span></div><div class="channel-matrix-scroll" data-channel-scroll tabindex="0" role="region" aria-label="${esc(label)}历史表，渠道列固定，可横向滚动"><table class="channel-matrix" data-channel-table="${key}"><caption class="sr-only">${esc(label)}，各渠道为行、历史周期为列</caption><colgroup><col class="channel-name-col">${history.map(()=>'<col class="channel-period-col">').join('')}</colgroup><thead><tr><th scope="col">门店渠道</th>${history.map((entry,index)=>`<th scope="col" data-period="${esc(entry.period)}"${index===history.length-1?' class="channel-current-period"':''}>${esc(entry.period)}</th>`).join('')}</tr></thead><tbody>${body}</tbody>${total}</table></div></section>`;
+    const total=totalKey?`<tfoot><tr data-channel="__total__"><th scope="row">${key==='active_rate'?'整体出单率':key==='productivity'?'整体单店产能':'合计'}</th>${storeCell(data.totals?.store_count)}${cells(history.map(entry=>entry.totals?.[totalKey]))}</tr></tfoot>`:'';
+    return `<section class="channel-table-block"><div class="channel-subhead"><h3>${esc(label)}</h3><span>${esc(unit)}</span></div><div class="channel-matrix-scroll" data-channel-scroll tabindex="0" role="region" aria-label="${esc(label)}历史表，渠道${showStores?'及门店数':''}列固定，可横向滚动"><table class="channel-matrix" data-channel-table="${key}"><caption class="sr-only">${esc(label)}，${showStores?'门店数为当前配置，':''}各渠道为行、历史周期为列</caption><colgroup><col class="channel-name-col">${showStores?'<col class="channel-store-col">':''}${history.map(()=>'<col class="channel-period-col">').join('')}</colgroup><thead><tr><th scope="col">门店渠道</th>${showStores?'<th scope="col" class="channel-store-count" title="当前配置门店数（家）">门店数</th>':''}${history.map((entry,index)=>`<th scope="col" data-period="${esc(entry.period)}"${index===history.length-1?' class="channel-current-period"':''}>${esc(entry.period)}</th>`).join('')}</tr></thead><tbody>${body}</tbody>${total}</table></div></section>`;
   }
   function channelAxisMax(values){
     const maximum=Math.max(0,...values.filter(channelKnown));if(!maximum)return 1;
