@@ -158,11 +158,56 @@ class LaunchRhythmModule:
         for row in range(3, sheet.max_row + 1):
             label = clean_text(sheet.cell(row, 1).value)
             if label:
-                is_rate = "率" in label or "进度" in label
+                is_rate = "率" in label or "进度" in label or "占比" in label
                 display_label = label.replace("净大定", "留存大定")
-                values = [cell_number(sheet.cell(row, col), rate=is_rate, default=None) for col in period_columns]
+                values = [None if isinstance(sheet.cell(row, col).value, bool) else
+                          cell_number(sheet.cell(row, col), rate=is_rate, default=None) for col in period_columns]
                 metrics[display_label] = [value if isinstance(value, (int, float)) and math.isfinite(value) else None
                                           for value in values]
+        def quantity(index, *names):
+            for name in names:
+                values = metrics.get(name, [])
+                value = values[index] if index < len(values) else None
+                if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                        and math.isfinite(value) and value >= 0):
+                    return value
+            return None
+
+        def share(numerator, denominator):
+            if numerator is None or denominator is None or denominator <= 0:
+                return None
+            value = numerator / denominator
+            return value if math.isfinite(value) else None
+
+        daily_shares, cumulative_shares, cumulative_pairs = [], [], []
+        for index in range(len(periods)):
+            daily_shares.append(share(quantity(index, "当日直接大定数量"),
+                                      quantity(index, "当日大定数量")))
+            direct = quantity(index, "累计直接大定数量")
+            gross = quantity(index, "累计总大定数量", "累计大定数量")
+            if gross is None and direct is not None:
+                small = quantity(index, "累计小订转大定数量", "累计小订转大数量")
+                gross = small + direct if small is not None else None
+                if gross is not None and not math.isfinite(gross):
+                    gross = None
+            cumulative_pairs.append((direct, gross))
+            cumulative_shares.append(share(direct, gross))
+        # Quantities own these shares; an old completion-progress row or a
+        # maintained share cannot silently replace its matching denominator.
+        metrics["每日直接大定占比"] = daily_shares
+        metrics["累计直接大定占比"] = cumulative_shares
+        share_index = next((index for index in reversed(range(len(periods)))
+                            if cumulative_shares[index] is not None), None)
+        direct_share = cumulative_shares[share_index] if share_index is not None else None
+        pair_index = share_index
+        if pair_index is None:
+            # An explicitly empty phase has known quantities for a multi-phase
+            # sum even though its individual 0/0 share is undefined.
+            pair_index = next((index for index in reversed(range(len(periods)))
+                               if cumulative_pairs[index] == (0, 0)), None)
+        direct_share_numerator, direct_share_denominator = (
+            cumulative_pairs[pair_index] if pair_index is not None else (None, None))
+
         date_labels = [_date_label(sheet.cell(2, col)) for col in period_columns]
         date_labels = [label for label in date_labels if label]
         start_date = date_labels[0] if date_labels else ""
@@ -180,16 +225,16 @@ class LaunchRhythmModule:
         cumulative_small_rate = latest("累计小订转化率") or latest("累计小转大率")
         cumulative_small_base = safe_rate(cumulative_small, cumulative_small_rate) if cumulative_small_rate > 0 else 0
         cumulative_direct = latest("累计直接大定数量")
-        direct_progress = next((value for value in reversed(metrics.get("累计直接大定进度", []))
-                                if value is not None), None)
-        source_note = f"{'当周' if grain == 'week' else '当日'}直接大定 / {'当周' if grain == 'week' else '当日'}小订转大 · 数量不累计，转化率和进度仍为累计口径"
-        matrix_rows = [[name, *[f"{value * 100:.1f}%" if value is not None and ("率" in name or "进度" in name) else value for value in values]] for name, values in metrics.items()]
+        source_note = f"{'当周' if grain == 'week' else '当日'}直接大定 / {'当周' if grain == 'week' else '当日'}小订转大 · 数量不累计，小转大率和直接大定占比为累计口径"
+        matrix_rows = [[("当周直接大定占比" if grain == "week" and name == "每日直接大定占比" else name),
+                        *[f"{value * 100:.1f}%" if value is not None and any(word in name for word in ("率", "进度", "占比"))
+                          else value for value in values]] for name, values in metrics.items()]
         page = {
             "kpis": [
                 kpi("累计大定", cumulative_order, "单", periods[-1], "blue"),
                 kpi("累计锁单", cumulative_lock, "单", "累计交车锁单", "green"),
                 kpi("累计小转大率", cumulative_small_rate * 100, "%", "累计小转大 ÷ 总小订", "purple"),
-                kpi("累计直接大定进度", direct_progress * 100 if direct_progress is not None else None,
+                kpi("累计直接大定占比", direct_share * 100 if direct_share is not None else None,
                     "%", "累计直接大定 ÷ 累计总大定", "blue"),
             ],
             "sections": [
@@ -213,7 +258,8 @@ class LaunchRhythmModule:
             "selector_label": f"{campaign_label or f'第{phase_number}期'} · {range_label}" if range_label else f"{campaign_label or f'第{phase_number}期'}",
             "days": len(periods), "orders": cumulative_order, "net": cumulative_net, "lock": cumulative_lock,
             "small": cumulative_small, "small_rate": cumulative_small_rate,
-            "small_base": cumulative_small_base, "direct": cumulative_direct, "direct_progress": direct_progress,
+            "small_base": cumulative_small_base, "direct": cumulative_direct, "direct_share": direct_share,
+            "direct_share_numerator": direct_share_numerator, "direct_share_denominator": direct_share_denominator,
             "page": page, "metrics": metrics, "periods": periods, "grain": grain,
             "source": source, "sources": phase_sources,
         }
@@ -223,6 +269,14 @@ class LaunchRhythmModule:
         total_orders = sum(phase["orders"] for phase in phases)
         total_lock = sum(phase["lock"] for phase in phases) if all(phase["lock"] is not None for phase in phases) else None
         total_small = sum(phase["small"] for phase in phases)
+        share_pairs = [(phase.get("direct_share_numerator"), phase.get("direct_share_denominator"))
+                       for phase in phases]
+        combined_direct_share = None
+        if all(numerator is not None and denominator is not None for numerator, denominator in share_pairs):
+            direct_total = sum(numerator for numerator, _ in share_pairs)
+            gross_total = sum(denominator for _, denominator in share_pairs)
+            if math.isfinite(direct_total) and math.isfinite(gross_total) and gross_total > 0:
+                combined_direct_share = direct_total / gross_total
         comparable_phases = [phase for phase in phases if phase["small_base"] > 0]
         combined_small_rate = safe_rate(
             sum(phase["small"] for phase in comparable_phases),
@@ -238,10 +292,10 @@ class LaunchRhythmModule:
                     gap = max((current - previous).days - 1, 0)
                 except ValueError:
                     pass
-            summary_rows.append([phase.get("campaign_label") or f"第{phase['phase']}期", phase["start_date"] or "日期缺失", phase["end_date"] or "日期缺失", phase["days"], gap, phase["orders"], phase["net"], phase["direct_progress"]])
+            summary_rows.append([phase.get("campaign_label") or f"第{phase['phase']}期", phase["start_date"] or "日期缺失", phase["end_date"] or "日期缺失", phase["days"], gap, phase["orders"], phase["net"], phase["direct_share"]])
         sections = [section(
             "table", "阶段概览",
-            table(["阶段", "开始日期", "结束日期", "周期数", "距上期空档(天)", "累计大定", "累计留存大定", "累计直接大定进度"], summary_rows,
+            table(["阶段", "开始日期", "结束日期", "周期数", "距上期空档(天)", "累计大定", "累计留存大定", "累计直接大定占比"], summary_rows,
                   formats=["text", "text", "text", "number", "number", "number", "number", "percent"]),
             "按绝对日期展示阶段边界；空档不计为0，也不参与趋势连线", source=phases[0]["source"],
         )]
@@ -257,7 +311,8 @@ class LaunchRhythmModule:
                 kpi("多期累计大定", total_orders, "单", f"共{len(phases)}期", "blue"),
                 kpi("多期累计锁单", total_lock, "单", f"共{len(phases)}期 · 累计交车锁单", "green"),
                 kpi("多期小转大率", combined_small_rate * 100, "%", "按各期总小订加权计算", "purple"),
-                kpi("累计直接大定进度", None, "%", "各期原表进度见阶段概览", "blue"),
+                kpi("累计直接大定占比", combined_direct_share * 100 if combined_direct_share is not None else None,
+                    "%", "各期累计直接数量合计 ÷ 各期累计总大定合计", "blue"),
             ],
             "sections": sections,
         }

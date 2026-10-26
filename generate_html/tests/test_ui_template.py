@@ -76,8 +76,8 @@ for(const missing of [{'累计直接大定数量':[100],'累计小订转大数�
 }
 const week=renderLaunch({periods:['W1','W2','W3'],metrics,grain:'week'});
 assert(week.includes('当周直接大定'));assert(!week.includes('当日'));assert(!week.includes('累计直接大定</span>'));
-const rates=renderLaunch({periods:['D1','D2'],metrics:{'当日小订转大数量':[10,10],'当日直接大定数量':[30,20],'累计小订转化率':[.1,.2],'累计直接大定进度':[.6,1]}});
-assert(rates.includes('>20.0%</text>'));assert(rates.includes('100.0%'));
+const rates=renderLaunch({periods:['D1','D2'],metrics:{'当日小订转大数量':[10,10],'当日直接大定数量':[30,20],'累计小订转化率':[.1,.2],'累计直接大定占比':[.75,50/70],'累计直接大定进度':[.6,1]}});
+assert(rates.includes('>20.0%</text>'));assert(rates.includes('71.4%'));assert(!rates.includes('100.0%'));
 assert(rates.includes('D2 · 当日直接大定 20 · 当日小订转大 10 · 来源合计 30'));
 '''
         subprocess.run([node, '-e', self.rhythm_runtime() + checks], check=True, capture_output=True)

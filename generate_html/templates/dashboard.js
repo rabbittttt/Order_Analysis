@@ -1036,14 +1036,14 @@
     if(!data?.periods?.length)return '<div class="empty-image">暂无首销期节奏数据</div>';
     const known=rhythmKnown,periods=data.periods,metrics=data.metrics,dailyBig=metrics["当日大定数量"]||[],small=metrics["当日小订转大数量"]||metrics["当日小订转大定数量"]||[];
     const direct=metrics["当日直接大定数量"]||dailyBig.map((value,index)=>known(value)&&known(small[index])?value-small[index]:null),unit=data.grain==='week'?'当周':'当日';
-    const smallRate=metrics["累计小订转化率"]||metrics["累计小转大率"]||null,bigRate=metrics["累计直接大定进度"]||null;
+    const smallRate=metrics["累计小订转化率"]||metrics["累计小转大率"]||null,bigRate=metrics["累计直接大定占比"]||null;
     const rows=periods.map((label,index)=>{
       const total=known(small[index])&&known(direct[index])?small[index]+direct[index]:null;
       return {label,total,values:{small:small[index],direct:direct[index]},rates:{smallRate:smallRate?.[index],bigRate:bigRate?.[index]},tooltip:known(total)?`${label} · ${unit}直接大定 ${fmt(direct[index])} · ${unit}小订转大 ${fmt(small[index])} · 来源合计 ${fmt(total)}`:`${label} · ${unit}来源数据尚未更新或不完整，不按0绘制`};
     });
     const lines=[];
     if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:'#A65300',textColor:'#A65300',digits:1});
-    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定进度',color:'#200036',textColor:'#200036',digits:1});
+    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定占比',color:'#200036',textColor:'#200036',digits:1});
     return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:colors.green},{key:'direct',label:unit+'直接大定',color:colors.blue}],lines:[]})+renderLaunchRateTrends(rows,lines);
   }
   function renderSmallOrderRhythm(rows){
@@ -1677,7 +1677,7 @@
     const label=row=>String(row[labelKey]||row.date||''),shortLabel=row=>label(row).split('（')[0];
     const grid=[0,.25,.5,.75,1].map(rate=>{const gy=top+plotH*(1-rate);return `<line x1="${left}" y1="${gy}" x2="${W-right}" y2="${gy}" stroke="#E5EAF0"/><text x="${left-9}" y="${gy+4}" text-anchor="end" font-size="10" fill="#64748B">${fmt(Math.round(max*rate))}</text>${launch?`<text x="${W-right+9}" y="${gy+4}" font-size="10" fill="#64748B">${Math.round(rate*100)}%</text>`:''}`}).join('');
     const bars=rows.map((row,index)=>{const value=values[index];if(!known(value))return '';const actual=!!row.actual,color=actual?'#3979CB':futureColor,show=rows.length<=12||index===0||index===rows.length-1||row.cut||(index<rows.length-3&&(index+1)%7===0);return `<rect x="${x(index)-barW/2}" y="${y(value)}" width="${barW}" height="${Math.max(top+plotH-y(value),0)}" rx="2" fill="${actual?color:'#FFF7ED'}" stroke="${color}" ${actual?'':'stroke-dasharray="4 2"'}><title>${esc(label(row))} ${esc(row.date||'')} · ${stateLabel(row)} · ${esc(metric)} ${fmt(value)}${launch?` · 当日大定 ${fmt(row.daily_gross)}`:''}</title></rect>${show?`<text x="${x(index)}" y="${Math.max(y(value)-7,12)}" text-anchor="middle" font-size="10" fill="#334155">${fmt(value)}</text>`:''}`}).join('');
-    const rateFields=launch?[['small_conversion','累计小转大率','#2563EB'],['direct_share','直接大定占比','#BE4B53']]:[];
+    const rateFields=launch?[['small_conversion','累计小转大率','#2563EB'],['direct_share','累计直接大定占比','#BE4B53']]:[];
     const lines=rateFields.map(([field,title,color])=>{
       const segments=actual=>{const result=[];let current=[];rows.forEach((row,i)=>{if(!!row.actual===actual&&known(row[field]))current.push(i);else if(current.length){result.push(current);current=[]}});if(current.length)result.push(current);return result;};
       const paths=[true,false].map(actual=>segments(actual).map(indexes=>{if(!actual&&indexes[0]>0&&rows[indexes[0]-1].actual&&known(rows[indexes[0]-1][field]))indexes=[indexes[0]-1,...indexes];return `<polyline points="${indexes.map(i=>`${x(i)},${rateY(rows[i][field])}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2" ${actual?'':'stroke-dasharray="6 4"'}/>`}).join('')).join('');

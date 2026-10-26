@@ -2,7 +2,7 @@
 const path=require('path'),assert=require('assert'),{gunzipSync}=require('zlib'),{pathToFileURL}=require('url');
 const project=path.resolve(__dirname,'../../..');
 const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwright'));
-const metric='累计直接大定进度';
+const metric='累计直接大定占比';
 function decode(block){
  const value=JSON.parse(gunzipSync(Buffer.from(block,'base64')).toString('utf8'));
  function restore(item){
@@ -16,6 +16,25 @@ function decode(block){
 const known=value=>typeof value==='number'&&Number.isFinite(value);
 const latest=values=>[...(values||[])].reverse().find(known)??null;
 const display=value=>value===null?'—':value.toLocaleString('zh-CN',{maximumFractionDigits:1});
+
+const quantity=value=>known(value)&&value>=0?value:null;
+const divide=(direct,gross)=>quantity(direct)!==null&&quantity(gross)!==null&&gross>0?direct/gross:null;
+function sourceRatios(part){
+ const metrics=part.data.metrics,periods=part.data.periods;
+ const daily=periods.map((_,i)=>divide(metrics['当日直接大定数量']?.[i],metrics['当日大定数量']?.[i]));
+ const bases=periods.map((_,i)=>{
+  const direct=quantity(metrics['累计直接大定数量']?.[i]);
+  let gross=quantity(metrics['累计总大定数量']?.[i])??quantity(metrics['累计大定数量']?.[i]);
+  if(gross===null){
+   const small=quantity((metrics['累计小订转大定数量']||metrics['累计小订转大数量'])?.[i]);
+   gross=small!==null&&direct!==null?small+direct:null;
+  }
+  return {direct,gross,share:divide(direct,gross)};
+ });
+ const cumulative=bases.map(row=>row.share),lastBasis=[...bases].reverse().find(row=>known(row.share))??[...bases].reverse().find(row=>row.direct===0&&row.gross===0)??null;
+ return {daily,cumulative,lastBasis};
+}
+
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[];
  let pages=0,series=0,multiPhase=0;
@@ -36,15 +55,21 @@ const display=value=>value===null?'—':value.toLocaleString('zh-CN',{maximumFra
     for(const period of view.periods){
      await page.locator('#periodSelect').selectOption(period);await ready();
      const data=view.pages[period],parts=data.sections.filter(section=>section.kind==='launch_composite');
-     const sourceValues=parts.map(part=>latest(part.data.metrics[metric]));
-     const expected=parts.length===1&&sourceValues[0]!==null?sourceValues[0]*100:null;
+     const source=parts.map(sourceRatios);
+     parts.forEach((part,i)=>{
+      assert.deepEqual(part.data.metrics[metric],source[i].cumulative,key+' cumulative share is not cumulative direct / cumulative gross');
+      assert.deepEqual(part.data.metrics['每日直接大定占比'],source[i].daily,key+' period share is not period direct / period gross');
+     });
+     const sourceValues=source.map(item=>latest(item.cumulative)),bases=source.map(item=>item.lastBasis);
+     const direct=bases.every(Boolean)?bases.reduce((sum,row)=>sum+row.direct,0):null,gross=bases.every(Boolean)?bases.reduce((sum,row)=>sum+row.gross,0):null;
+     const combined=divide(direct,gross),expected=combined===null?null:combined*100;
      assert.equal(data.kpis[3].label,metric,key+' card metric changed');
-     assert.equal(data.kpis[3].value,expected,key+' card is not the source progress');
+     assert.equal(data.kpis[3].value,expected,key+' card is not the quantity-based cumulative share');
      const card=page.locator('.kpi').nth(3);
      assert.equal(await card.locator(':scope>span').textContent(),metric);
      assert.equal(await card.locator('strong').textContent(),display(expected));
      assert.equal(await card.locator('em').first().textContent(),'%');
-     assert(!data.kpis.some(item=>item.label.includes('直接大定占比')));
+     assert(!data.kpis.some(item=>item.label.includes('直接大定进度')));
      const charts=page.locator('.panel').filter({has:page.locator('[data-rhythm-kind="launch-day"]')});
      assert.equal(await charts.count(),parts.length);
      for(let i=0;i<parts.length;i++){
@@ -55,7 +80,7 @@ const display=value=>value===null?'—':value.toLocaleString('zh-CN',{maximumFra
       assert.equal(await legend.textContent(),metric);
       assert.equal(await legend.getAttribute('title'),metric);
       const actual=await chart.locator('[data-launch-rate="bigRate"] [data-launch-rate-point]').evaluateAll(points=>points.map(point=>({index:Number(point.dataset.index),value:Number(point.dataset.value)})));
-      assert.deepEqual(actual,values.map((value,index)=>({index,value})).filter(point=>known(point.value)),key+' chart differs from source progress');
+      assert.deepEqual(actual,values.map((value,index)=>({index,value})).filter(point=>known(point.value)),key+' chart differs from quantity-based cumulative share');
       assert.equal(await chart.locator('[data-launch-rate-label="bigRate"]').count(),actual.length);series++;
      }
      if(parts.length>1){

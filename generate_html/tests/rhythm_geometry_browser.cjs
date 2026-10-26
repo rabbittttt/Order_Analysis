@@ -104,7 +104,7 @@ function readBoard(block){
     const sections=boardData[key].views.day.pages[actual.period].sections,rankingIndex=sections.findIndex(item=>item.kind==='bars'&&item.title==='选配退订率排行');
     const launch=sections.find(item=>item.kind==='launch_composite'),metrics=launch?.data.metrics;
     if(metrics){
-     const expectedKeys=[['smallRate',metrics['累计小订转化率']||metrics['累计小转大率']],['bigRate',metrics['累计直接大定进度']]].filter(([,values])=>Array.isArray(values)&&values.length).map(([name])=>name);
+     const expectedKeys=[['smallRate',metrics['累计小订转化率']||metrics['累计小转大率']],['bigRate',metrics['累计直接大定占比']]].filter(([,values])=>Array.isArray(values)&&values.length).map(([name])=>name);
      assert.deepEqual(actual.launchRates.map(panel=>panel.key),expectedKeys,key+' missing rate series');
      assert.equal(actual.rateCharts,expectedKeys.length?1:0,key+' rate series are not combined into one chart');
      assert.equal(new Set(actual.launchRates.map(panel=>panel.axisMin+'|'+panel.axisMax)).size,expectedKeys.length?1:0,key+' rate lines do not share one percentage axis');
@@ -117,7 +117,7 @@ function readBoard(block){
      assert.deepEqual(panel.labels.map(({index,text})=>({index,text})),panel.expected.map(point=>({index:point.index,text:(point.value*100).toFixed(1)+'%'})),key+' known rate labels were hidden, sampled or changed');
      assert(panel.labels.every(label=>label.visible&&label.offset<=18.01),key+' rate label is hidden or too far from its point');assert.equal(panel.overlaps,0,key+' combined rate labels overlap');
      assert.equal(panel.summaryCount,0,key+' rate summaries are still visible');
-     assert.equal(panel.legendText,panel.key==='smallRate'?'累计小转大率':'累计直接大定进度');assert.equal(panel.legendColor,panel.color);
+     assert.equal(panel.legendText,panel.key==='smallRate'?'累计小转大率':'累计直接大定占比');assert.equal(panel.legendColor,panel.color);
      assert(Number.isFinite(panel.axisMin)&&Number.isFinite(panel.axisMax)&&panel.axisMax>panel.axisMin,key+' unstable rate axis');
      assert.deepEqual(panel.bounds,[panel.axisMax,panel.axisMin].map(value=>Number((value*100).toPrecision(4))+'%'),key+' rate axis bounds are not visible percentages');
      assert(panel.points.every(point=>point.y>=30-.001&&point.y<=170+.001&&Math.abs(point.y-(170-(point.value-panel.axisMin)/(panel.axisMax-panel.axisMin)*140))<.001),key+' rate point is clipped or no longer uses its true value');
@@ -173,7 +173,7 @@ function readBoard(block){
    const trends=page.locator('[data-launch-rate]');assert(await trends.count()>0,'weekly launch chart has no rate trends');assert.equal(await page.locator('.launch-rate-history').count(),1,'weekly rate lines are not combined');
    assert.equal(await page.locator('[data-rhythm-kind="launch-day"] [data-rhythm-series]').count(),0,'weekly rates still overlap source columns');
    const weeklyPeriod=await page.locator('#periodSelect').inputValue(),weekly=boardData[weeklyKey].views.week.pages[weeklyPeriod].sections.find(item=>item.kind==='launch_composite').data;
-   for(const [rate,values] of [['smallRate',weekly.metrics['累计小订转化率']||weekly.metrics['累计小转大率']],['bigRate',weekly.metrics['累计直接大定进度']]]){
+   for(const [rate,values] of [['smallRate',weekly.metrics['累计小订转化率']||weekly.metrics['累计小转大率']],['bigRate',weekly.metrics['累计直接大定占比']]]){
     if(!Array.isArray(values)||!values.length)continue;
     const actual=await page.locator(`[data-launch-rate="${rate}"] [data-launch-rate-point]`).evaluateAll(points=>points.map(point=>({index:Number(point.dataset.index),value:Number(point.dataset.value)})));
     assert.deepEqual(actual,weekly.periods.map((_,index)=>({index,value:values[index]})).filter(point=>typeof point.value==='number'&&Number.isFinite(point.value)),weeklyKey+' weekly rate history changed');
