@@ -121,7 +121,7 @@ class LaunchDirectProgressTests(unittest.TestCase):
                                      [[None, value, None] for value in values])
 
     @unittest.skipUnless(shutil.which("node"), "Node.js required")
-    def test_frontend_curve_and_summary_match_original_progress_and_card(self):
+    def test_frontend_curve_and_labels_match_original_progress_without_summary(self):
         runtime = ui_runtime.DashboardTemplateTests.rhythm_runtime()
         for grain in ("day", "week"):
             for values in ((.1, .794, None), (.1, .794, 0), (None, None, None)):
@@ -134,9 +134,10 @@ class LaunchDirectProgressTests(unittest.TestCase):
                         check=True, capture_output=True, text=True, encoding="utf-8",
                     )
                     html = result.stdout
-                    heading = re.search(r'data-launch-rate-summary="bigRate"[^>]*><h3>([^<]*)</h3><div><strong>([^<]*)</strong>', html)
-                    self.assertIsNotNone(heading)
-                    self.assertEqual(heading[1], METRIC)
+                    self.assertNotIn("data-launch-rate-summary=", html)
+                    self.assertNotIn("launch-rate-summaries", html)
+                    self.assertNotIn("截至 ", html)
+                    self.assertIn('data-launch-rate-legend="bigRate"', html)
                     expected = [value for value in values if value is not None]
                     points = [float(value) for value in re.findall(
                         r'data-launch-rate-point="bigRate"[^>]*data-value="([^"]+)"', html)]
@@ -144,7 +145,7 @@ class LaunchDirectProgressTests(unittest.TestCase):
                     labels = re.findall(r'data-launch-rate-label="bigRate"[^>]*>([^<]*)</text>', html)
                     self.assertEqual(labels, [f"{value * 100:.1f}%" for value in expected])
                     card_value = self.card(phase)["value"]
-                    self.assertEqual(heading[2], "—" if card_value is None else f"{card_value:.1f}%")
+                    self.assertEqual(card_value, expected[-1] * 100 if expected else None)
                     self.assertNotIn("NaN", html)
 
 

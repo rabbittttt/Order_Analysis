@@ -175,7 +175,7 @@
         occupied.push(box);labelY.set(line.key+'|'+index,cy);
       });
     });
-    const summaries=series.map(line=>{const latest=line.points.filter(Boolean).at(-1);return `<div class="launch-rate-heading" data-launch-rate-summary="${esc(line.key)}" style="--rate-color:${line.color}"><h3>${esc(line.label)}</h3><div><strong>${latest?text(latest.value,line):'—'}</strong><span>${latest?`截至 ${esc(latest.label)}`:'暂无比例数据'}</span></div></div>`}).join('');
+    const legend=series.map(line=>`<span data-launch-rate-legend="${esc(line.key)}" title="${esc(line.label)}"><i class="line-key" style="background:${line.color}"></i>${esc(line.label.split('（')[0])}</span>`).join('');
     const curves=series.map(line=>{
       let path='',previous=false;line.points.forEach(point=>{if(!point){previous=false;return}path+=(previous?'L':'M')+x(point.index)+','+y(point.value)+' ';previous=true});
       const values=line.points.filter(Boolean),dots=values.map(point=>{const tip=`${point.label} · ${line.label} ${text(point.value,line)}`;return `<circle data-launch-rate-point="${esc(line.key)}" data-index="${point.index}" data-value="${point.value}" cx="${x(point.index)}" cy="${y(point.value)}" r="3" tabindex="0" role="img" aria-label="${esc(tip)}"><title>${esc(tip)}</title></circle>`}).join('');
@@ -187,7 +187,7 @@
       const value=rhythmAxisText(rows[index].label),box=rhythmLabelBox(value,x(index),210,9);if(axisBoxes.some(other=>rhythmBoxesOverlap(box,other)))return '';axisBoxes.push(box);
       return `<text class="rhythm-axis-label" x="${x(index)}" y="210" text-anchor="middle">${esc(value)}<title>${esc(rows[index].label)}</title></text>`;
     }).join('');
-    return `<section class="launch-rate-trends" aria-label="累计比例趋势"><div class="launch-rate-summaries">${summaries}</div><div class="launch-rate-history" tabindex="0" role="region" aria-label="累计比例趋势，可横向滚动"><svg width="${width}" height="224" viewBox="0 0 ${width} 224" style="width:${width}px;height:224px" data-rate-min="${axisMin}" data-rate-max="${axisMax}" role="img" aria-label="${esc(lines.map(line=>line.label).join('、'))}，共享百分比范围${axisText(axisMin)}至${axisText(axisMax)}"><line class="rhythm-axis-line" x1="${left}" y1="170" x2="${width-right}" y2="170"/>${bounds}${curves}${axis}</svg></div></section>`;
+    return `<section class="launch-rate-trends" aria-label="累计比例趋势"><div class="launch-rate-history" tabindex="0" role="region" aria-label="累计比例趋势，可横向滚动"><svg width="${width}" height="224" viewBox="0 0 ${width} 224" style="width:${width}px;height:224px" data-rate-min="${axisMin}" data-rate-max="${axisMax}" role="img" aria-label="${esc(lines.map(line=>line.label).join('、'))}，共享百分比范围${axisText(axisMin)}至${axisText(axisMax)}"><line class="rhythm-axis-line" x1="${left}" y1="170" x2="${width-right}" y2="170"/>${bounds}${curves}${axis}</svg></div><div class="legend rhythm-legend">${legend}</div></section>`;
   }
   function avoidLabelY(baseY,occupied=[],minY=12,maxY=280,gap=14){
     let y=Math.min(Math.max(baseY,minY),maxY);

@@ -50,9 +50,10 @@ const display=value=>value===null?'—':value.toLocaleString('zh-CN',{maximumFra
      for(let i=0;i<parts.length;i++){
       const values=parts[i].data.metrics[metric]||[],chart=charts.nth(i);
       if(!values.length){assert.equal(await chart.locator('[data-launch-rate="bigRate"]').count(),0);continue;}
-      const summary=chart.locator('[data-launch-rate-summary="bigRate"]');
-      assert.equal(await summary.locator('h3').textContent(),metric);
-      assert.equal(await summary.locator('strong').textContent(),sourceValues[i]===null?'—':(sourceValues[i]*100).toFixed(1)+'%');
+      assert.equal(await chart.locator('[data-launch-rate-summary],.launch-rate-summaries,.launch-rate-heading').count(),0);
+      const legend=chart.locator('[data-launch-rate-legend="bigRate"]');
+      assert.equal(await legend.textContent(),metric);
+      assert.equal(await legend.getAttribute('title'),metric);
       const actual=await chart.locator('[data-launch-rate="bigRate"] [data-launch-rate-point]').evaluateAll(points=>points.map(point=>({index:Number(point.dataset.index),value:Number(point.dataset.value)})));
       assert.deepEqual(actual,values.map((value,index)=>({index,value})).filter(point=>known(point.value)),key+' chart differs from source progress');
       assert.equal(await chart.locator('[data-launch-rate-label="bigRate"]').count(),actual.length);series++;
