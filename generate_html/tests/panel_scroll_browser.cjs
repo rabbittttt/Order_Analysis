@@ -29,7 +29,7 @@ async function verifyPanel(panel){
 function checkPanel(m){
  assert.equal(m.headShift,0,m.kind+' title moved with content');assert.equal(m.leaked.length,0,m.kind+' content entered title/padding');assert(m.sourceHit,m.kind+' source button obscured '+JSON.stringify(m.sourceDetail));assert.equal(m.panelScroll,0,m.kind+' outer card still scrolls');assert(m.textPreserved,m.kind+' content changed');
  if(m.unlimited){assert.equal(m.overflow,'visible');assert.equal(m.middle,0,m.kind+' page-scroll exception gained an inner scroller');}
- else {assert(m.height<=500.1,m.kind+' lost height limit');assert.equal(m.overflow,'auto');assert(m.atEnd&&m.lastReached,m.kind+' last content is unreachable');if(m.contentHeight>m.bodyHeight+1)assert(m.middle>0,m.kind+' vertical scrolling stopped');}
+ else {assert(m.height<=500.1,m.kind+' lost height limit');const heatmap=['sku_heatmap','combo_matrix'].includes(m.kind);assert.equal(m.overflow,heatmap?'hidden':'auto');assert(m.atEnd&&m.lastReached,m.kind+' last content is unreachable');if(heatmap)assert.equal(m.middle,0,'heatmap must own both scroll axes');else if(m.contentHeight>m.bodyHeight+1)assert(m.middle>0,m.kind+' vertical scrolling stopped');}
 }
 (async()=>{
  fs.mkdirSync(output,{recursive:true});const browser=await chromium.launch({headless:true,channel:'msedge'}),report=[],errors=[];

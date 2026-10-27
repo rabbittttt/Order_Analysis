@@ -29,7 +29,7 @@ if str(GENERATE_HTML_ROOT) not in sys.path:
 
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, resolve_stage_identity, generation_records, FORECAST_SOURCE_PATH
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records, iso_day
-from core.forecast_summary import GROSS_DAILY_SHEET, GROSS_PROGRESS_SHEET, LAUNCH_CANCEL_SHEET, SMALL_CANCEL_SHEET, SMALL_CANCEL_DAILY_SHEET
+from core.forecast_summary import GROSS_DAILY_SHEET, GROSS_PROGRESS_SHEET, LAUNCH_CANCEL_SHEET, LAUNCH_CANCEL_DAILY_SHEET, SMALL_CANCEL_SHEET, SMALL_CANCEL_DAILY_SHEET
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook, compact_diagnostic_ranges, reset_conflict_diagnostics
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
@@ -975,7 +975,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     write_rows(workbook, "小转大当日数量", ["传播名", *day_headers], daily_small_rows, "DailySmallToBig")
     write_rows(workbook, "直接大定当日数量", ["传播名", *day_headers], daily_direct_rows, "DailyDirect")
     write_rows(workbook, GROSS_DAILY_SHEET, ["传播名", *day_headers], daily_gross_rows, "DailyGross")
-    write_rows(workbook, "退订当日数量", ["传播名", *day_headers], daily_cancel_rows, "DailyCancel")
+    write_rows(workbook, LAUNCH_CANCEL_DAILY_SHEET, ["传播名", *day_headers], daily_cancel_rows, "DailyCancel")
     small_cancel_headers = [f"D{i+1}" for i in range(small_cancel_days)]
     write_rows(workbook, SMALL_CANCEL_DAILY_SHEET, ["传播名", *small_cancel_headers], small_cancel_rows, "SmallDailyCancel")
     write_rows(workbook, SMALL_CANCEL_SHEET, ["传播名", *small_cancel_headers],
@@ -1436,7 +1436,7 @@ def audit_source_retention(workbook, raw_profiles):
             if calendar_day(day) and valid(row.get("daily_cancel")) and not valid(daily.get((model, day), {}).get("退订数量")):
                 missing(model, DAILY_SHEET, "退订数量", day)
     quantities = {name: {r.get("订单分析代际名") or r.get("传播名"): r for r in table_records(workbook, name)}
-                  for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, "退订当日数量")}
+                  for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, LAUNCH_CANCEL_DAILY_SHEET)}
     metrics = {r.get("订单分析代际名"): r for r in table_records(workbook, D12_SHEET)}
     curves = {name: {r.get("订单分析代际名") or r.get("传播名"): r for r in table_records(workbook, name)}
               for name in ("小转大累计完成度", "直接大定累计完成度", GROSS_PROGRESS_SHEET, "累计小订转化率", LAUNCH_CANCEL_SHEET)}
@@ -1447,7 +1447,7 @@ def audit_source_retention(workbook, raw_profiles):
         start, end = date.fromisoformat(start), date.fromisoformat(end)
         selected = [daily.get((model, (start+timedelta(days=i)).isoformat()), {}) for i in range((end-start).days+1)]
         for i, row in enumerate(selected, 1):
-            for label, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", GROSS_DAILY_SHEET), ("退订数量", "退订当日数量")):
+            for label, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", GROSS_DAILY_SHEET), ("退订数量", LAUNCH_CANCEL_DAILY_SHEET)):
                 if label == "退订数量" and i == 1:
                     seed = quantities[sheet].get(model, {}).get("D1")
                     rate = curves[LAUNCH_CANCEL_SHEET].get(model, {}).get("D1")
@@ -1605,7 +1605,7 @@ def append_forecast_views(path, as_of_date, workbook=None):
     data["mix_daily"] = mix_daily
     data["reference_daily"] = {
         name: {row[0]: list(row[1:]) for row in book[name].iter_rows(min_row=2, values_only=True) if row[0]}
-        for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, "退订当日数量", SMALL_CANCEL_DAILY_SHEET) if name in book.sheetnames
+        for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, LAUNCH_CANCEL_DAILY_SHEET, SMALL_CANCEL_DAILY_SHEET) if name in book.sheetnames
     }
 
     def emit(name, headers, rows, percent_headers=None):
@@ -1683,7 +1683,7 @@ def compact_source_sheets(workbook):
         grouped[(kind, filename)].append(original)
     for sheet in list(workbook.worksheets):
         if sheet.title.startswith("源_") or sheet.title in {
-            "车型汇总", "小订by天", "小订进度", "总大定当日数量", GROSS_DAILY_SHEET, "退订当日数量", SMALL_CANCEL_DAILY_SHEET,
+            "车型汇总", "小订by天", "小订进度", "总大定当日数量", GROSS_DAILY_SHEET, LAUNCH_CANCEL_DAILY_SHEET, SMALL_CANCEL_DAILY_SHEET,
         }:
             workbook.remove(sheet)
     workbook.remove(workbook[INDEX_SHEET])
@@ -1737,11 +1737,11 @@ def reorder_summary_sheets(workbook):
     """Keep a stable, readable progression without changing any source values."""
     first = [
         GUIDE_SHEET, "车型基本信息", "小订by时", "首销by时", DAILY_SHEET, WEEKLY_SHEET,
-        "小订当日数量", "小订累计完成度", SMALL_CANCEL_SHEET, D12_SHEET,
+        "小订当日数量", SMALL_CANCEL_DAILY_SHEET, "小订累计完成度", SMALL_CANCEL_SHEET, D12_SHEET,
         "汇总说明", "字段说明", "车型基本信息", "数据来源目录",
         "小订及退订逐日", "当前小订分时", "当前订单逐日", "当前首销分时",
         "预测基准总表",
-        "小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, "退订当日数量",
+        "小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, LAUNCH_CANCEL_DAILY_SHEET,
         "小转大累计完成度", "直接大定累计完成度", GROSS_PROGRESS_SHEET, "累计小订转化率",
         "累计直接大定占比", "每日直接大定占比",
         "车型汇总", "小订by天", "小订进度",

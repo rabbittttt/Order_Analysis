@@ -20,10 +20,11 @@ DAILY_FIELD_LABELS = {"小订数量": "小订", "退订数量": "小订退订"}
 GROSS_DAILY_SHEET = "大定当日数量"
 GROSS_PROGRESS_SHEET = "大定累计完成度"
 LAUNCH_CANCEL_SHEET = "首销期累计退订率"
+LAUNCH_CANCEL_DAILY_SHEET = "首销期退订当日数量"
 SMALL_CANCEL_SHEET = "小订期累计退订率"
 SMALL_CANCEL_DAILY_SHEET = "小订期退订当日数量"
 REFERENCE_SHEET_ALIASES = {"总大定当日数量": GROSS_DAILY_SHEET, "累计大定完成度": GROSS_PROGRESS_SHEET,
-                           "累计退订率": LAUNCH_CANCEL_SHEET}
+                           "累计退订率": LAUNCH_CANCEL_SHEET, "退订当日数量": LAUNCH_CANCEL_DAILY_SHEET}
 SMALL_HOURLY_SHEET = "小订by时"
 LAUNCH_HOURLY_SHEET = "首销by时"
 WEEKLY_SHEET = "首销平销by周"
@@ -74,6 +75,8 @@ def table_records(workbook, name):
         name = canonical
     elif name == LAUNCH_CANCEL_SHEET and "累计退订率" in workbook.sheetnames:
         name = "累计退订率"
+    elif name == LAUNCH_CANCEL_DAILY_SHEET and "退订当日数量" in workbook.sheetnames:
+        name = "退订当日数量"
     if name not in workbook.sheetnames:
         return []
     rows = workbook[name].iter_rows(values_only=True)
@@ -220,8 +223,9 @@ def summary_quality(
 def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, raw_profiles=None, weekly_builder=None):
     """Resolve each business cell once; every downstream table uses these cells."""
     references = data.setdefault("reference_daily", {})
-    if GROSS_DAILY_SHEET not in references and "总大定当日数量" in references:
-        references[GROSS_DAILY_SHEET] = references["总大定当日数量"]
+    for legacy, canonical in REFERENCE_SHEET_ALIASES.items():
+        if canonical not in references and legacy in references:
+            references[canonical] = references[legacy]
     master = table_records(book, MASTER_SHEET)
     baseline = table_records(book, "预测基准总表")
     aliases = {"传播名": "历史传播名", "代际名": "订单分析代际名", "发布日": "首销开始", "首销截止": "首销结束"}
@@ -375,7 +379,8 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         ["口径", "订单by天", "同代际同日期一行，逐字段按优先级选值；选配比例表覆盖范围内省略日期按0。未更新日期及显式空白不补0。by时保存小时数量及已知小时分项，不存累计列；by天的首销分时核对列记录可用于完整日核对的分项。", None, None],
         ["口径", "参考曲线", "小订累计完成度、小订当日数量按小订窗口排列D1、D2；已有日量和可计算比例均保留，分母未知才留空。进行中、当日或未来数据不作为完整终局参考；参考来源与终值资格见车型基本信息，D1/D2另标口径状态。", None, None],
         ["口径", "小订退订", "两套退订指标均只含小订退订。首销期累计退订率按首销开始日排列D1，小订期累计退订率按小订开始日排列D1，各截取对应维护窗口；分母均为总小订。日量优先取整理表对应阶段的退订进度，缺值再取小订退订分析，真实0有效；累计只用兼容的真实累计，不混入大定退订。", None, None],
-        ["口径", "首销期退订数量", "退订当日数量的D1为截至首销D1的累计小订退订（含首销前），D2起为当日新增；by天和首销D1/D2指标仍保存真实当日量。", None, None],
+        ["口径", "首销期退订数量", "首销期退订当日数量的D1为截至首销D1的累计小订退订（含首销前），D2起为当日新增；by天和首销D1/D2指标仍保存真实当日量。", None, None],
+        ["口径", "小订期退订数量", "小订期退订当日数量按小订开始日排列D1，仅保留小订维护窗口内的小订退订日量；优先取整理表的小订期退订进度，缺值再取小订退订分析，真实0保留、未知留空。", None, None],
         ["口径", "小订及首销前", "整理表真实小订by天 → 小订选配比例by天 → 小订退订分析分时按日汇总；整理表须同一小订开始日期及维护窗口。D1分时只取小订分时退订。", None, None],
         ["口径", "首销窗口", "整理表 → 首销期订单节奏 → 对应大定/锁单选配比例表补缺；退订独立取数。进入平销不改变历史首销日的优先级。", None, None],
         ["口径", "首销结束后的日期", "大定、留存大定取大定选配比例，交车锁单取锁单选配比例；整理表不延伸到首销后，小订/小转大/直接大定不延伸各自维护窗口。", None, None],
@@ -403,7 +408,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         if legacy in book.sheetnames and canonical in book.sheetnames:
             del book[legacy]
     first = [GUIDE_SHEET, MASTER_SHEET, SMALL_HOURLY_SHEET, LAUNCH_HOURLY_SHEET, DAILY_SHEET, WEEKLY_SHEET,
-             SMALL_DAILY_SHEET, SMALL_CURVE_SHEET, D12_SHEET]
+             SMALL_DAILY_SHEET, SMALL_CANCEL_DAILY_SHEET, SMALL_CURVE_SHEET, D12_SHEET]
     book._sheets = [book[name] for name in first] + [s for s in book.worksheets if s.title not in first]
 
 
@@ -453,7 +458,7 @@ def resolved_daily_rows(candidates, data, masters, history_file, today, raw_prof
         start = item.get("launch_date")
         if not start:
             continue
-        for field, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", GROSS_DAILY_SHEET), ("退订数量", "退订当日数量")):
+        for field, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", GROSS_DAILY_SHEET), ("退订数量", LAUNCH_CANCEL_DAILY_SHEET)):
             values = references.get(sheet, {}).get(item["model"], [])
             for index, value in enumerate(values[:max(int(item.get("days") or len(values)), 0)]):
                 candidates.append({"订单分析代际名": model, "历史传播名": item["model"],
@@ -824,7 +829,7 @@ def refresh_small_cancel_reference(masters, data, emit):
     from tools.refresh_sales_forecast_data import safe_div
     valid = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
     profiles = {p["model"]: p for p in data.get("actuals", [])}
-    records, span = [], 0
+    records, quantity_records, span = [], [], 0
     for master in masters:
         name, model = master.get("历史传播名"), master.get("订单分析代际名")
         if not name or not model:
@@ -851,9 +856,12 @@ def refresh_small_cancel_reference(masters, data, emit):
                     value = total-base if valid(total) and valid(base) and total >= base else None
             values.append(value if valid(value) else None)
         counts = selected_cancel_cumulative(values, dates, anchors, 0, history_days, model)
+        quantity_records.append([name, *values])
         records.append([name, *[safe_div(value, master.get("总小订")) for value in counts]])
         span = max(span, count)
     headers = [f"D{i+1}" for i in range(span)]
+    emit(SMALL_CANCEL_DAILY_SHEET, ["传播名", *headers],
+         [row+[None]*(span+1-len(row)) for row in quantity_records], set())
     emit(SMALL_CANCEL_SHEET, ["传播名", *headers],
          [row+[None]*(span+1-len(row)) for row in records], set(headers))
 
@@ -878,7 +886,7 @@ def refresh_reference_tables(book, data, emit, daily, today):
             r["总小订"] = profile["total_small"]
     refresh_small_reference_tables(book, masters, headers, lookup, emit, today)
     refresh_small_cancel_reference(masters, data, emit)
-    derived = {name: [] for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, "退订当日数量", "小转大累计完成度",
+    derived = {name: [] for name in ("小转大当日数量", "直接大定当日数量", GROSS_DAILY_SHEET, LAUNCH_CANCEL_DAILY_SHEET, "小转大累计完成度",
         "直接大定累计完成度", GROSS_PROGRESS_SHEET, "累计小订转化率", LAUNCH_CANCEL_SHEET, "累计直接大定占比", "每日直接大定占比")}
     metric_rows = []
     max_days = max((int(r.get("首销天数") or 0) for r in masters), default=0)
@@ -889,7 +897,7 @@ def refresh_reference_tables(book, data, emit, daily, today):
             continue
         count = int(r.get("首销天数") or ((date.fromisoformat(finish)-date.fromisoformat(start)).days+1 if start and finish else 0))
         source_daily = {field: data.get("reference_daily", {}).get(sheet, {}).get(name, [])
-                        for field, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", GROSS_DAILY_SHEET), ("退订数量", "退订当日数量"))}
+                        for field, sheet in (("小转大", "小转大当日数量"), ("直接大定", "直接大定当日数量"), ("大定", GROSS_DAILY_SHEET), ("退订数量", LAUNCH_CANCEL_DAILY_SHEET))}
         count = max(count, max((i+1 for values in source_daily.values() for i, value in enumerate(values)
                                 if isinstance(value, (int, float)) and not isinstance(value, bool)), default=0))
         if start and not finish:
@@ -947,7 +955,7 @@ def refresh_reference_tables(book, data, emit, daily, today):
         cancel_export = list(c)
         if cancel_export:
             cancel_export[0] = cumulative_counts["退订数量"][0]
-        derived["退订当日数量"].append([name, *cancel_export])
+        derived[LAUNCH_CANCEL_DAILY_SHEET].append([name, *cancel_export])
         for title, field, denominator in (("小转大累计完成度", "小转大", "总小转大"), ("直接大定累计完成度", "直接大定", "总直接大定"),
             (GROSS_PROGRESS_SHEET, "大定", "总大定"), ("累计小订转化率", "小转大", "总小订"), (LAUNCH_CANCEL_SHEET, "退订数量", "总小订")):
             progress = [safe_div(value, r.get(denominator)) for value in cumulative_counts[field]]

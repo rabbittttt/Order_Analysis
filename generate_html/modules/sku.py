@@ -210,7 +210,7 @@ class SkuModule:
         page = {
             "kpis": kpis,
             "sections": [
-                section("sku_heatmap", "TOP1-TOP15 周度累计锁单占比", {"periods": periods, "rows": cumulative_rows}, "颜色越深，主销SKU集中度越高", source=sku_source),
+                section("sku_heatmap", "TOP200 周度累计锁单占比", {"periods": periods, "rows": cumulative_rows}, "颜色越深，主销SKU集中度越高", source=sku_source),
                 section("combo_matrix", "配置组合热力图", {"groups": heat_groups, "period": latest}, latest, source=combo_source),
                 section("table", "主销SKU排行", table(
                     ["排名", "SKU", "版本中文名称", "外饰", "内饰", "轮毂套件", "占比"],

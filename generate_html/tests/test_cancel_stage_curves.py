@@ -8,7 +8,7 @@ from openpyxl import Workbook, load_workbook
 
 from core.forecast_summary import (
     DAILY_SHEET, D12_SHEET, LAUNCH_CANCEL_SHEET, SMALL_CANCEL_SHEET,
-    SMALL_CANCEL_DAILY_SHEET, summary_scope, table_records, read_public_forecast,
+    SMALL_CANCEL_DAILY_SHEET, LAUNCH_CANCEL_DAILY_SHEET, summary_scope, table_records, read_public_forecast,
 )
 from modules.sales_forecast import _read_history
 from tools.refresh_sales_forecast_data import extract_quantity_table, workbook_header_index
@@ -66,7 +66,14 @@ class CancelStageCurvesTests(TestCase):
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET), [.02, .02])
         self.assertEqual(self.values(book, LAUNCH_CANCEL_SHEET, 3), [.18, .20, .20])
         self.assertNotIn('累计退订率', book.sheetnames)
-        self.assertNotIn(SMALL_CANCEL_DAILY_SHEET, book.sheetnames)
+        self.assertIn(SMALL_CANCEL_DAILY_SHEET, book.sheetnames)
+        self.assertEqual(book.sheetnames[book.sheetnames.index('小订当日数量')+1], SMALL_CANCEL_DAILY_SHEET)
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET), [2, 0])
+        self.assertEqual(self.values(book, LAUNCH_CANCEL_DAILY_SHEET, 3), [18, 2, 0])
+        self.assertNotIn('退订当日数量', book.sheetnames)
+        for name in (SMALL_CANCEL_DAILY_SHEET, LAUNCH_CANCEL_DAILY_SHEET):
+            headers = [c.value for c in book[name][1]]
+            self.assertNotIn('%', book[name].cell(2, headers.index('D1')+1).number_format)
         self.assertEqual(book.sheetnames[-1], LAUNCH_CANCEL_SHEET)
         rows = {r['日期'].date(): r for r in table_records(book, DAILY_SHEET)}
         self.assertEqual(rows[date(2026, 8, 30)]['退订数量'], 2)
@@ -80,10 +87,12 @@ class CancelStageCurvesTests(TestCase):
     def test_missing_small_cell_uses_only_small_cancellations(self):
         book = self.build(small=(None, 0))
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET), [.05, .05])
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET), [5, 0])
 
     def test_missing_small_sheet_falls_back_on_small_calendar_window(self):
         book = self.build(small=None)
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET), [.05, .11])
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET), [5, 6])
         self.assertEqual(self.values(book, LAUNCH_CANCEL_SHEET, 3), [.18, .20, .20])
 
     def test_missing_launch_sheet_does_not_select_small_sheet(self):
@@ -100,19 +109,24 @@ class CancelStageCurvesTests(TestCase):
         book = self.build(small=None, include_launch=False, fallback=False)
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET), [None, None])
         self.assertEqual(self.values(book, LAUNCH_CANCEL_SHEET, 3), [None]*3)
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET), [None, None])
 
     def test_small_window_stops_before_later_source_days(self):
         book = self.build(small=(2, 3, 800))
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET, 3), [.02, .05, None])
         self.assertNotIn('D3', [c.value for c in book[SMALL_CANCEL_SHEET][1]])
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET), [2, 3])
+        self.assertNotIn('D3', [c.value for c in book[SMALL_CANCEL_DAILY_SHEET][1]])
 
     def test_sparse_small_days_keep_gap_not_shift_or_fill_zero(self):
         book = self.build(small=(2, 3), small_headers=['D1', 'D3'], fallback=False)
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET), [.02, None])
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET), [2, None])
 
     def test_overlap_date_does_not_reuse_launch_quantity_for_small_curve(self):
         book = self.build(small=(2, 3, 0), maintained={'小订结束日期': datetime(2026, 9, 1)})
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET, 3), [.02, .05, .05])
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET, 3), [2, 3, 0])
         self.assertEqual(table_records(book, D12_SHEET)[0]['D1退订'], 7)
 
     def test_missing_launch_value_on_overlap_does_not_take_small_stage_value(self):
@@ -139,6 +153,7 @@ class CancelStageCurvesTests(TestCase):
             raw_fields={'small_daily_days': [], 'small_daily_sources': {}},
             history={SMALL_CANCEL_DAILY_SHEET: {'测试车': [2, 0]}})
         self.assertEqual(self.values(book, SMALL_CANCEL_SHEET), [None, None])
+        self.assertEqual(self.values(book, SMALL_CANCEL_DAILY_SHEET), [2, 0])
 
     def test_matching_stage_name_wins_even_when_legacy_and_small_come_first(self):
         book = Workbook()

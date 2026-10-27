@@ -11,30 +11,42 @@ const runtime=source.slice(source.indexOf('  const displayText ='),source.indexO
 const switchStart=source.indexOf('    document.querySelectorAll("[data-combo-switch]")');
 const switches=source.slice(switchStart,source.indexOf('    document.querySelectorAll("[data-hourly-select]")',switchStart));
 const periods=Array.from({length:24},(_,i)=>'26WK'+(20+i));
-const heat={periods,rows:Array.from({length:15},(_,i)=>({label:'TOP'+(i+1),values:periods.map((_,j)=>(i+j)/40)}))};
+const heat={periods,rows:Array.from({length:200},(_,i)=>({label:'TOP'+(i+1),values:periods.map((_,j)=>(i+j)/230)}))};
 const combo={groups:[24,16].map((length,i)=>({name:['外饰 × 内饰 × 轮毂','版本 × 外饰'][i],periods:periods.slice(-length),
- rows:[{rank:'TOP1',label:'Ultra版 × 曜石黑 × 琥珀棕 × 20英寸轮毂',values:periods.slice(-length).map((_,j)=>(j+1)/length)}]}))};
+ rows:Array.from({length:200},(_,rank)=>({rank:'TOP'+(rank+1),label:'Ultra版 × 曜石黑 × 琥珀棕 × 20英寸轮毂',values:periods.slice(-length).map((_,j)=>(j+1)/length)}))}))};
 const scrollState=locator=>locator.evaluate(n=>({left:n.scrollLeft,max:n.scrollWidth-n.clientWidth}));
 async function atRight(locator){const s=await scrollState(locator);assert(s.max>0);assert(Math.abs(s.left-s.max)<1,JSON.stringify(s))}
 
 (async()=>{
- const browser=await chromium.launch({headless:true,channel:'msedge'});
+ // Headless Chromium hides scrollbars by default; inspect the real user layout.
+ const browser=await chromium.launch({headless:true,channel:'msedge',ignoreDefaultArgs:['--hide-scrollbars']});
  try{
+  const snapshots=path.join(process.env.TEMP||'/tmp','order-sku-scroll-20261027');fs.mkdirSync(snapshots,{recursive:true});
   const page=await browser.newPage(),errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   await page.setContent('<!doctype html><meta charset="utf-8"><main id="fixture" style="padding:20px;max-width:1400px;margin:auto"></main>');
   await page.addStyleTag({content:css+'\nhtml,body{height:auto;min-height:100%;overflow:auto}'});
   await page.addScriptTag({content:runtime+`
    const state={period:'26WK34'};
-   window.fixture=(data)=>{document.querySelector('#fixture').innerHTML='<div class="sections"><article class="panel full"><div class="panel-body">'+
-    renderSkuHeatmap(data.heat)+'</div></article><article class="panel full"><div class="panel-body">'+renderComboMatrix(data.combo)+'</div></article></div>';
+   window.fixture=(data)=>{document.querySelector('#fixture').innerHTML='<div class="sections"><article class="panel full" data-section-kind="sku_heatmap"><div class="panel-head"><h2>TOP200 周度累计锁单占比</h2></div><div class="panel-body">'+
+    renderSkuHeatmap(data.heat)+'</div></article><article class="panel full" data-section-kind="combo_matrix"><div class="panel-head"><h2>配置组合热力图</h2></div><div class="panel-body">'+renderComboMatrix(data.combo)+'</div></article></div>';
     bindSkuHeatmaps();${switches}};window.rebind=bindSkuHeatmaps;`});
   for(const width of [1440,768,390]){
    await page.setViewportSize({width,height:1000});
    await page.evaluate(data=>window.fixture(data),{heat,combo});
    const weekly=page.locator('.sku-heatmap-scroll').first(),first=page.locator('[data-combo-panel="0"]'),second=page.locator('[data-combo-panel="1"]');
+   assert.equal(await weekly.locator('.heatmap-row').count(),201);
+   assert.equal(await first.locator('.combo-matrix-label').count(),200);
    for(const region of [weekly,first]){
     await atRight(region);
+    const geometry=await region.evaluate(n=>{const body=n.closest('.panel-body'),r=n.getBoundingClientRect(),b=body.getBoundingClientRect();return {bottom:r.bottom,bodyBottom:b.bottom,vertical:n.scrollHeight-n.clientHeight,bar:n.offsetHeight-n.clientHeight,outerHeight:body.scrollHeight-body.clientHeight}});
+    assert(geometry.bottom<=geometry.bodyBottom+1,'horizontal scrollbar is below the card viewport: '+JSON.stringify(geometry));
+    assert(geometry.bar>0&&geometry.vertical>0,'long heatmap must expose both native scrollbars: '+JSON.stringify(geometry));
+    assert(geometry.outerHeight<=1,'card body must not add a second vertical scroller');
+    await region.evaluate(n=>n.scrollTop=n.scrollHeight);
+    const reached=await region.evaluate(n=>n.scrollTop+n.clientHeight>=n.scrollHeight-1);assert(reached,'TOP200 must remain reachable');
+    const last=await region.locator('.heatmap-row,.combo-matrix-label').last().boundingBox(),view=await region.boundingBox();assert(last.y+last.height<=view.y+view.height,'TOP200 is clipped');
+    await region.evaluate(n=>n.scrollTop=0);
     assert.equal(await region.locator('[data-sku-period]').count(),24);
     await region.focus();await page.keyboard.press('Home');assert.equal((await scrollState(region)).left,0);
     const earliest=await region.locator('[data-sku-period]').first().boundingBox(),frame=await region.boundingBox();
@@ -56,7 +68,9 @@ async function atRight(locator){const s=await scrollState(locator);assert(s.max>
    await page.evaluate(()=>window.rebind());assert.equal((await scrollState(first)).left,37);
    const text=await weekly.locator('.heatmap-row').nth(1).locator('div').allTextContents();
    assert.deepEqual(text.slice(1),heat.rows[0].values.map(v=>(v*100).toFixed(1)+'%'));
-   console.log(JSON.stringify({width,fullHistory:true,defaultLatest:true,drag:true,keyboard:true,hiddenComboInitializes:true,userScrollPreserved:true}));
+   await page.locator('[data-section-kind="sku_heatmap"]').screenshot({path:path.join(snapshots,'sku-'+width+'.png')});
+   await page.locator('[data-section-kind="combo_matrix"]').screenshot({path:path.join(snapshots,'combo-'+width+'.png')});
+   console.log(JSON.stringify({width,rows:200,visibleScrollbar:true,fullHistory:true,defaultLatest:true,drag:true,keyboard:true,hiddenComboInitializes:true,userScrollPreserved:true}));
   }
 
   await page.setViewportSize({width:1440,height:1000});
@@ -66,6 +80,11 @@ async function atRight(locator){const s=await scrollState(locator);assert(s.max>
   const sku=subjects.find(s=>s.name.includes('V9')&&s.modules.includes('sku'))||subjects.find(s=>s.modules.includes('sku'));
   const url=new URL(base);url.search=new URLSearchParams({subject:sku.id,module:'sku',grain:'week'});
   await page.goto(url.href);await ready();
+  for(const region of await page.locator('[data-sku-scroll]:visible').all()){
+   const shape=await region.evaluate(n=>({bottom:n.getBoundingClientRect().bottom,bodyBottom:n.closest('.panel-body').getBoundingClientRect().bottom}));
+   assert(shape.bottom<=shape.bodyBottom+1,'formal page hides the horizontal scrollbar');
+  }
+  assert.equal(await page.locator('[data-section-kind="sku_heatmap"] h2').textContent(),'TOP200 周度累计锁单占比');
   const ranking=page.locator('.panel').filter({has:page.getByRole('heading',{name:'主销SKU排行',exact:true})});
   assert.deepEqual(await ranking.locator('th').allTextContents(),['排名','SKU','版本中文名称','外饰','内饰','轮毂套件','占比']);
   assert((await ranking.locator('tbody tr').count())>0);

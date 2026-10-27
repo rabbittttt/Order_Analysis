@@ -515,11 +515,35 @@ button {
   width:100%;
   max-width:100%;
   min-width:0;
-  overflow-x:auto;
-  overflow-y:hidden;
+  min-height:0;
+  overflow:auto;
   cursor:grab;
-  scrollbar-width:thin;
+  scrollbar-width:auto;
+  scrollbar-color:auto;
 }
+.sku-heatmap-scroll::-webkit-scrollbar {width:12px;height:12px}
+.sku-heatmap-scroll::-webkit-scrollbar-track {background:#edf3fa}
+.sku-heatmap-scroll::-webkit-scrollbar-thumb {background:#8ca9c8;border:2px solid #edf3fa;border-radius:6px}
+/* One viewport owns both axes: the horizontal bar stays below the visible rows,
+   instead of sitting below TOP200 inside a second vertical scroller. */
+.panel[data-section-kind="sku_heatmap"]>.panel-body,
+.panel[data-section-kind="combo_matrix"]>.panel-body {
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.panel[data-section-kind="sku_heatmap"] .sku-heatmap-scroll,
+.panel[data-section-kind="combo_matrix"] .combo-matrix,
+.panel[data-section-kind="combo_matrix"] .combo-matrix-panel {
+  flex:1 1 auto;
+  min-height:0;
+}
+.panel[data-section-kind="combo_matrix"] .combo-matrix {
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+}
+.panel[data-section-kind="combo_matrix"] .combo-controls {flex:0 0 auto}
 .sku-heatmap-scroll.is-dragging {cursor:grabbing;user-select:none}
 .sku-heatmap-scroll:focus-visible {outline:2px solid #1677ff;outline-offset:2px}
 .sku-heatmap {
