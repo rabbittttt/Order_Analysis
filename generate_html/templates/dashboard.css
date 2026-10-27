@@ -736,6 +736,8 @@ button {
 
 .raw-freeze-controls {
   display:flex;
+  flex-wrap:wrap;
+  max-width:100%;
   gap:6px;
   align-items:center;
 }

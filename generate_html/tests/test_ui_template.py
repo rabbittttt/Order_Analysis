@@ -222,9 +222,10 @@ assert(!/data-rhythm-label="segment"[^>]*>1<\/text>/.test(launchHtml),'too-small
         self.assertIn('aria-label="锁窗格"', script)
         self.assertIn('id="rawFreezeRow"', script)
         self.assertIn('id="rawFreezeColumn"', script)
+        self.assertIn('id="rawFreezeFirstColumn"', script)
         self.assertIn("锁定标题列", script)
         self.assertIn('classList.toggle("freeze-row",state.rawFreezeRow)', script)
-        self.assertIn('classList.toggle("freeze-column",state.rawFreezeColumn)', script)
+        self.assertIn('classList.toggle("freeze-column",state.rawFreezeColumn||state.rawFreezeFirstColumn)', script)
         self.assertIn("function rawCellIsData(value)", script)
         self.assertIn("function rawTitleColumnCount(rows)", script)
         self.assertIn("function applyRawFrozenColumns(rows)", script)
@@ -233,6 +234,27 @@ assert(!/data-rhythm-label="segment"[^>]*>1<\/text>/.test(launchHtml),'too-small
         self.assertIn(".raw-table.freeze-row .data-table th", css)
         self.assertIn(".raw-table.freeze-column .data-table .raw-frozen-column", css)
         self.assertIn(".raw-table.freeze-row.freeze-column .data-table th.raw-frozen-column", css)
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node unavailable")
+        runtime = script[script.index("  function rawCellIsData"):script.index("  function renderRawTable")]
+        checks = r'''
+const assert=require('assert'),state={rawFreezeColumn:true,rawFreezeFirstColumn:false},frames=[];
+const classes=()=>({values:new Set(),add(...names){names.forEach(name=>this.values.add(name))},remove(...names){names.forEach(name=>this.values.delete(name))},toggle(name,on){on?this.values.add(name):this.values.delete(name)}});
+const cells=Array.from({length:4},(_,col)=>({col,classList:classes(),style:{removeProperty(name){delete this[name]}},getBoundingClientRect(){return {width:100}}}));
+const root={isConnected:true,classList:classes(),querySelectorAll(selector){return selector.startsWith('[data-raw-col=')?cells.filter(cell=>cell.col===Number(selector.match(/"(\d+)"/)[1])):cells.filter(cell=>cell.classList.values.has('raw-frozen-column'))}};
+const $=()=>root,requestAnimationFrame=callback=>frames.push(callback),flush=()=>{while(frames.length)frames.shift()()},frozen=()=>cells.filter(cell=>cell.classList.values.has('raw-frozen-column')).map(cell=>cell.col);
+const rows=[['品牌','车型','数量','占比'],['问界','M9',12,.5]],before=JSON.stringify(rows);
+applyRawFrozenColumns(rows);flush();assert.deepEqual(frozen(),[0,1],'default title mode preserves multiple title columns');
+state.rawFreezeColumn=false;state.rawFreezeFirstColumn=true;applyRawFrozenColumns(rows);flush();assert.deepEqual(frozen(),[0]);
+applyRawFrozenColumns([['编号','名称'],[1,'门店']]);flush();assert.deepEqual(frozen(),[0],'first column freezes even when numeric');
+state.rawFreezeColumn=true;state.rawFreezeFirstColumn=false;applyRawFrozenColumns(rows);
+state.rawFreezeColumn=false;state.rawFreezeFirstColumn=true;applyRawFrozenColumns(rows);flush();assert.deepEqual(frozen(),[0],'stale animation frame must not restore title columns');
+applyRawFrozenColumns(rows);state.rawFreezeFirstColumn=false;applyRawFrozenColumns(rows);flush();assert.deepEqual(frozen(),[],'turning off before paint stays off');
+state.rawFreezeFirstColumn=true;applyRawFrozenColumns([]);flush();assert.deepEqual(frozen(),[],'empty tables are safe');
+assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values');
+'''
+        subprocess.run([node, "-e", runtime + checks], check=True, capture_output=True)
 
     def test_sales_forecast_has_three_lifecycle_stages(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
