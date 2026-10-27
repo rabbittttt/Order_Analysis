@@ -78,7 +78,8 @@ class SkuPeriodAlignmentTests(TestCase):
         self.assertEqual(kpis['有效SKU']['value'], 1)
         self.assertEqual(kpis['有效SKU']['comparison']['previous'], 2)
         ranking = next(s['data']['rows'] for s in page['sections'] if s['kind'] == 'table')
-        self.assertEqual([(r[1], r[3]) for r in ranking], [('SKU1', 1), ('SKU2', 0)])
+        self.assertEqual([(r[1], r[-1]) for r in ranking], [('SKU1', 1), ('SKU2', 0)])
+        self.assertEqual(ranking[0][2:6], ['Max', '黑', '灰', '20'])
 
     def test_cumulative_only_week_does_not_fabricate_sku_sales(self):
         view, page = self.build(['26WK01', '26WK02', '26WK03'], ['26WK02', '26WK03', '26WK04'])

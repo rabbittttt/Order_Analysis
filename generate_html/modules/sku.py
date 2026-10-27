@@ -183,7 +183,7 @@ class SkuModule:
             reverse=True,
         )
         ranking_rows = [
-            [index, row["code"], " / ".join(value for value in (row["exterior"], row["interior"]) if value),
+            [index, row["code"], row["version"], row["exterior"], row["interior"], row["wheel"],
              row["values"][latest_index] if len(row["values"]) > latest_index else 0]
             for index, row in enumerate(latest_sku_rows, start=1)
             if row["values"][latest_index] is not None
@@ -212,8 +212,12 @@ class SkuModule:
             "sections": [
                 section("sku_heatmap", "TOP1-TOP15 周度累计锁单占比", {"periods": periods, "rows": cumulative_rows}, "颜色越深，主销SKU集中度越高", source=sku_source),
                 section("combo_matrix", "配置组合热力图", {"groups": heat_groups, "period": latest}, latest, source=combo_source),
-                section("table", "主销SKU排行", table(["排名", "SKU", "配置", "占比"], ranking_rows, formats=["number", "text", "text", "percent"]), "当周锁单占比", "half", sku_source),
-                section("tail_distribution", "长尾分布", tail_rows, "SKU数量（单周占比≤5%）", "half", sku_source),
+                section("table", "主销SKU排行", table(
+                    ["排名", "SKU", "版本中文名称", "外饰", "内饰", "轮毂套件", "占比"],
+                    ranking_rows, formats=["number", "text", "text", "text", "text", "text", "percent"],
+                    scrollable=True,
+                ), "当周锁单占比", "full", sku_source),
+                section("tail_distribution", "长尾分布", tail_rows, "SKU数量（单周占比≤5%）", "full", sku_source),
             ],
         }
         views = {"week": {"periods": [latest], "default_period": latest, "pages": {latest: page}}}

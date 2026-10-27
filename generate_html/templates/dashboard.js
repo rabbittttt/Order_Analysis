@@ -744,6 +744,7 @@
       const root=button.closest(".combo-matrix"),target=button.dataset.comboSwitch;
       root.querySelectorAll("[data-combo-switch]").forEach(item=>{const active=item.dataset.comboSwitch===target;item.classList.toggle("active",active);item.setAttribute("aria-pressed",String(active))});
       root.querySelectorAll("[data-combo-panel]").forEach(item=>item.hidden=item.dataset.comboPanel!==target);
+      bindSkuHeatmaps();
     });
     document.querySelectorAll("[data-hourly-select]").forEach(select=>select.onchange=()=>{
       const rows=JSON.parse(select.dataset.hourlyRows||"[]");
@@ -974,7 +975,7 @@
     if(!data?.columns)return '<div class="empty-image">暂无表格数据</div>';
     const formats=data.formats||[];
     const bodyRows=data.rows.map(row=>`<tr>${row.map((value,index)=>`<td class="${formats[index]&&formats[index]!=="text"?"num":""}">${formatTableCell(value,formats[index])}</td>`).join("")}</tr>`).join("")||`<tr><td class="table-empty" colspan="${data.columns.length}">暂无数据</td></tr>`;
-    return `<div class="table-wrap"><table class="data-table"><thead><tr>${data.columns.map((column,index)=>`<th class="${formats[index]&&formats[index]!=="text"?"num":""}">${esc(column)}</th>`).join("")}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+    return `<div class="table-wrap${data.scrollable?' is-scrollable':''}"><table class="data-table"><thead><tr>${data.columns.map((column,index)=>`<th class="${formats[index]&&formats[index]!=="text"?"num":""}">${esc(column)}</th>`).join("")}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
   }
   function renderHistoryBody(options,grain){
     const source=options[grain]||{columns:["周期"],rows:[]};
@@ -1031,9 +1032,10 @@
   }
   function bindSkuHeatmaps(){
     document.querySelectorAll('[data-sku-scroll]').forEach(scroll=>{
-      if(scroll._skuHeatmapBound)return;scroll._skuHeatmapBound=true;
-      const selected=[...scroll.querySelectorAll('[data-sku-period]')].find(cell=>cell.dataset.skuPeriod===String(state.period));
-      scroll.scrollLeft=selected?Math.max(0,selected.getBoundingClientRect().right-scroll.getBoundingClientRect().right+scroll.scrollLeft):scroll.scrollWidth;
+      // Hidden combination tabs must wait until their first visible layout.
+      // Initialize once so switching tabs does not reset a user's history view.
+      if(scroll._skuHeatmapBound||!scroll.clientWidth)return;scroll._skuHeatmapBound=true;
+      scroll.scrollLeft=scroll.scrollWidth;
       let drag=null;
       const stop=event=>{
         if(!drag||event.pointerId!==drag.id)return;
@@ -1072,7 +1074,7 @@
     const groups=data?.groups||[];
     if(!groups.length)return '<div class="empty-image">组合Sheet暂无可绘制数据</div>';
     const controls=`<div class="combo-controls" role="group" aria-label="配置组合维度">${groups.map((group,index)=>`<button data-combo-switch="${index}" class="${index===0?"active":""}" aria-pressed="${index===0}">${esc(group.name)}</button>`).join("")}</div>`;
-    const panels=groups.map((group,groupIndex)=>{const columns=Math.max(group.periods.length,1);const rows=group.rows||[];return `<div class="combo-matrix-panel" data-combo-panel="${groupIndex}" ${groupIndex?"hidden":""}><div class="combo-matrix-grid" style="--cols:${columns}"><div class="combo-matrix-head">组合</div>${group.periods.map(period=>`<div class="combo-matrix-head">${esc(period)}</div>`).join("")}${rows.map(row=>`<div class="combo-matrix-label" title="${esc(row.rank)} · ${esc(row.label)}"><b>${esc(row.rank)}</b><span>${esc(row.label)}</span></div>${row.values.map(value=>{const number=Number(value||0),alpha=.04+Math.min(number,1)*.6;return `<div class="combo-matrix-cell" style="background:rgba(0,181,120,${alpha.toFixed(2)})">${number?`<b>${(number*100).toFixed(1)}%</b>`:"—"}</div>`}).join("")}`).join("")}</div></div>`}).join("");
+    const panels=groups.map((group,groupIndex)=>{const columns=Math.max(group.periods.length,1);const rows=group.rows||[];return `<div class="combo-matrix-panel sku-heatmap-scroll" data-combo-panel="${groupIndex}" data-sku-scroll tabindex="0" role="region" aria-label="${esc(group.name)}配置组合历史表，可左右拖动或使用左右方向键查看全部周期" ${groupIndex?"hidden":""}><div class="combo-matrix-grid" style="--cols:${columns}"><div class="combo-matrix-head">组合</div>${group.periods.map(period=>`<div class="combo-matrix-head" data-sku-period="${esc(period)}">${esc(period)}</div>`).join("")}${rows.map(row=>`<div class="combo-matrix-label" title="${esc(row.rank)} · ${esc(row.label)}"><b>${esc(row.rank)}</b><span>${esc(row.label)}</span></div>${row.values.map(value=>{const number=Number(value||0),alpha=.04+Math.min(number,1)*.6;return `<div class="combo-matrix-cell" style="background:rgba(0,181,120,${alpha.toFixed(2)})">${number?`<b>${(number*100).toFixed(1)}%</b>`:"—"}</div>`}).join("")}`).join("")}</div></div>`}).join("");
     return `<div class="combo-matrix">${controls}${panels}</div>`;
   }
   function renderTailDistribution(rows){return renderColumns(rows||[],colors.purple)}
@@ -2262,7 +2264,7 @@
     // read must not replace the current page's cache after its revision check.
     rawRowsCache=rows;rawRowsKey=`${fileIndex}|${sheetIndex}`;
     const visibleRows=visibleRawRows(rows,state.rawQuery);
-    $("#page").innerHTML=`<div class="raw-layout"><label class="raw-file-picker"><span>选择底表文件</span><select id="rawFile" aria-label="选择底表文件">${DATA.raw_files.map((item,index)=>`<option value="${index}"${index===state.rawFile?" selected":""}>${esc(item.name)}</option>`).join("")}</select></label><aside class="file-list">${DATA.raw_files.map((item,index)=>`<button data-file="${index}" class="${index===state.rawFile?"active":""}" title="${esc(item.name)}">${esc(item.name)}</button>`).join("")}</aside><section class="raw-main"><div class="raw-toolbar"><div class="raw-title"><strong>${esc(file?.name||"")}</strong><small>${sheet?.total_rows||0} 行 × ${sheet?.total_cols||0} 列 · <span id="rawMatchCount" role="status" aria-live="polite">${Math.max(visibleRows.length-1,0)} 条数据（不含表头）</span> · 横向滚动查看其余列</small></div><label><span>Sheet</span><select id="rawSheet">${(file?.sheets||[]).map((item,index)=>`<option value="${index}">${esc(item.name)}</option>`).join("")}</select></label><label><span>表内搜索</span><input id="rawSearch" type="search" value="${esc(state.rawQuery)}" placeholder="在当前 Sheet 中搜索" aria-controls="rawTable" aria-describedby="rawMatchCount"></label><button type="button" id="clearRawSearch" ${state.rawQuery?"":"disabled"}>清空搜索</button><div class="raw-freeze-controls" role="group" aria-label="锁窗格"><label class="raw-freeze-toggle"><input id="rawFreezeRow" type="checkbox" ${state.rawFreezeRow?"checked":""}><span>锁定首行</span></label><label class="raw-freeze-toggle" title="自动锁定左侧连续的文字标题列"><input id="rawFreezeColumn" type="checkbox" ${state.rawFreezeColumn?"checked":""}><span>锁定标题列</span></label></div><button class="export-button" id="exportRaw">导出当前数据</button></div><div class="raw-table ${state.rawFreezeRow?"freeze-row":""} ${state.rawFreezeColumn?"freeze-column":""}" id="rawTable">${renderRawTable(visibleRows)}</div><div class="raw-empty" id="rawEmpty" ${visibleRows.length>1?"hidden":""}><strong>没有匹配的数据</strong><p>请尝试其他关键词，或清空搜索查看当前 Sheet。</p></div></section></div>`;
+    $("#page").innerHTML=`<div class="raw-layout"><label class="raw-file-picker"><span>选择底表文件</span><select id="rawFile" aria-label="选择底表文件">${DATA.raw_files.map((item,index)=>`<option value="${index}"${index===state.rawFile?" selected":""}>${esc(item.name)}</option>`).join("")}</select></label><aside class="file-list">${DATA.raw_files.map((item,index)=>`<button data-file="${index}" class="${index===state.rawFile?"active":""}" title="${esc(item.name)}">${esc(item.name)}</button>`).join("")}</aside><section class="raw-main"><div class="raw-toolbar"><div class="raw-title"><strong>${esc(file?.name||"")}</strong><small>${sheet?.total_rows||0} 行 × ${sheet?.total_cols||0} 列 · <span id="rawMatchCount" role="status" aria-live="polite">${Math.max(visibleRows.length-1,0)} 条数据（不含表头）</span> · 横向滚动查看其余列</small></div><label><span>Sheet</span><select id="rawSheet">${(file?.sheets||[]).map((item,index)=>`<option value="${index}">${esc(item.name)}</option>`).join("")}</select></label><label><span>表内搜索</span><input id="rawSearch" type="search" value="${esc(state.rawQuery)}" placeholder="在当前 Sheet 中搜索" aria-controls="rawTable" aria-describedby="rawMatchCount"></label><button type="button" id="clearRawSearch" ${state.rawQuery?"":"disabled"}>清空搜索</button><div class="raw-freeze-controls" role="group" aria-label="锁窗格"><label class="raw-freeze-toggle"><input id="rawFreezeRow" type="checkbox" ${state.rawFreezeRow?"checked":""}><span>锁定首行</span></label><label class="raw-freeze-toggle" title="自动锁定左侧连续的文字标题列"><input id="rawFreezeColumn" type="checkbox" ${state.rawFreezeColumn?"checked":""}><span>锁定标题列</span></label></div><button class="export-button" id="exportRaw">导出当前数据</button><button type="button" class="export-button" id="exportRawWorkbook" ${file?.workbook_key?'':'disabled'} title="${file?.workbook_key?'导出该文件的全部 Sheet，保留原文件格式，不受搜索影响':'原始 Excel 文件不可用，请重新生成看板'}">导出整个 Excel</button></div><div class="raw-table ${state.rawFreezeRow?"freeze-row":""} ${state.rawFreezeColumn?"freeze-column":""}" id="rawTable">${renderRawTable(visibleRows)}</div><div class="raw-empty" id="rawEmpty" ${visibleRows.length>1?"hidden":""}><strong>没有匹配的数据</strong><p>请尝试其他关键词，或清空搜索查看当前 Sheet。</p></div></section></div>`;
     document.querySelectorAll("[data-file]").forEach(button=>button.onclick=async()=>{state.rawFile=Number(button.dataset.file);state.rawSheet=0;state.rawQuery="";await renderRaw();syncUrl('push')});
     $("#rawFile").onchange=async event=>{state.rawFile=Number(event.target.value);state.rawSheet=0;state.rawQuery="";await renderRaw();syncUrl('push')};
     $("#rawSheet").value=state.rawSheet;$("#rawSheet").onchange=async event=>{state.rawSheet=Number(event.target.value);state.rawQuery="";await renderRaw();syncUrl('push')};
@@ -2273,6 +2275,7 @@
     $("#rawFreezeRow").onchange=event=>{state.rawFreezeRow=event.target.checked;$("#rawTable").classList.toggle("freeze-row",state.rawFreezeRow)};
     $("#rawFreezeColumn").onchange=event=>{state.rawFreezeColumn=event.target.checked;$("#rawTable").classList.toggle("freeze-column",state.rawFreezeColumn);applyRawFrozenColumns(visibleRawRows(rows,state.rawQuery))};
     $("#exportRaw").onclick=()=>exportRaw(file,sheet);
+    $("#exportRawWorkbook").onclick=event=>exportRawWorkbook(file,event.currentTarget);
   }
   function filterRawRows(rows,query){const keyword=(query||"").trim().toLowerCase();return keyword?rows.filter(row=>row.some(value=>String(value??"").toLowerCase().includes(keyword))):rows}
   function rawCellIsData(value){
@@ -2309,8 +2312,34 @@
   }
   function renderRawTable(rows){const width=rawTableWidth(rows);return `<table class="data-table"><tbody>${rows.map((row,index)=>`<tr>${Array.from({length:width},(_,col)=>{const cell=row[col]??"";const title=String(cell)!==""?` title="${esc(cell)}"`:"";return `<${index===0?"th":"td"} data-raw-col="${col}"${title}>${fmt(cell)}</${index===0?"th":"td"}>`}).join("")}</tr>`).join("")}</tbody></table>`}
   function exportRaw(file,sheet){
-    const rows=visibleRawRows(rawRowsCache,state.rawQuery),csv="\ufeff"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n"),blob=new Blob([csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),link=document.createElement("a"),base=(file?.name||"底表").replace(/\.xlsx?$/i,"").replace(/[\\/:*?\"<>|]/g,"_");
-    link.href=url;link.download=`${base}_${(sheet?.name||"Sheet").replace(/[\\/:*?\"<>|]/g,"_")}.csv`;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),500);showToast(`已导出 ${rows.length} 行 CSV`);
+    const rows=visibleRawRows(rawRowsCache,state.rawQuery),csv="\ufeff"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n"),blob=new Blob([csv],{type:"text/csv;charset=utf-8"}),base=(file?.name||"底表").replace(/\.xlsx?$/i,"").replace(/[\\/:*?\"<>|]/g,"_");
+    downloadBlob(blob,`${base}_${(sheet?.name||"Sheet").replace(/[\\/:*?\"<>|]/g,"_")}.csv`);showToast(`已导出 ${rows.length} 行 CSV`);
+  }
+  async function exportRawWorkbook(file,button){
+    const b64=RAW_BLOCKS[file?.workbook_key];
+    if(!b64){showToast('整表文件不可用，请重新生成看板后重试');return}
+    button.disabled=true;button.textContent='正在导出…';
+    try{
+      // Yield before decoding so the loading state is painted. Chunking avoids
+      // allocating another full-size binary string for a large workbook.
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const chunks=[];
+      for(let offset=0;offset<b64.length;offset+=65536){
+        const binary=atob(b64.slice(offset,offset+65536)),bytes=new Uint8Array(binary.length);
+        for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+        chunks.push(bytes);
+        if(offset&&offset%4194304===0)await new Promise(resolve=>setTimeout(resolve,0));
+      }
+      const blob=new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+      downloadBlob(blob,(file.name||'底表.xlsx').replace(/[\\/:*?\"<>|]/g,'_'));
+      showToast('已导出整个 Excel，包含全部 Sheet');
+    }catch(error){showToast('整表导出失败，请重新生成看板后重试')}
+    finally{button.disabled=false;button.textContent='导出整个 Excel'}
+  }
+  function downloadBlob(blob,name){
+    const url=URL.createObjectURL(blob),link=document.createElement('a');
+    try{link.href=url;link.download=name;document.body.appendChild(link);link.click()}
+    finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),500)}
   }
   function csvCell(value){const text=String(value??"");return /[",\r\n]/.test(text)?`"${text.replace(/"/g,'""')}"`:text}
   async function jumpToSource(source){

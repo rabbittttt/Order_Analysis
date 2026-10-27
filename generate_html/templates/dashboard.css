@@ -1005,7 +1005,16 @@ button {
   display:grid;
   grid-template-columns:130px repeat(var(--cols),minmax(105px,1fr));
   gap:3px;
-  min-width:680px;
+  width:max-content;
+  min-width:100%;
+}
+
+.combo-matrix-grid>.combo-matrix-head:first-child,
+.combo-matrix-grid>.combo-matrix-label {
+  position:sticky;
+  left:0;
+  z-index:1;
+  box-shadow:3px 0 0 #fff;
 }
 
 .combo-matrix-grid>div {
@@ -1492,6 +1501,9 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   border-color:var(--line);
   border-radius:12px;
 }
+
+.table-wrap.is-scrollable {max-width:100%;overflow-x:auto}
+.table-wrap.is-scrollable .data-table th {top:0}
 
 .data-table {
   width:100%;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import re
@@ -245,7 +246,7 @@ def split_parallel_blocks(name: str, rows: list[list]) -> list[dict[str, Any]]:
 
 
 def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """底表数据:元信息放主数据,行数据按表分块压缩(base64+gzip),前端按需解压。"""
+    """按需加载的底表行块及原始 XLSX 快照；下载快照保留全部 Sheet 和格式。"""
     files = []
     blocks: dict[str, str] = {}
     for file_index, item in enumerate(store.items):
@@ -288,7 +289,19 @@ def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, st
                     "total_cols": max((len(row) for row in block_rows), default=0),
                     "source_sheet": sheet.title,
                 })
-        files.append({"name": item.path.name, "sheets": sheets})
+        file_info = {"name": item.path.name, "sheets": sheets}
+        # Embed the original file once, not a CSV reconstruction of the split
+        # display blocks. This also works when the HTML is copied elsewhere or
+        # opened offline, and preserves formulas, merged cells and hidden tabs.
+        try:
+            workbook_bytes = item.path.read_bytes()
+        except OSError as exc:
+            LOGGER.warning("底表整表导出不可用: %s | %s", item.path.name, exc)
+        else:
+            workbook_key = f"{file_index}|xlsx"
+            blocks[workbook_key] = base64.b64encode(workbook_bytes).decode("ascii")
+            file_info["workbook_key"] = workbook_key
+        files.append(file_info)
     return files, blocks
 
 
