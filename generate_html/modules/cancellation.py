@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from datetime import date, datetime
 
@@ -181,6 +182,11 @@ def _parse_daily_retreat(sheet) -> list[dict]:
     if resolved is None:
         return []
     start_row, columns = resolved
+    def rate(row, field):
+        cell = sheet.cell(row, columns[field])
+        value = None if isinstance(cell.value, bool) else cell_number(cell, rate=True, default=None)
+        return value if isinstance(value, (int, float)) and math.isfinite(value) else None
+
     rows = []
     for row in range(start_row, sheet.max_row + 1):
         date_cell = sheet.cell(row, columns["date"])
@@ -192,9 +198,9 @@ def _parse_daily_retreat(sheet) -> list[dict]:
             "daily": safe_number(sheet.cell(row, columns["daily_small"]).value),
             "big_daily": safe_number(sheet.cell(row, columns["daily_big"]).value),
             "cumulative": safe_number(sheet.cell(row, columns["cumulative_small"]).value),
-            "convert_rate": cell_number(sheet.cell(row, columns["conversion_rate"]), rate=True),
-            "small_rate": cell_number(sheet.cell(row, columns["small_rate"]), rate=True),
-            "big_rate": cell_number(sheet.cell(row, columns["big_rate"]), rate=True),
+            "convert_rate": rate(row, "conversion_rate"),
+            "small_rate": rate(row, "small_rate"),
+            "big_rate": rate(row, "big_rate"),
         })
     return rows
 

@@ -746,8 +746,8 @@
   }
 
   // Missing intraday components are estimates; conserve every observed order.
-  function intradayComponents(snapshot, completion, smallShare){
-    const count=value=>value!==null&&value!==undefined&&value!==''&&Number.isFinite(Number(value))&&Number(value)>=0?Number(value):null;
+  function intradayComponents(snapshot, completion, smallShare, snapshots=[]){
+    const count=value=>{const number=observedQuantity(value);return Number.isFinite(number)?number:null;};
     const gross=count(snapshot?.gross),small=count(snapshot?.small_to_big),direct=count(snapshot?.direct);
     const observed=Math.max(gross??0,(small??0)+(direct??0)),share=Math.max(0,Math.min(Number(smallShare)||0,1));
     const estimated=gross===null||small===null||direct===null||Math.abs(small+direct-observed)>.5;
@@ -765,7 +765,19 @@
     const total=observed/(Number.isFinite(rate)&&rate>0?Math.min(rate,1):1),remaining=Math.max(total-observed,0);
     const projectedSmall=Math.max(Math.round(observedSmall+remaining*share),Math.ceil(observedSmall));
     const projectedDirect=Math.max(Math.round(total)-projectedSmall,Math.ceil(observedDirect));
-    return {gross:projectedSmall+projectedDirect,small:projectedSmall,direct:projectedDirect,observed,observedSmall,observedDirect,estimated};
+    const result={gross:projectedSmall+projectedDirect,small:projectedSmall,direct:projectedDirect,observed,observedSmall,observedDirect,estimated};
+    if(!snapshots.length)return result;
+    // Snapshots overlap. Keep each field's largest known count as a floor;
+    // only the hourly snapshot is extrapolated by its own completion factor.
+    const known=Object.fromEntries(['gross','small_to_big','direct'].map(field=>{
+      const values=[snapshot,...snapshots].map(row=>count(row?.[field])).filter(value=>value!==null);
+      return [field,values.length?Math.max(...values):null];
+    }));
+    const floor=intradayComponents(known,1,smallShare);
+    if(floor.observed===observed&&known.small_to_big===small&&known.direct===direct)return result;
+    // A newly known component replaces an older inferred split. Apply the
+    // reference share only to the still-unobserved part of the projected total.
+    return intradayComponents(known,floor.observed>0?floor.observed/Math.max(total,floor.observed):1,smallShare);
   }
 
   function intradayReference({buckets=[],days=[],today,launchDate,dayType=()=>''}){
