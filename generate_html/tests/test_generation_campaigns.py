@@ -93,14 +93,22 @@ class GenerationCampaignTests(TestCase):
         self.assertTrue(any(s['title'].startswith('Pro版 · ') for s in view['pages']['全部阶段']['sections']))
         mix.close();cancel.close()
 
-    def test_default_source_paths_share_scripts_config(self):
-        from modules.sales_forecast import RAW_FORECAST_DATA, HISTORY_CANDIDATES
-        expected = Path(__file__).resolve().parents[2] / 'config' / '小订及首销数据整理.xlsx'
+    def test_default_source_paths_share_project_input_file(self):
+        from modules.sales_forecast import RAW_FORECAST_DATA, HISTORY_CANDIDATES, MODEL_MAPPING_CANDIDATES
+        from tools.refresh_sales_forecast_data import parse_args
+        code_root = Path(__file__).resolve().parents[2]
+        project_root = code_root.parent if code_root.name.lower() == 'scripts' else code_root
+        expected = project_root / 'input_file' / '小订及首销数据整理.xlsx'
         self.assertEqual(FORECAST_SOURCE_PATH, expected)
         self.assertEqual(DEFAULT_SOURCE, expected)
         self.assertEqual(DEFAULT_MAPPING, expected)
         self.assertEqual(RAW_FORECAST_DATA, expected)
         self.assertIn(expected, HISTORY_CANDIDATES)
+        self.assertEqual(MODEL_MAPPING_CANDIDATES[0], expected)
+        with patch('sys.argv', ['refresh_sales_forecast_data.py']):
+            args = parse_args()
+        self.assertEqual(args.source, expected)
+        self.assertEqual(args.mapping, expected)
         with patch('core.model_identity.stage_records', return_value=[]) as reader:
             generation_records()
         reader.assert_called_once_with(expected)
