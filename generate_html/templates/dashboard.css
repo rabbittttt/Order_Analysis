@@ -87,10 +87,21 @@ button {
   box-sizing:border-box;
 }
 
+/* Keep scrolling content clipped below the header, including the card padding. */
 .panel-body {
+  flex:1 1 auto;
+  min-width:0;
   min-height:0;
+  overflow:auto;
   position:relative;
   z-index:1;
+}
+
+.panel[data-section-kind="channel_panel"]>.panel-body,
+.panel[data-section-kind="structure_cards"]>.panel-body,
+.panel.has-cancel-ranking>.panel-body,
+.panel:has(.launch-rate-trends)>.panel-body {
+  overflow:visible;
 }
 
 /* Channel analysis: visible history matrices beside every-channel charts. */
@@ -1417,7 +1428,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   background:var(--card);
   border:1px solid var(--line);
   max-height:500px;
-  overflow-y:auto;
+  overflow:hidden;
   display:flex;
   flex-direction:column;
   padding:18px;
@@ -1451,9 +1462,6 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   justify-content:space-between;
   gap:10px;
   flex:0 0 auto;
-  position:sticky;
-  top:0;
-  z-index:5;
   background:var(--card);
   padding:4px 2px 8px;
   margin-bottom:14px;
@@ -1503,6 +1511,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 .table-wrap.is-scrollable {max-width:100%;overflow-x:auto}
+.panel-body .data-table th,
 .table-wrap.is-scrollable .data-table th {top:0}
 
 .data-table {
