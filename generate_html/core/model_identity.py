@@ -8,7 +8,7 @@ from typing import Any
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
-FORECAST_SOURCE_PATH = PROJECT_ROOT / "input_file" / "小订及首销数据整理.xlsx"
+FORECAST_SOURCE_PATH = PROJECT_ROOT / "output_file" / "小订及首销数据整理.xlsx"
 
 
 _REMOVABLE_WORDS = re.compile(r"鸿蒙智行|车型|款|总计|汇总|合计", re.I)

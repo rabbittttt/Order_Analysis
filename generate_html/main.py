@@ -23,6 +23,7 @@ from core.config import load_config
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook, reset_conflict_diagnostics
 from core.forecast_summary import SUMMARY_NAME, visible_target_names
+from core.model_identity import FORECAST_SOURCE_PATH
 from core.renderer import b64gzip, render_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
@@ -331,7 +332,8 @@ def build(
     refresh_seconds = perf_counter() - stage_started
     store = WorkbookStore(input_dir)
     stage_started = perf_counter()
-    store.load(exclude_names={SUMMARY_NAME}, data_only_view=config.get("chart_render_mode") == "generated")
+    raw_only_names = (SUMMARY_NAME, FORECAST_SOURCE_PATH.name)
+    store.load(exclude_names=set(raw_only_names), data_only_view=config.get("chart_render_mode") == "generated")
     load_seconds = perf_counter() - stage_started
     if not store.items:
         details = "；".join(store.load_errors) if store.load_errors else "目录中没有xlsx文件"
@@ -391,11 +393,12 @@ def build(
             LOGGER.info("多文件来源：%d类，共%d个文件匹配项参与合并；详细文件名可使用 --debug 查看",
                         len(store.multi_source_groups), sum(store.multi_source_groups.values()))
         stage_started = perf_counter()
-        # Add the consolidated forecast workbook only after subject/module builds,
-        # so imported source tabs never create extra analysis subjects.
-        summary_path = input_dir / SUMMARY_NAME
-        if summary_path.exists() and all(item.path.resolve() != summary_path.resolve() for item in store.items):
-            store.items.append(WorkbookItem(summary_path, load_data_workbook(summary_path, input_dir / ".cache" / "excel")))
+        # Forecast source/summary sheets belong in the raw center, but must not
+        # create ordinary analysis subjects or feed unrelated dashboard modules.
+        for name in raw_only_names:
+            raw_path = input_dir / name
+            if raw_path.exists() and all(item.path.resolve() != raw_path.resolve() for item in store.items):
+                store.items.append(WorkbookItem(raw_path, load_data_workbook(raw_path, input_dir / ".cache" / "excel")))
         raw_files, raw_blocks = raw_tables(store)
         raw_seconds = perf_counter() - stage_started
         manifest = {
