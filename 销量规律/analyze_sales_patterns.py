@@ -60,7 +60,7 @@ RESOLVED_METRIC_COLUMNS = {
     **{metric: tuple(column for column, _ in aliases)
        for metric, aliases in ORDER_METRIC_COLUMNS.items()},
 }
-RESOLVED_STAGES = {'小订', '小订阶段', '首销', '平销'}
+RESOLVED_STAGES = {'小订', '小订阶段', '首销前', '首销', '平销'}
 
 
 def _workbook_records(wb, name):
@@ -209,7 +209,7 @@ def read_resolved_panel(wb, audit):
                 stage = '小订阶段'
             else:
                 order_stages = [part for part in stages if part not in ('小订','小订阶段')]
-                if len(order_stages) != 1:
+                if len(order_stages) != 1 or order_stages[0] not in ('首销', '平销'):
                     audit[metric+'阶段不明确排除'] += 1
                     continue
                 stage = order_stages[0]
@@ -673,6 +673,7 @@ def main():
     config_path=SCRIPT_PATH.with_name('report_config.json')
     rules_path=SCRIPT_PATH.with_name('report_rules.py')
     forecast_path=SCRIPT_PATH.with_name('forecast_insights.py')
+    launch_path=SCRIPT_PATH.with_name('launch_patterns.py')
     web_exporter=SCRIPT_PATH.with_name('export_html.py')
     web_final=final.with_suffix('.html')
     templates=SCRIPT_PATH.with_name('templates')
@@ -686,7 +687,7 @@ def main():
     log('分析目的：辅助销量预测；净大定（留存大定）与交车锁单分别研究')
     required=(('输入工作簿',src),('节假日日历',calendar_path),
               ('Excel导出器',exporter),('报告规则配置',config_path),
-              ('规律汇总模块',rules_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
+              ('规律汇总模块',rules_path),('首销周节奏模块',launch_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
               *((f'网页模板 {name}',templates/name) for name in ('patterns.html','patterns.css','patterns.js')))
     missing=[f'{label}不存在：{path}' for label,path in required if not path.is_file()]
     if a.calendar is not None and not a.calendar.is_file():
@@ -722,6 +723,8 @@ def main():
     log('正在计算周期环比、车型分类和锁单滞后...')
     stage=time.perf_counter()
     result.update(extended_analysis(panel,c))
+    result['launch_pacing']=load_component(launch_path,'sales_launch_patterns').build_launch_pacing(panel)
+    log(f"首销相对周节奏：{len(result['launch_pacing'])} 条比较，净大定与锁单分别计算")
     log(f'周期比较、车型分类和锁单滞后计算完成，用时 {time.perf_counter()-stage:.1f} 秒')
 
     log('正在建立净大定、锁单预测基准并做滚动回测...')

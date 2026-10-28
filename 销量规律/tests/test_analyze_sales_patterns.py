@@ -415,6 +415,17 @@ class UnifiedDailyTests(unittest.TestCase):
         row.update(changes)
         return row
 
+    def test_prelaunch_qualifier_preserves_small_orders_without_relabeling_deposits(self):
+        models = [dict(代际名='新代际',二级代际名='纯电版',小订开始='2025-08-01',
+                       小订结束='2025-08-10',首销开始='2025-08-10',首销结束='2025-09-10')]
+        rows = [self.new_row(订单阶段='小订/首销前',生命周期='D1',小订=0),
+                self.new_row(日期=date(2025,8,2),订单阶段='首销前',小订=12)]
+        panel, audit = self.new_read(rows, models)
+        self.assertEqual([(r['metric'],r['value'],r['stage'],r['life']) for r in panel],
+                         [('小订数量',0,'小订阶段',1),('小订数量',12,'小订阶段',2)])
+        self.assertEqual(audit['留存大定阶段不明确排除'],2)
+        self.assertEqual(audit['交车锁单阶段不明确排除'],2)
+
     def test_new_schema_metric_aliases_prefer_new_values_and_keep_zero_negative_missing(self):
         rows = [
             self.new_row(日期=date(2025,8,1),小订=11,小订数量=99,留存大定=10,净大定=99,

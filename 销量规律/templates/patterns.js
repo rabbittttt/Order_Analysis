@@ -525,6 +525,26 @@ function renderPatternTabs(){
     const endTbl=el("div","table-wrap","",c);makeTable(endTbl,["月份","P25","倍率中位数","P75","车型月记录数"],mStats.map(x=>[x.key,fmtPct(x.p25),fmtPct(x.median),fmtPct(x.p75),fmtInt(x.n)]),"暂无完整月份。");
     c=card(container,"首销生命周期补充","生命周期规律按完整首7日批次计算，不并入平销。");
     const lif=lifecycleRows(metric);const lt=el("div","table-wrap","",c);makeTable(lt,["车型","首销批次","D1 / D3–D7 日均","首2天占首7天","有效批次数"],lif.map(r=>[r.model,r.cycle,fmtPct(r.d1_ratio),fmtPct(r.first2_share),fmtInt(lif.length)]),"该阶段没有完整生命周期样本。");
+  }else if(state.pattern==="launch"){
+    intro.textContent="按首销开始日对齐：第1周为D1–D7，第2周为D8–D14，第3周为D15–D21。净大定、锁单分别比较本周与前周；前后两个窗口均须完整落在所选日期内。";
+    const launch=resultBase("launch_pacing",metric).filter(r=>dateOnly(r.previous_start)>=state.start&&dateOnly(r.end)<=state.end);
+    const valid=launch.filter(r=>r.status==="有效"&&num(r.ratio)!==null);
+    const patterns=unique(launch.map(r=>r.pattern));
+    const stats=patterns.map(pattern=>({pattern,...summary(valid.filter(r=>r.pattern===pattern),"ratio")}));
+    miniKpis($("patternKpis"),[
+      {label:"有效比较",value:fmtInt(valid.length),foot:"同车型、批次、口径与来源"},
+      {label:"有效车型",value:fmtInt(unique(valid.map(r=>r.model)).length),foot:"各车型等权，不受销量大小支配"},
+      {label:"不可比记录",value:fmtInt(launch.length-valid.length),foot:"缺日、负值或前期为零"},
+      {label:"适用阶段",value:"首销",foot:"尚未做跨批次留出验证"}
+    ]);
+    const c=card(container,"上市后销量延续或回落","典型比例按车型等权中位数计算；P25/P75为历史批次波动，不是预测区间。只有确认可比的上市批次，才适合用于新车型情景参考。");
+    const chart=el("div","pattern-chart","",c);
+    drawBars(chart,stats.filter(r=>r.typical!==null),"pattern","typical",fmtPct,"vertical");
+    const t=el("div","table-wrap","",c);
+    makeTable(t,["比较","P25","典型比例","P75","车型数","不同起始日期","有效记录数"],stats.map(r=>[r.pattern,fmtPct(r.p25),fmtPct(r.typical),fmtPct(r.p75),fmtInt(r.models),fmtInt(r.periods),fmtInt(r.samples)]),"当前范围暂无可比首销周；请选择首销阶段，并覆盖至少两个相邻首销周。");
+    const detail=card(container,"逐车型首销周证据","前期和本期均为7日观测合计；缺失保持未知，不补零，原始观测合计可查，只有完整且非负窗口计算倍率。");
+    const dt=el("div","table-wrap","",detail);
+    makeTable(dt,["车型","比较","前期日期","本期日期","前期观测量","本期观测量","本期/前期","前期天数","本期天数","状态","来源"],launch.map(r=>[r.model,r.pattern,dateOnly(r.previous_start)+"～"+dateOnly(r.previous_end),dateOnly(r.start)+"～"+dateOnly(r.end),fmtNum(r.previous),fmtNum(r.current),fmtPct(r.ratio),fmtInt(r.previous_observed)+"/7",fmtInt(r.current_observed)+"/7",r.status,r.source]),"该阶段和日期窗没有首销周证据。");
   }else if(state.pattern==="holiday"){
     intro.textContent="节假日只提供历史解释：与同星期节前/节后对照计算，不视为可直接外推的预测系数。当前日期窗需覆盖节前7日至节后7日；主分析限定平销阶段。";
     const hs=holidayPhaseRows(metric);
@@ -927,7 +947,7 @@ function restoreRoute(){
   routeKeys.forEach(k=>{if(params.has(k))state[k]=k==="compare"?params.get(k)==="true":params.get(k);});
   if(!hash.includes("=")&&["overview","patterns","forecast","evidence"].includes(hash))state.page=hash;
   if(!metricByKey.get(state.metric)?.available)state.metric=defaultMetric.key;
-  if(!["months","week","holiday","cycles"].includes(state.pattern))state.pattern="months";
+  if(!["months","week","launch","holiday","cycles"].includes(state.pattern))state.pattern="months";
   if(!["daily","lags"].includes(state.evidence))state.evidence="daily";
   if(!["日","周","月","年"].includes(state.grain))state.grain="月";
   if(!["日","周","月"].includes(state.forecastGrain))state.forecastGrain="月";
@@ -975,8 +995,8 @@ document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click"
   state.metric=b.dataset.metric;state.category="__ALL__";state.model="__ALL__";state.stage="";
   clearDateError();updateFilters(true);refresh();
 }));
-$("categoryFilter").addEventListener("change",e=>{state.category=e.target.value;state.model="__ALL__";state.stage="";updateFilters(false);refresh();});
-$("modelFilter").addEventListener("change",e=>{state.model=e.target.value;state.stage="";updateFilters(false);refresh();});
+$("categoryFilter").addEventListener("change",e=>{state.category=e.target.value;state.model="__ALL__";updateFilters(false);refresh();});
+$("modelFilter").addEventListener("change",e=>{state.model=e.target.value;updateFilters(false);refresh();});
 $("stageFilter").addEventListener("change",e=>{state.stage=e.target.value;refresh();});
 $("dateStart").addEventListener("change",applyDates);
 $("dateEnd").addEventListener("change",applyDates);

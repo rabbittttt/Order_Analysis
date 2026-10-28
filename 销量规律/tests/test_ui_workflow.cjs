@@ -48,6 +48,33 @@ async function capture(page, filename) {
   try {
     await page.goto(url);
     await capture(page, "sales-ui-after-desktop.png");
+    await check("离线SVG标签页图标可解码", async () => {
+      const icon = await page.locator('link[rel="icon"]').getAttribute("href");
+      assert.ok(icon.startsWith("data:image/svg+xml,"));
+      assert.ok(await page.evaluate(href => new Promise(resolve => {
+        const img=new Image();img.onload=()=>resolve(img.naturalWidth>0);img.onerror=()=>resolve(false);img.src=href;
+      }),icon));
+    });
+    await check("首销相对周按口径、车型和完整日期窗口筛选", async () => {
+      for(const metric of ["留存大定","交车锁单"]){
+        await reset();await page.locator('[data-metric="'+metric+'"]').click();
+        await page.locator("#stageFilter").selectOption("首销");
+        await page.locator("#nav-patterns").click();await page.locator("#pattern-launch").click();
+        const expected=await page.evaluate(metric=>window.PATTERNS_DATA.results.launch_pacing.filter(r=>r.metric===metric&&r.status==="有效"),metric);
+        assert.ok(expected.length>0);
+        if(metric==="留存大定")await capture(page,"sales-launch-desktop.png");
+        const first=expected[0];await page.locator("#modelFilter").selectOption(first.model);
+        assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+        const text=await page.locator("#patternPanels").innerText();
+        assert.ok(text.includes(first.model));
+        assert.ok(text.includes(new Intl.NumberFormat("zh-CN",{style:"percent",maximumFractionDigits:1}).format(first.ratio)));
+        await page.reload();assert.equal(await page.locator("#pattern-launch").getAttribute("aria-selected"),"true");
+        await page.locator("#dateStart").fill(first.start);await page.locator("#dateStart").dispatchEvent("change");
+        const evidenceText=await page.locator("#patternPanels .pattern-card").last().innerText();
+        assert.ok(!evidenceText.includes(first.previous_start+"～"+first.previous_end));
+      }
+      await reset();
+    });
     await check("空白试算不当作零；零值可正常计算", async () => {
       await page.locator("#nav-forecast").click();
       await textMatches(page, "#trialResult", /—/);
@@ -136,6 +163,8 @@ async function capture(page, filename) {
       await page.locator("#nav-overview").focus(); await page.keyboard.press("ArrowRight");
       assert.equal(await page.locator("#nav-patterns").getAttribute("aria-selected"), "true");
       await page.locator('[data-pattern="week"]').focus(); await page.keyboard.press("ArrowRight");
+      assert.equal(await page.locator('[data-pattern="launch"]').getAttribute("aria-selected"), "true");
+      await page.keyboard.press("ArrowRight");
       assert.equal(await page.locator('[data-pattern="holiday"]').getAttribute("aria-selected"), "true");
       await page.locator('.workflow-guide [data-go="evidence"]').click();
       assert.equal(await page.evaluate(() => document.activeElement.id), "pageTitle");
@@ -193,6 +222,7 @@ async function capture(page, filename) {
         if (width === 390) await capture(p, "sales-ui-after-mobile.png");
         for (const name of ["overview", "patterns", "forecast", "evidence"]) {
           await p.locator("#nav-" + name).click();
+          if(name==="patterns"){await p.locator("#stageFilter").selectOption("首销");await p.locator("#pattern-launch").click();if(width===390)await capture(p,"sales-launch-mobile.png");}
           assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), name + " has document overflow");
           assert.equal(await p.locator("#panel-" + name).isVisible(), true);
           const lowContrast = await p.evaluate(() => {

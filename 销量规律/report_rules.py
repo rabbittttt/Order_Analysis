@@ -147,6 +147,19 @@ def _conclusion(item):
                    else "留出年度未达到完整覆盖要求。")
 
 
+def _launch_conclusion(item):
+    """Describe launch pacing without implying cross-batch validation."""
+    if item["typical"] is None:
+        base = "无合格样本：首销窗口缺少完整可比数据。"
+    elif item["periods"] < 3 or item["models"] < 2:
+        base = (f"样本不足：{item['models']}个车型、{item['periods']}个不同首销起始日期；"
+                "仅作描述，暂不归纳组级通用方向。")
+    else:
+        direction = "高于持平" if item["typical"] > 1 else "低于持平" if item["typical"] < 1 else "等于持平"
+        base = f"车型等权中位数为{item['typical']:.1%}，{direction}；仅为描述性汇总。"
+    return base + "首销批次描述，未做跨批次留出验证。"
+
+
 def build_rule_summary(results, model_map, categories, selected_metrics=None):
     """Build ratios with model-equal weighting and full-year same-key holdout checks."""
     results = results or {}
@@ -163,6 +176,7 @@ def build_rule_summary(results, model_map, categories, selected_metrics=None):
     annual = list(results.get("annual", []) or [])
     holidays = list(results.get("holidays", []) or [])
     comps = list(results.get("period_comparisons", []) or [])
+    launch_rows = list(results.get("launch_pacing", []) or [])
     all_rows = weekly + monthly + annual + holidays + comps
     combos = {(str(r["model"]), r["metric"], r["stage"]) for r in all_rows
               if r.get("model") is not None and r.get("metric") is not None and r.get("stage") is not None
@@ -181,6 +195,17 @@ def build_rule_summary(results, model_map, categories, selected_metrics=None):
             # Coverage-only results can explain a missing overall pattern, but
             # must not fabricate every category × metric × stage combination.
             scopes.add((ALL_MODELS, metric, stage))
+
+    launch_specs = set()
+    for row in launch_rows:
+        metric, stage, pattern = row.get("metric"), row.get("stage"), row.get("pattern")
+        if (metric is None or stage is None or pattern is None or
+                (metric_filter is not None and metric not in metric_filter)):
+            continue
+        launch_specs.add((ALL_MODELS, metric, stage, str(pattern)))
+        category = model_map.get(str(row.get("model", "")), {}).get("category")
+        if category in categories:
+            launch_specs.add((category, metric, stage, str(pattern)))
 
     holiday_names = sorted({str(r["holiday"]) for r in holidays if r.get("holiday")})
     specs = []
@@ -300,5 +325,32 @@ def build_rule_summary(results, model_map, categories, selected_metrics=None):
                        validation_note=note, unit="比例", detail_sheet=detail,
                        validation_models=validation_models, validation_train_years=validation_train_years)
         summary["conclusion"] = _conclusion(summary)
+        output.append({field: summary.get(field) for field in FIELDS})
+
+    # Launch pacing is a separate description family.  It is attached to the
+    # existing lifecycle detail sheet and deliberately bypasses full-year
+    # validation because each row describes a launch batch rather than a
+    # recurring calendar period.
+    for cat, metric, stage, pattern in sorted(launch_specs,
+                                               key=lambda x: (x[0], str(x[1]), str(x[2]), x[3])):
+        values = []
+        for row in launch_rows:
+            if (row.get("pattern") != pattern or row.get("status") != "有效"
+                    or not in_scope(row, cat, metric, stage)):
+                continue
+            cycle = _date(row.get("cycle"))
+            if cycle is None:
+                continue
+            item = make_sample(row, row.get("ratio"), cycle, cycle.year)
+            if item:
+                values.append(item)
+        summary = _aggregate(values)
+        summary.update(category=cat, metric=metric, stage=stage, pattern=pattern,
+                       conclusion="", train_ratio=None, validation_year=None,
+                       validation_ratio=None, validation_status="未做跨批次留出验证",
+                       validation_note="首销批次描述，未做跨批次留出验证",
+                       unit="比例", detail_sheet="生命周期明细",
+                       validation_models=0, validation_train_years=0)
+        summary["conclusion"] = _launch_conclusion(summary)
         output.append({field: summary.get(field) for field in FIELDS})
     return output

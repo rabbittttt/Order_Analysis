@@ -168,6 +168,9 @@ def _headline_findings(rules):
             finding = f"周末日均约为工作日日均的{r['typical']:.1%}"
         elif pattern == "月末7天/其余日期（日均）":
             finding = f"月末7天日均约为当月其余日期的{r['typical']:.1%}"
+        elif pattern.startswith("首销第"):
+            finding = f"{pattern}的典型比例为{r['typical']:.1%}"
+            status = "首销批次描述，未做跨批次留出验证"
         elif "月/上月" in pattern:
             finding = f"{pattern.split('/')[0]}日均约为上月的{r['typical']:.1%}"
         elif "年度季节指数" in pattern:
@@ -494,11 +497,25 @@ def export_workbook(payload, output_path, log=None):
         [[r["model"], r["metric"], r["stage"], r["cycle"], r["year"], r["month"], r["ratio"], r.get("status", "有效"), r["source"]] for r in d["monthly"]],
         [29, 15, 14, 15, 10, 10, 17, 24, 55], {6: '0.000"倍"'},
         "完整自然月；最后7天日均/其余日期日均。不补齐缺失日期。")
-    b.feature("生命周期明细",
+    lifecycle_sheet = b.feature("生命周期明细",
         ["车型", "指标", "阶段", "批次", "首日相对D3—D7", "前两天占首周", "数据来源"],
         [[r["model"], r["metric"], r["stage"], r["cycle"], r["d1_ratio"], r["first2_share"], r["source"]] for r in d["lifecycle"]],
         [29, 15, 14, 15, 18, 19, 55], {4: '0.000"倍"', 5: "0.0%"},
         "要求D1—D7完整；小转大与直接大定分别分析，避免混淆集中转化和新增需求。")
+
+    launch_start = lifecycle_sheet.max_row + 3
+    b.section(lifecycle_sheet, launch_start, "首销相对周节奏｜净大定与锁单分别分析", 7)
+    b.note(lifecycle_sheet, launch_start+1, "第1周=D1–D7，第2周=D8–D14，第3周=D15–D21；缺日、负值或零分母不算倍率。")
+    b.note(lifecycle_sheet, launch_start+2, "按同车型、首销批次、口径、来源比较；仅历史描述，尚未做跨批次预测回测。")
+    pacing = d.get("launch_pacing", [])
+    b.table(lifecycle_sheet, launch_start+4,
+            ["车型", "指标", "比较", "前期观测量", "本期观测量", "本期/前期", "日期、完整度与来源"],
+            [[r["model"], r["metric"], r["pattern"], r["previous"], r["current"], r["ratio"],
+              f"{r['status']}；前{r['previous_observed']}/7天，本{r['current_observed']}/7天；"
+              f"{r['previous_start']}～{r['previous_end']} → {r['start']}～{r['end']}；{r['source']}"] for r in pacing],
+            {3:"#,##0",4:"#,##0",5:"0.0%"}, True)
+    if not pacing:
+        b.note(lifecycle_sheet, launch_start+5, "暂无净大定或锁单首销第2周及后续日观测。")
 
     methods = b.sheet("数据覆盖与方法", [30, 55, 14, 16, 16, 17, 17, 18])
     b.table(methods, 6, ["指标", "阶段", "车型数", "车型日数", "不同日期数", "开始日期", "结束日期"],

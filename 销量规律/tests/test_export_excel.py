@@ -113,6 +113,30 @@ class ExportTests(unittest.TestCase):
                 self.assertEqual(wb["预测回测明细"]["H8"].value,115)
             finally:wb.close()
 
+    def test_launch_pacing_export_preserves_totals_and_nonuniversal_label(self):
+        payload=fixture()
+        row=dict(model="测试车型",metric="留存大定",stage="首销",cycle="2025-01-01",source="逐日表",
+                 pattern="首销第2周/第1周",previous_start=date(2025,1,1),previous_end=date(2025,1,7),
+                 start=date(2025,1,8),end=date(2025,1,14),previous=100,current=50,ratio=.5,
+                 previous_observed=7,current_observed=7,status="有效")
+        payload['results']['launch_pacing']=[row]
+        payload['forecast']={'profiles':[],'backtests':[]}
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder)/'report.xlsx';e.export_workbook(payload,target)
+            wb=load_workbook(target)
+            try:
+                matches=[r for r in wb['生命周期明细'].iter_rows(values_only=True) if r[2]==row['pattern']]
+                self.assertEqual(len(matches),1)
+                self.assertEqual(matches[0][3:6],(100,50,.5))
+                self.assertIn('7/7天',matches[0][6])
+                self.assertEqual(len(wb.sheetnames),17)
+            finally:wb.close()
+        headline=e._headline_findings([dict(row,category='全部车型',typical=.5,models=4,periods=4,
+                                           p25=.4,p75=.6,years=2)])[0]
+        self.assertIn('第2周',headline['finding'])
+        self.assertNotIn('同星期',headline['finding'])
+        self.assertIn('未做跨批次',headline['evidence_level'])
+
     def test_headlines_require_actual_multi_model_validation_and_current_direction(self):
         base=dict(category="全部车型",metric="留存大定",stage="平销",pattern="周末/工作日（日均）",
                   typical=1.2,p25=1.1,p75=1.3,models=5,periods=10,years=3,
