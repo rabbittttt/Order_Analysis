@@ -344,8 +344,15 @@ function renderLine(container,points,title,color,grain) {
   svg.appendChild(sEl("line",{x1:left,y1:top+ph,x2:w-right,y2:top+ph,class:"chart-axis"}));
   const x=i=>points.length===1?left+pw/2:left+i*pw/(points.length-1);
   const d=points.map((p,i)=>(i?"L":"M")+x(i).toFixed(1)+" "+y(p.value).toFixed(1)).join(" ");
+  if(points.length>1){
+    const area=sEl("path",{d:d+" L"+x(points.length-1).toFixed(1)+" "+y(0).toFixed(1)+" L"+x(0).toFixed(1)+" "+y(0).toFixed(1)+" Z",class:"chart-area"});
+    area.style.fill=color;svg.appendChild(area);
+  }
   const line=sEl("path",{d,class:"chart-series"});line.style.stroke=color;svg.appendChild(line);
-  if(points.length<=32)points.forEach((p,i)=>svg.appendChild(sEl("circle",{cx:x(i),cy:y(p.value),r:3.3,class:"chart-point",stroke:color})));
+  if(points.length<=32)points.forEach((p,i)=>{
+    const point=sEl("circle",{cx:x(i),cy:y(p.value),r:3.3,class:"chart-point"});
+    point.style.stroke=color;svg.appendChild(point);
+  });
   const ticks=points.length<=8?points.map((_,i)=>i):[0,Math.round((points.length-1)/3),Math.round((points.length-1)*2/3),points.length-1];
   unique(ticks).forEach(i=>{
     const p=points[i],label=String(p.key).length>7?String(p.key).slice(0,7):String(p.key);
@@ -364,7 +371,8 @@ function renderTrend(){
   const grid=$("trendCharts");clear(grid);
   grid.classList.toggle("is-comparison",state.compare);
   const legend=$("trendLegend");clear(legend);
-  const colorPrimary="#2563eb",colorOther="#0f766e";
+  const theme=getComputedStyle(document.documentElement);
+  const colorPrimary=theme.getPropertyValue("--blue2").trim(),colorOther=theme.getPropertyValue("--teal").trim();
   const a=el("span","legend-item",null,legend);el("i","legend-swatch","",a).style.background=colorPrimary;el("span","",metricName(state.metric)+"（"+metricSource(state.metric)+"）",a);
   if(state.compare){const key=state.metric==="留存大定"?"交车锁单":"留存大定";const b=el("span","legend-item",null,legend);el("i","legend-swatch","",b).style.background=colorOther;el("span","",metricName(key)+"（"+metricSource(key)+"）",b);}
   const one=el("div","chart-box","",grid);renderLine(one,chartTrend(primary,state.grain),metricName(state.metric)+" · "+state.stage,colorPrimary,state.grain);
