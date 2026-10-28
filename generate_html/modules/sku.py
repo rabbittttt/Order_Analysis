@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 
 from core.components import kpi, section, table
@@ -8,6 +9,12 @@ from core.excel import WorkbookStore, _period_sort, cell_number, clean_text
 from core.models import Dashboard, SourceRef, Subject
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _share(cell) -> float | None:
+    """Missing/invalid observations are not evidence of zero SKU orders."""
+    value = None if isinstance(cell.value, bool) else cell_number(cell, rate=True, default=None)
+    return value if isinstance(value, (int, float)) and math.isfinite(value) else None
 
 
 def _comparison(current, previous) -> dict:
@@ -79,7 +86,7 @@ def combo_heat_groups(sheet, periods: list[str], latest: str) -> list[dict]:
                 continue
             dims = [clean_text(sheet.cell(row, dim_col).value) for dim_col in dimension_cols]
             dims = [dim for dim in dims if dim]
-            values = [cell_number(sheet.cell(row, candidate), rate=True) for candidate in period_cols]
+            values = [_share(sheet.cell(row, candidate)) for candidate in period_cols]
             rows.append({"rank": rank, "label": " × ".join(dims) if dims else rank, "values": values})
         groups.append({"name": title, "periods": group_periods, "rows": rows})
     return groups
@@ -117,7 +124,7 @@ class SkuModule:
                 "exterior": clean_text(sku_sheet.cell(row, 3).value),
                 "interior": clean_text(sku_sheet.cell(row, 4).value),
                 "wheel": clean_text(sku_sheet.cell(row, 5).value),
-                "values": [cell_number(sku_sheet.cell(row, col), rate=True) for col in period_cols],
+                "values": [_share(sku_sheet.cell(row, col)) for col in period_cols],
             })
 
         cumulative_start = find_header(sku_sheet, "累计锁单", header_row=header_row)
@@ -135,7 +142,7 @@ class SkuModule:
                 if label:
                     cumulative_rows.append({
                         "label": label.upper(),
-                        "values": [cell_number(sku_sheet.cell(row, col), rate=True) for col in cumulative_period_cols],
+                        "values": [_share(sku_sheet.cell(row, col)) for col in cumulative_period_cols],
                     })
 
         # Each horizontal block (including merged files) owns its own date
@@ -150,21 +157,27 @@ class SkuModule:
         latest_index = len(periods) - 1
         latest = periods[latest_index]
 
+        def complete_sku_values(index: int) -> list[float] | None:
+            values = [row["values"][index] for row in sku_rows]
+            return values if values and periods[index] in share_periods and all(value is not None for value in values) else None
+
         def period_metrics(index: int) -> list:
             top_map = {
                 row["label"]: row["values"][index]
                 for row in cumulative_rows if len(row["values"]) > index
             }
-            coverage_80 = next(
-                (row["label"] for row in cumulative_rows if row["values"][index] is not None and row["values"][index] >= .8),
-                "-",
-            )
+            coverage_80 = "-"
+            for row in cumulative_rows:
+                value = row["values"][index]
+                if value is None:
+                    break  # An unknown earlier rank might already cross 80%.
+                if value >= .8:
+                    coverage_80 = row["label"]
+                    break
             coverage_match = re.search(r"\d+", coverage_80)
             coverage_value = int(coverage_match.group()) if coverage_match else coverage_80
-            active_sku = sum(
-                1 for row in sku_rows
-                if row["values"][index] is not None and row["values"][index] > 0
-            ) if periods[index] in share_periods else None
+            values = complete_sku_values(index)
+            active_sku = sum(value > 0 for value in values) if values is not None else None
             top3 = top_map.get("TOP3")
             top5 = top_map.get("TOP5", top3)
             return [
@@ -191,8 +204,8 @@ class SkuModule:
         tail_rows = [
             {
                 "label": period,
-                "value": sum(1 for row in sku_rows if row["values"][index] is not None and 0 < row["values"][index] <= .05)
-                         if period in share_periods else None,
+                "value": sum(0 < value <= .05 for value in values)
+                         if (values := complete_sku_values(index)) is not None else None,
             }
             for index, period in enumerate(periods)
         ]

@@ -1558,7 +1558,9 @@ class WorkbookStore:
                 seen.add(id(value))
             if isinstance(value, dict):
                 matches = self._source_aliases.get((value.get("file"), value.get("sheet")))
-                if matches:
+                # Field-level origins already identify the selected physical
+                # file. Only merged navigation references need alias expansion.
+                if matches and value.get("_physical_source") is not True:
                     value["file"], value["sheet"] = matches[0][0].path.name, matches[0][1].title
                     if len(matches) > 1:
                         value["source_files"] = list(dict.fromkeys(item.path.name for item, _ in matches))

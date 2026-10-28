@@ -1642,7 +1642,9 @@ def _small_daily_source(origin, fallback):
     origin = join_source_texts(origin or fallback)
     if "、" not in origin and "｜" in origin:
         file, sheet = origin.split("｜", 1)
-        return {**fallback, "file": file, "sheet": sheet}
+        # This pair identifies the selected physical value, not the merged
+        # Sheet's navigation alias. Keep it through the final source resolver.
+        return {**fallback, "file": file, "sheet": sheet, "_physical_source": True}
     return origin
 
 

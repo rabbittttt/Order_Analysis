@@ -29,6 +29,34 @@ assert.strictEqual(fmt(null),'');
 '''
         subprocess.run([node, '-e', formatter + checks], check=True, capture_output=True)
 
+    def test_sku_unknown_values_are_distinct_from_real_zero(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node unavailable")
+        script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
+        runtime = script[script.index("  const displayText ="):script.index("  const RHYTHM_LAYOUT=")]
+        runtime += script[script.index("  function renderSkuHeatmap("):script.index("  function renderComboHeatmap(")]
+        runtime += script[script.index("  function renderComboMatrix("):script.index("  function cumulative(")]
+        runtime += script[script.index("  function renderColumns("):script.index("  function renderCancelCards(")]
+        checks = r'''
+const assert=require('assert'),values=[null,0,.25,NaN,Infinity,undefined],original=[...values],periods=values.map((_,index)=>'W'+index);
+const data={groups:[{name:'外饰组合',periods,rows:[{rank:'TOP1',label:'黑色',values}]}]},matrix=renderComboMatrix(data);
+const cells=[...matrix.matchAll(/<div class="combo-matrix-cell"([^>]*)>(.*?)<\/div>/g)];
+assert.equal(cells.length,values.length);
+assert.deepEqual(cells.map(cell=>cell[2].replace(/<[^>]*>/g,'')),['—','0.0%','25.0%','—','—','—']);
+for(const index of [0,3,4,5])assert(!cells[index][1].includes('background'),'unknown ratio must not receive a numeric heat color');
+assert(cells[1][1].includes('background'),'real zero remains a known heatmap value');
+const heat=renderSkuHeatmap({periods,rows:[{label:'TOP1',values}]});
+assert.equal((heat.match(/>—<\/div>/g)||[]).length,4);assert(heat.includes('>0.0%</div>'));
+const tailRows=[{label:'未知',value:null},{label:'真实零',value:0},{label:'已知',value:5},{label:'非有限',value:Infinity}],tail=renderTailDistribution(tailRows);
+assert.deepEqual([...tail.matchAll(/class="column-data-label"[^>]*>([^<]*)<\/b>/g)].map(match=>match[1]),['—','0','5','—']);
+const positiveHeight=html=>[...html.matchAll(/height:([\d.]+)%/g)].map(match=>Number(match[1])).filter(height=>height>0);
+assert.deepEqual(positiveHeight(tail),positiveHeight(renderTailDistribution([{label:'已知',value:5}])),'unknown counts must not alter the numeric scale');
+assert.deepEqual(values,original);assert.equal(tailRows[0].value,null);assert.equal(tailRows[1].value,0);
+assert(!matrix.includes('NaN')&&!matrix.includes('Infinity')&&!tail.includes('NaN')&&!tail.includes('Infinity'));
+'''
+        subprocess.run([node, "-e", runtime + checks], check=True, capture_output=True)
+
     @staticmethod
     def rhythm_runtime():
         script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
@@ -218,7 +246,7 @@ assert(!/data-rhythm-label="segment"[^>]*>1<\/text>/.test(launchHtml),'too-small
     def test_raw_table_supports_freezing_first_row_and_title_columns(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn("rawFreezeRow:true,rawFreezeColumn:true", script)
+        self.assertIn("rawFreezeRow:true,rawFreezeColumn:false,rawFreezeFirstColumn:true", script)
         self.assertIn('aria-label="锁窗格"', script)
         self.assertIn('id="rawFreezeRow"', script)
         self.assertIn('id="rawFreezeColumn"', script)
@@ -245,7 +273,7 @@ const cells=Array.from({length:4},(_,col)=>({col,classList:classes(),style:{remo
 const root={isConnected:true,classList:classes(),querySelectorAll(selector){return selector.startsWith('[data-raw-col=')?cells.filter(cell=>cell.col===Number(selector.match(/"(\d+)"/)[1])):cells.filter(cell=>cell.classList.values.has('raw-frozen-column'))}};
 const $=()=>root,requestAnimationFrame=callback=>frames.push(callback),flush=()=>{while(frames.length)frames.shift()()},frozen=()=>cells.filter(cell=>cell.classList.values.has('raw-frozen-column')).map(cell=>cell.col);
 const rows=[['品牌','车型','数量','占比'],['问界','M9',12,.5]],before=JSON.stringify(rows);
-applyRawFrozenColumns(rows);flush();assert.deepEqual(frozen(),[0,1],'default title mode preserves multiple title columns');
+applyRawFrozenColumns(rows);flush();assert.deepEqual(frozen(),[0,1],'title mode preserves multiple title columns');
 state.rawFreezeColumn=false;state.rawFreezeFirstColumn=true;applyRawFrozenColumns(rows);flush();assert.deepEqual(frozen(),[0]);
 applyRawFrozenColumns([['编号','名称'],[1,'门店']]);flush();assert.deepEqual(frozen(),[0],'first column freezes even when numeric');
 state.rawFreezeColumn=true;state.rawFreezeFirstColumn=false;applyRawFrozenColumns(rows);

@@ -131,9 +131,11 @@ console.log(JSON.stringify(JSON.parse(process.argv[1]).map(run)));
         self.assertEqual(base_d1['total'], with_day['total'])
         quantities = lambda result: [(row['date'], row['orders'], row['actual']) for row in result['rows']]
         self.assertEqual(quantities(base_d1), quantities(with_day))
-        # Preserve the existing D1 metadata path; only D2 and later use the new floor.
-        self.assertEqual(base_d1['rows'][1]['observed'], 20)
-        self.assertEqual(with_day['rows'][1]['observed'], 0)
+        # D1 snapshots belong to D1, never tomorrow's first forecast row.
+        self.assertEqual(base_d1['rows'][0]['observed'], 20)
+        self.assertEqual(with_day['rows'][0]['observed'], 20)
+        self.assertNotIn('observed', base_d1['rows'][1])
+        self.assertNotIn('observed', with_day['rows'][1])
         self.assertEqual(base_ended, with_snapshots)
         self.assertEqual(base_ended['total'], 1000)
 
