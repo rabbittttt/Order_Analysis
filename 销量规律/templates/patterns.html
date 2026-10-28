@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%236a5be7'/%3E%3Ccircle cx='27' cy='27' r='14' fill='none' stroke='%2317c8b0' stroke-width='5'/%3E%3Cpath d='M37 37l15 15' fill='none' stroke='%23e9e5ff' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M16 30l8-9 7 5 9-11' fill='none' stroke='%23ffffff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='30' r='3' fill='%23ffffff'/%3E%3Ccircle cx='24' cy='21' r='3' fill='%23ffffff'/%3E%3Ccircle cx='31' cy='26' r='3' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='15' r='3' fill='%23ffffff'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f3bb3'/%3E%3Ccircle cx='27' cy='27' r='14' fill='none' stroke='%23079a87' stroke-width='5'/%3E%3Cpath d='M37 37l15 15' fill='none' stroke='%23dfe7ff' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M16 30l8-9 7 5 9-11' fill='none' stroke='%23ffffff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='30' r='3' fill='%23ffffff'/%3E%3Ccircle cx='24' cy='21' r='3' fill='%23ffffff'/%3E%3Ccircle cx='31' cy='26' r='3' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='15' r='3' fill='%23ffffff'/%3E%3C/svg%3E">
   <title>鸿蒙智行销量预测规律研究</title>
   <style>__PATTERNS_CSS__</style>
 </head>
@@ -13,7 +13,7 @@
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="#overview" aria-label="鸿蒙智行销量规律分析首页">
-        <span class="brand-mark" aria-hidden="true"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%236a5be7'/%3E%3Ccircle cx='27' cy='27' r='14' fill='none' stroke='%2317c8b0' stroke-width='5'/%3E%3Cpath d='M37 37l15 15' fill='none' stroke='%23e9e5ff' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M16 30l8-9 7 5 9-11' fill='none' stroke='%23ffffff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='30' r='3' fill='%23ffffff'/%3E%3Ccircle cx='24' cy='21' r='3' fill='%23ffffff'/%3E%3Ccircle cx='31' cy='26' r='3' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='15' r='3' fill='%23ffffff'/%3E%3C/svg%3E"></span>
+        <span class="brand-mark" aria-hidden="true"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f3bb3'/%3E%3Ccircle cx='27' cy='27' r='14' fill='none' stroke='%23079a87' stroke-width='5'/%3E%3Cpath d='M37 37l15 15' fill='none' stroke='%23dfe7ff' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M16 30l8-9 7 5 9-11' fill='none' stroke='%23ffffff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='30' r='3' fill='%23ffffff'/%3E%3Ccircle cx='24' cy='21' r='3' fill='%23ffffff'/%3E%3Ccircle cx='31' cy='26' r='3' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='15' r='3' fill='%23ffffff'/%3E%3C/svg%3E"></span>
         <span class="brand-copy"><strong>鸿蒙智行</strong><small>销量预测规律研究</small></span>
       </a>
       <div class="topbar-meta">
@@ -89,10 +89,6 @@
       <section id="panel-overview" class="page-panel" role="tabpanel" aria-labelledby="nav-overview">
         <div class="kpi-grid" id="overviewKpis"></div>
 
-        <section class="insight-summary" aria-label="当前规律线索">
-          <div><span class="section-kicker">当前可检验的规律线索</span><strong id="overviewInsight"></strong><p>仅描述当前可比样本；普适性与预测有效性仍须跨年验证和回测。</p></div>
-          <button type="button" class="text-button" data-go="patterns">查看证据 →</button>
-        </section>
         <section class="card trend-card">
           <div class="card-heading">
             <div><span class="section-kicker">实际观测</span><h2>销量走势</h2><p class="card-subtitle">按当前口径、车型和阶段聚合；缺失日期不补零。</p></div>
@@ -104,6 +100,11 @@
           <div id="trendLegend" class="chart-legend"></div>
           <div id="trendCharts" class="trend-grid"></div>
           <div id="trendCaption" class="chart-caption"></div>
+        </section>
+
+        <section class="insight-summary" aria-label="当前规律线索">
+          <div><span class="section-kicker">当前可检验的规律线索</span><strong id="overviewInsight"></strong><p>仅描述当前可比样本；普适性与预测有效性仍须跨年验证和回测。</p></div>
+          <button type="button" class="text-button" data-go="patterns">查看证据 →</button>
         </section>
 
         <div class="overview-grid">
@@ -118,7 +119,7 @@
           </section>
         </div>
 
-        <section class="card">
+        <section class="card overview-signals-card">
           <div class="card-heading compact-heading">
             <div><span class="section-kicker">规律线索</span><h2>当前筛选下的历史信号</h2><p class="card-subtitle">按可用样本重算；样本数是车型周期记录，不等同于独立实验次数。</p></div>
             <button type="button" class="text-button" data-go="patterns">查看完整规律 <span aria-hidden="true">→</span></button>
