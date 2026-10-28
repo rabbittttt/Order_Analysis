@@ -13,7 +13,7 @@ from openpyxl.utils.datetime import from_excel
 
 from core.china_calendar import calendar_payload
 from core.model_identity import model_key, usable_attribute, stage_records, stage_name, parent_generation, stage_label, resolve_stage_identity, generation_records, has_reservation, FORECAST_SOURCE_PATH
-from core.excel import _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type, compact_diagnostic_ranges
+from core.excel import cell_source_text, join_source_texts, covered_date_source_text, _source_date_ranges, display_period, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_type, compact_diagnostic_ranges
 from core.models import Dashboard, SourceRef, Subject
 from core.forecast_summary import ACTIVE_SUMMARY, SUMMARY_NAME, D12_SHEET, LEGACY_D12_SHEET, LAUNCH_CANCEL_SHEET, input_path, open_input, summary_scope, table_records, reservation_reference_shape
 
@@ -1183,7 +1183,7 @@ def _fill_sparse_dates(rows, fields, coverage=(), start=None, end=None):
     return [by_date[key] for key in sorted(by_date)]
 
 
-def _read_steady_daily(workbook, generation: str, start: date, today: date, coverage=()):
+def _read_steady_daily(workbook, generation: str, start: date, today: date, coverage=(), source_item=None):
     result = []
     source_sheets = []
     for sheet in workbook.worksheets:
@@ -1200,13 +1200,17 @@ def _read_steady_daily(workbook, generation: str, start: date, today: date, cove
                     continue
                 value = _optional_number(sheet.cell(row, col).value)
                 valid = value is not None and math.isfinite(value) and value >= 0
-                result.append({'date':day.isoformat(), 'lock':int(round(value)) if valid else None, 'complete':day < today})
+                result.append({'date':day.isoformat(), 'lock':int(round(value)) if valid else None, 'complete':day < today,
+                               '_field_origins': {'lock': cell_source_text(sheet, row, col, source_item.path.name if source_item else "")} if valid else {}})
             source_sheets.append(sheet.title)
             break
     result = (_fill_sparse_dates(sorted(result, key=lambda row:row['date']), ("lock",), coverage, start, today)
               if source_sheets else result)
     for row in result:
         row["complete"] = row["date"] < today.isoformat()
+        if row.get("absent_as_zero") and source_item:
+            row["_field_origins"] = {"lock": next((origin for sheet in workbook.worksheets
+                if sheet.title in source_sheets and (origin := covered_date_source_text(source_item, sheet, row["date"]))), "")}
     return result, source_sheets
 
 
@@ -1237,7 +1241,9 @@ def _complete_steady_weeks(weeks, raw_locks, daily, coverage, steady_start, curr
                 start += timedelta(days=7)
                 continue
             weeks.append({"period": period, "start_date": start.isoformat(), "end_date": end.isoformat(),
-                          "lock": value, "absent_as_zero": zero})
+                          "lock": value, "absent_as_zero": zero,
+                          "_field_origins": {"lock": join_source_texts(*(row.get("_field_origins", {}).get("lock")
+                                                                        for row in rows if row))}})
         start += timedelta(days=7)
     return weeks
 
@@ -1277,9 +1283,10 @@ def _read_steady_history(
                 continue
             steady_start = launch_end + timedelta(days=1)
             daily, daily_sheets = _read_steady_daily(lock_item.workbook, generation, steady_start, current,
-                                                    _source_date_ranges(lock_item))
+                                                    _source_date_ranges(lock_item), source_item=lock_item)
             parsed = parse_metric_sheet(sheet)
             raw_locks: dict[str, Any] = {}
+            raw_lock_origins = {}
             current_metric = ""
             for row_index in range(2, sheet.max_row + 1):
                 metric = str(sheet.cell(row_index, 1).value or "").strip()
@@ -1296,6 +1303,7 @@ def _read_steady_history(
                     )
                     if period:
                         raw_locks[period] = sheet.cell(row_index, column_index).value
+                        raw_lock_origins[period] = cell_source_text(sheet, row_index, column_index, lock_item.path.name)
                 break
             weeks: list[dict[str, Any]] = []
             for period, payload in parsed.items():
@@ -1319,8 +1327,13 @@ def _read_steady_history(
                     "start_date": week_start.isoformat(),
                     "end_date": week_end.isoformat(),
                     "lock": int(round(lock_value)),
+                    "_field_origins": {"lock": raw_lock_origins.get(period, "")},
                 })
             weeks = _complete_steady_weeks(weeks, raw_locks, daily, _source_date_ranges(lock_item), steady_start, current)
+            for week in weeks:
+                if week.get("absent_as_zero") and not week.get("_field_origins", {}).get("lock"):
+                    week["_field_origins"] = {"lock": join_source_texts(*(covered_date_source_text(lock_item, sheet,
+                        _as_date(week["start_date"])+timedelta(days=i)) for i in range(7)))}
             weeks.sort(key=lambda row: row["start_date"])
             gaps = [f"{previous['period']}→{following['period']}"
                     for previous, following in zip(weeks, weeks[1:])
@@ -1346,7 +1359,8 @@ def _read_steady_history(
                 "node": usable_attribute(master_record.get("发布类型") or master_record.get("发布节点")),
                 "steady_start_date": steady_start.isoformat(),
                 "weeks": weeks,
-                "daily": daily,
+                "daily": [{key: value for key, value in row.items() if key != "_field_origins"} for row in daily],
+                "daily_sources": {row["date"]: row.get("_field_origins", {}).get("lock", "") for row in daily},
                 "daily_source_sheets": daily_sheets,
                 "source_file": lock_item.path.name,
                 "source_sheet": sheet.title,
@@ -1623,6 +1637,15 @@ def _sheet_rows(sheet) -> dict[str, list[Any]]:
     }
 
 
+def _small_daily_source(origin, fallback):
+    """Keep the legacy single-source record; sums retain complete source pairs."""
+    origin = join_source_texts(origin or fallback)
+    if "、" not in origin and "｜" in origin:
+        file, sheet = origin.split("｜", 1)
+        return {**fallback, "file": file, "sheet": sheet}
+    return origin
+
+
 def _small_campaign_rows(model, rows, windows):
     """Assign primary small-order totals only to a uniquely active campaign."""
     children = [w for w in windows.values() if w.get("secondary_generation")
@@ -1654,6 +1677,9 @@ def _forecast_event_sheets(item, mapping):
         for file_index, origin in enumerate(physical_items)
         for sheet_index, sheet in enumerate(origin.workbook.worksheets)
     }
+    for origin in physical_items:
+        for sheet in origin.workbook.worksheets:
+            sheet._source_file = origin.path.name
     physical_matches = {id(sheet): (origin, sheet)
                         for origin in physical_items for sheet in origin.workbook.worksheets}
     groups = {}
@@ -1711,6 +1737,14 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             if not model or grain not in ("day", "hour"):
                 continue
             rows = _sheet_rows(sheet)
+            row_numbers = {str(sheet.cell(row, 1).value or "").strip(): row
+                           for row in range(1, sheet.max_row+1) if sheet.cell(row, 1).value}
+            def field_origin(labels, index):
+                label = next((label for label in labels if label in row_numbers), None)
+                return cell_source_text(sheet, row_numbers[label], index+2, launch_item.path.name) if label else ""
+            day_labels = {"gross": ("当日大定数量",), "net": ("当日留存大定数量", "当日净大定数量"),
+                          "small_to_big": ("当日小订转大定数量",), "direct": ("当日直接大定数量",),
+                          "lock": ("当日交车锁单数量",)}
             profile = profiles.setdefault(model, {"model": model, "days": [], "hourly_days": []})
             if grain == "day":
                 dates = rows.get("时间", [])
@@ -1746,7 +1780,12 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                     day = _iso(stamp)
                     values = {field: _optional_count(series, index) for field, series in cumulative_fields.items()}
                     if day and any(v is not None for v in values.values()):
-                        cumulative_days.append({"date": day, **values})
+                        labels = {"gross": ("累计大定数量",), "net": ("累计留存大定数量", "累计净大定数量"),
+                                  "small_to_big": ("累计小订转大定数量",), "direct": ("累计直接大定数量",),
+                                  "lock": ("累计交车锁单数量",)}
+                        cumulative_days.append({"date": day, **values,
+                            "_field_origins": {field: field_origin(labels[field], index)
+                                               for field, value in values.items() if value is not None}})
                 d1_index = next((i for i, label in enumerate(rows.get("周期", []))
                                  if str(label or "").strip().upper() == "D1"), None)
                 profile["cumulative_launch_date"] = _iso(dates[d1_index]) if d1_index is not None and d1_index < len(dates) else ""
@@ -1795,6 +1834,9 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                         "small_to_big": _optional_count(small, index),
                         "direct": _optional_count(direct, index),
                         "lock": _optional_count(locks, index),
+                        "_field_origins": {field: field_origin(labels, index)
+                                           for field, labels in day_labels.items()
+                                           if _optional_count(rows.get(next((label for label in labels if label in rows), ""), []), index) is not None},
                     })
                 if not actual_days and not cumulative_days and (dates or gross):
                     d1_date = dates[0] if dates else None
@@ -1864,7 +1906,15 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                     bucket["gross"] = bucket["gross"] + quantity if bucket["gross"] is not None and quantity is not None else None
                     for field, value in components.items():
                         bucket[field] = bucket[field] + value if bucket[field] is not None and value is not None else None
-                    bucket["hours"].append({"hour": parsed_timestamp.hour, "gross": quantity, **components})
+                    origins = {field: field_origin(day_labels[field], index) for field, value in
+                               {"gross": _optional_count(gross, index), **components}.items() if value is not None}
+                    if quantity is not None and "gross" not in origins:
+                        origins["gross"] = join_source_texts(origins.get("small_to_big"), origins.get("direct"))
+                    bucket["hours"].append({"hour": parsed_timestamp.hour, "gross": quantity, **components,
+                                            "_field_origins": origins})
+                    selected_origins = bucket.setdefault("_field_origins", {})
+                    for field, origin in origins.items():
+                        selected_origins[field] = join_source_texts(selected_origins.get(field), origin)
                 if not grouped and (timestamps or gross):
                     first_time = timestamps[0] if timestamps else None
                     first_gross = gross[0] if gross else None
@@ -1921,7 +1971,8 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                     )
                     daily_rows.append({"date": date_key, "orders": None})
                     continue
-                daily_rows.append({"date": date_key, "orders": int(round(orders))})
+                daily_rows.append({"date": date_key, "orders": int(round(orders)),
+                    "_field_origins": {"orders": cell_source_text(sheet, quantity_row, column, small_mix_item.path.name)}})
             window = _stage_window(stage_windows or {}, model) or {}
             known_dates = [day for row in daily_rows if (day := _as_date(row.get("date"))) is not None]
             start = _as_date(window.get("small_start_date")) or (min(known_dates) if known_dates else None)
@@ -1937,8 +1988,11 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 profile = profiles.setdefault(profile_name, {"model": profile_name, "days": [], "hourly_days": [], "small_hourly_days": []})
                 by_date = {row["date"]: row for row in profile.get("small_daily_days", [])}
                 by_date.update({row["date"]: row for row in owned_rows})
-                profile["small_daily_days"] = [by_date[key] for key in sorted(by_date)]
-                profile.setdefault("small_daily_sources", {}).update({row["date"]: source.to_dict() for row in owned_rows})
+                profile["small_daily_days"] = [{k: v for k, v in by_date[key].items() if k != "_field_origins"} for key in sorted(by_date)]
+                profile.setdefault("small_daily_sources", {}).update({row["date"]: _small_daily_source(
+                    row.get("_field_origins", {}).get("orders") or
+                    covered_date_source_text(small_mix_item, sheet, row["date"]), source.to_dict())
+                    for row in owned_rows})
             sources.append(source)
 
     cancel_item = store.find("小订退订分析")
@@ -1968,7 +2022,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 seen_small_hours: set[tuple[str, int]] = set()
                 if resolved:
                     header_row, columns = resolved
-                    for values in sheet.iter_rows(min_row=header_row + 1, values_only=True):
+                    for source_row, values in enumerate(sheet.iter_rows(min_row=header_row + 1, values_only=True), header_row+1):
                         date_key = _iso(values[columns["date"]] if columns["date"] < len(values) else None)
                         raw_hour = values[columns["hour"]] if columns["hour"] < len(values) else None
                         orders = _optional_number(values[columns["orders"]] if columns["orders"] < len(values) else None)
@@ -1986,10 +2040,14 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                         bucket = grouped.setdefault(date_key, {"date": date_key, "last_hour": -1, "orders": 0, "hours": []})
                         bucket["last_hour"] = max(bucket["last_hour"], hour)
                         bucket["orders"] += int(round(orders))
-                        bucket["hours"].append({"hour": hour, "orders": int(round(orders))})
+                        origin = cell_source_text(sheet, source_row, columns["orders"]+1, cancel_item.path.name)
+                        bucket["hours"].append({"hour": hour, "orders": int(round(orders)), "_field_origins": {"orders": origin}})
+                        bucket.setdefault("_field_origins", {})["orders"] = join_source_texts(
+                            bucket.get("_field_origins", {}).get("orders"), origin)
                 profile["small_hourly_days"] = list(grouped.values())
                 cancel_daily_rows = [
-                    {"date": day, "orders": bucket["orders"] if day not in invalid_small_dates else None}
+                    {"date": day, "orders": bucket["orders"] if day not in invalid_small_dates else None,
+                     "_field_origins": bucket.get("_field_origins", {})}
                     for day, bucket in sorted(grouped.items())
                 ]
                 source = SourceRef(cancel_item.path.name, sheet.title, "小订D1分时真实进度")
@@ -1998,8 +2056,8 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 for row in cancel_daily_rows:
                     if row["date"] not in by_date or by_date[row["date"]].get("orders") is None:
                         by_date[row["date"]] = row
-                        source_by_date[row["date"]] = source.to_dict()
-                profile["small_daily_days"] = [by_date[key] for key in sorted(by_date)]
+                        source_by_date[row["date"]] = _small_daily_source(row.get("_field_origins", {}).get("orders"), source.to_dict())
+                profile["small_daily_days"] = [{k: v for k, v in by_date[key].items() if k != "_field_origins"} for key in sorted(by_date)]
                 profile["small_hour_source"] = source.to_dict()
                 if grouped:
                     sources.append(source)
@@ -2024,7 +2082,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
             cumulative_column = next((header_index[name] for name in ("累计小订退", "累计小订退订") if name in header_index), None)
             daily_column = next((header_index[name] for name in ("当日小订退", "当日小订退订") if name in header_index), None)
             rate_column = next((header_index[name] for name in ("整体 - 小订退 %", "小订后退订比例", "小订退订率") if name in header_index), None)
-            for values in sheet.iter_rows(min_row=header_row+1, values_only=True):
+            for source_row, values in enumerate(sheet.iter_rows(min_row=header_row+1, values_only=True), header_row+1):
                 if not values or date_column >= len(values):
                     continue
                 date_key = _iso(values[date_column])
@@ -2035,7 +2093,11 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 cancel_by_date[date_key] = cumulative
                 daily_cancel = _optional_count(values, daily_column) if daily_column is not None else None
                 cancel_rows.append({"date": date_key, "cancel": cumulative, "cancel_rate": rate,
-                                    "daily_cancel": daily_cancel})
+                                    "daily_cancel": daily_cancel,
+                                    "_field_origins": {field: cell_source_text(sheet, source_row, column+1, cancel_item.path.name)
+                                        for field, column, value in (("cancel", cumulative_column, cumulative),
+                                                                     ("daily_cancel", daily_column, daily_cancel))
+                                        if column is not None and value is not None}})
             for row in profile.get("days", []):
                 row["cancel"] = cancel_by_date.get(row["date"])
             if cancel_rows:
@@ -2093,15 +2155,24 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                     day = _as_date(sheet.cell(1, col).value)
                     if day is None or day < start or day > min(finish, today or date.today()):
                         continue
-                    values = {}
+                    values, origins = {}, {}
                     for field, names in (("gross", ("大定",)), ("net", ("留存大定", "净大定"))):
                         r = next((rows[n] for n in names if n in rows), None)
                         number = _optional_number(sheet.cell(r, col).value) if r else None
                         values[field] = int(round(number)) if number is not None and math.isfinite(number) and number >= 0 else None
-                    actual_days.append({"date": day.isoformat(), **values})
+                        if values[field] is not None:
+                            origins[field] = cell_source_text(sheet, r, col, order_item.path.name)
+                    actual_days.append({"date": day.isoformat(), **values, "_field_origins": origins})
             if not matched:
                 continue
             actual_days = _fill_sparse_dates(actual_days, ("gross", "net"), _source_date_ranges(order_item), start, min(finish, today or date.today()))
+            for row in actual_days:
+                origins = row.setdefault("_field_origins", {})
+                for field in ("gross", "net"):
+                    if row.get(field) is not None and field not in origins:
+                        origins[field] = join_source_texts(*(covered_date_source_text(order_item, sheet, row["date"]) for sheet in matched))
+                origins["direct"] = origins.get("gross", "")
+                origins["small_to_big"] = origins.get("gross", "")
             profile["days"] = [{**row, "day": f"D{(_as_date(row['date'])-start).days+1}",
                                 "direct": row.get("gross"), "small_to_big": 0} for row in actual_days]
             profile["launch_date"] = start.isoformat()
@@ -2136,6 +2207,8 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                     day[field] = value
                     day.setdefault("_hourly_backfill", []).append(field)
                     day.setdefault("_complete_hour_fields", []).append(field)
+                    day.setdefault("_field_origins", {})[field] = join_source_texts(
+                        *(row.get("_field_origins", {}).get(field) for row in hours))
         for day in profile.get("days", []):
             snapshot = snapshots.get(day.get("date"), {})
             gross, hourly_gross = day.get("gross"), snapshot.get("gross")
@@ -2147,6 +2220,7 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                 if day.get(field) is None and snapshot.get(field) is not None:
                     day[field] = snapshot[field]
                     day.setdefault("_hourly_backfill", []).append(field)
+                    day.setdefault("_field_origins", {})[field] = snapshot.get("_field_origins", {}).get(field, "")
     return list(profiles.values()), sources
 
 
@@ -2301,6 +2375,7 @@ def _merge_day_fields(
         for field in fields:
             row[field] = None
         row_sources: dict[str, str] = {}
+        row_origins = {}
         for field in fields:
             for source in (field_priorities or {}).get(field, priority):
                 by_date, by_day, rows = lookups[source]
@@ -2309,6 +2384,9 @@ def _merge_day_fields(
                 if _valid_daily_value(field, value, candidate):
                     row[field] = value
                     row_sources[field] = source
+                    origin = candidate.get("_field_origins", {}).get(field)
+                    if origin:
+                        row_origins[field] = origin
                     source_sets[field].add(source)
                     break
         gross, small, direct = row.get("gross"), row.get("small_to_big"), row.get("direct")
@@ -2324,6 +2402,7 @@ def _merge_day_fields(
                 row_sources.pop("small_to_big", None)
                 row_sources.pop("direct", None)
         row["_field_sources"] = row_sources
+        row["_field_origins"] = {field: origin for field, origin in row_origins.items() if field in row_sources}
         merged.append(row)
     if log_issues and structure_issues:
         preview = "、".join(structure_issues[:8])

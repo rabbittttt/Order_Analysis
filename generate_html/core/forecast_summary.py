@@ -10,7 +10,7 @@ import logging
 
 from openpyxl import load_workbook
 
-from core.excel import WorkbookItem, WorkbookStore
+from core.excel import WorkbookItem, WorkbookStore, join_source_texts, source_files_text
 
 SUMMARY_NAME = "鸿蒙智行销量数据汇总.xlsx"
 GUIDE_SHEET = "说明与来源"
@@ -267,7 +267,11 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         row["首销发布时段"] = target.get("launch_period") or row.get("首销发布时段") or "未维护"
         raw = next((r for r in raw_profiles if r["model"] == target["name"]), {})
         files = [_source_parts(raw.get(k))[0] for k in ("day_source", "hour_source", "small_hour_source", "cancel_source")]
-        files += [_source_parts(v)[0] for v in raw.get("small_daily_sources", {}).values()]
+        files += [filename for origin in raw.get("small_daily_sources", {}).values()
+                  for filename in source_files_text(source_text(origin)).split("、") if filename]
+        files += [filename for key in ("days", "cumulative_days", "cancel_days", "hourly_days", "small_hourly_days")
+                  for day in raw.get(key, []) for origin in day.get("_field_origins", {}).values()
+                  for filename in source_files_text(source_text(origin)).split("、") if filename]
         files += [r.get("source_file") for r in data.get("steady_history", []) if r["model"] == target["name"]]
         files += list(mix_sources.get(target["name"], {}))
         files = [history_file if filename and filename.endswith(".refreshing.xlsx") else filename for filename in files]
@@ -291,14 +295,17 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
             stage = "平销" if day.get("date") and target.get("end_date") and day["date"] > target["end_date"] else "首销"
             add(model, target.get("history_model"), day, stage, "首销订单", raw.get("day_source"),
                 {c: day.get(k) for k, c in ORDER_FIELDS.items()})
+            rows[-1]["_origins"] = {label: source_text(origin) for key, label in ORDER_FIELDS.items()
+                                    if (origin := day.get("_field_origins", {}).get(key))}
             if day.get("_hourly_backfill"):
-                rows[-1]["_origins"] = {ORDER_FIELDS[field]: source_text(raw.get("hour_source")) + (
+                rows[-1]["_origins"].update({ORDER_FIELDS[field]: source_text(day.get("_field_origins", {}).get(field) or raw.get("hour_source")) + (
                                            "（完整24小时汇总，分时补缺）" if field in day.get("_complete_hour_fields", [])
                                            else "（日/时大定一致，分时补缺）")
-                                       for field in day["_hourly_backfill"]}
+                                        for field in day["_hourly_backfill"]})
         for day in raw.get("small_daily_days", []):
             add(model, target.get("history_model"), day, "小订", "逐日小订", raw.get("small_daily_sources", {}).get(day.get("date")),
                 {"小订数量": day.get("orders")})
+            rows[-1]["_origins"] = {"小订数量": source_text(raw.get("small_daily_sources", {}).get(day.get("date")))}
     for item in data.get("history", []):
         if item.get("_daily_orders_from_actuals") or item["model"] in references.get(GROSS_DAILY_SHEET, {}):
             continue  # Actual fallbacks keep their raw source; explicit history owns its field below.
@@ -331,13 +338,16 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         for day in item.get("daily", []):
             add(item["model"], None, day, "平销", "平销锁单",
                 {"file": item.get("source_file"), "sheet": "、".join(item.get("daily_source_sheets", []))}, {"交车锁单": day.get("lock")})
+            origin = item.get("daily_sources", {}).get(day.get("date")) or day.get("_field_origins", {}).get("lock")
+            if origin:
+                rows[-1]["_origins"] = {"交车锁单": source_text(origin)}
     rows = resolved_daily_rows(rows, data, master, history_file, as_of_date or date.today(), raw_profiles)
     headers = ["订单分析代际名", "历史传播名", "日期", "订单阶段", "生命周期", "日期状态", "小订数量", "退订数量",
                "小转大", "直接大定", "大定", "留存大定", "交车锁单", "字段来源", "首销分时核对"]
     for sheet, key, field, label, source_key in (
         (SMALL_HOURLY_SHEET, "small_hourly_days", "orders", "小时小订", "small_hour_source"),
         (LAUNCH_HOURLY_SHEET, "hourly_days", "gross", "小时大定", "hour_source")):
-        records = {}
+        records, record_origins = {}, {}
         for raw in raw_profiles:
             for day in raw.get(key, []):
                 hours = list(day.get("hours", []))
@@ -347,10 +357,17 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
                     if key == "hourly_days":
                         record.extend(hour.get(metric) for metric in ("small_to_big", "direct", "lock"))
                     identity = (raw["model"], iso_day(day.get("date")), hour.get("hour"))
+                    positions = {field: 3, **({"small_to_big": 5, "direct": 6, "lock": 7} if key == "hourly_days" else {})}
+                    for metric, position in positions.items():
+                        if record[position] is not None and (identity not in records or records[identity][position] is None):
+                            record_origins.setdefault(identity, {})[metric] = source_text(
+                                hour.get("_field_origins", {}).get(metric) or raw.get(source_key))
                     if identity not in records:
                         records[identity] = record
                     else:
                         records[identity] = [a if a is not None else b for a, b in zip(records[identity], record)]
+                    if record_origins.get(identity):
+                        records[identity][4] = source_files_text(join_source_texts(*record_origins[identity].values()))
         component_headers = ["小时小转大", "小时直接大定", "小时交车锁单"] if key == "hourly_days" else []
         emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件", *component_headers], [records[k] for k in sorted(records)])
         if key == "hourly_days":
@@ -361,13 +378,16 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
     weekly = [list(r[:11]) for r in weekly_rows]
     for item in data.get("steady_history", []):
         for week in item.get("weeks", []):
+            week_source = source_text(week.get("_field_origins", {}).get("lock") or
+                                      {"file": item.get("source_file"), "sheet": item.get("source_sheet")})
             match = next((r for r in weekly if r[0] == item["model"] and r[1] == week["period"] and r[2] == "平销"), None)
             if match is None:
                 weekly.append([item["model"], week["period"], "平销", date_cell(week["start_date"]), date_cell(week["end_date"]),
-                    None, None, week.get("lock"), None, None, source_text({"file": item.get("source_file"), "sheet": item.get("source_sheet")})])
+                    None, None, week.get("lock"), None, None, week_source])
             else:
+                if match[7] != week.get("lock") or not match[10]:
+                    match[10] = week_source
                 match[7] = week.get("lock")
-                match[10] = source_text({"file": item.get("source_file"), "sheet": item.get("source_sheet")})
     emit(WEEKLY_SHEET, ["订单分析代际名", "周期", "订单阶段", "统计开始", "统计结束", "大定", "留存大定", "交车锁单",
          "大定来源", "留存大定来源", "锁单来源", *[stage + field for stage in ("首销", "平销") for field in ("大定", "留存大定", "交车锁单")]],
          resolved_weekly_rows(weekly, data.get("mix_weekly")))
@@ -426,7 +446,7 @@ def resolved_daily_rows(candidates, data, masters, history_file, today, raw_prof
             for key, field in ORDER_FIELDS.items():
                 owner = day.get("_field_sources", {}).get(key)
                 kinds[field] = "历史首销" if owner == "history" else "首销订单"
-                provenance[field] = source_text({"file": history_file, "sheet": {"gross": GROSS_DAILY_SHEET, "small_to_big": "小转大当日数量", "direct": "直接大定当日数量"}.get(key, "车型汇总")}) if owner == "history" else source_text({"file": filename, "sheet": sheet})
+                provenance[field] = source_text({"file": history_file, "sheet": {"gross": GROSS_DAILY_SHEET, "small_to_big": "小转大当日数量", "direct": "直接大定当日数量"}.get(key, "车型汇总")}) if owner == "history" else source_text(day.get("_field_origins", {}).get(key) or {"file": filename, "sheet": sheet})
             candidates.append({"订单分析代际名": profile["model"], "日期": date_cell(day.get("date")),
                 "订单阶段": "首销", "生命周期": day.get("day"), **{c: day.get(k) for k, c in ORDER_FIELDS.items()},
                 "来源类型": "已解析", "来源文件": filename, "来源Sheet": sheet, "_origins": provenance, "_kinds": kinds})
@@ -442,17 +462,22 @@ def resolved_daily_rows(candidates, data, masters, history_file, today, raw_prof
             if valid(value):
                 cancel_cumulative[(profile["model"], day_key)] = value
             daily_cancel = entry.get("daily_cancel")
+            cancel_origin = source_text(entry.get("_field_origins", {}).get("daily_cancel") or profile.get("cancel_source"))
             if not valid(daily_cancel) and valid(value):
                 prior_day = (date.fromisoformat(day_key)-timedelta(days=1)).isoformat()
                 prior = previous_cancel.get(prior_day)
                 if prior is None and day_key == targets.get(profile["model"], {}).get("small_start_date"):
                     prior = 0
                 daily_cancel = value-prior if valid(prior) and value >= prior else None
+                prior_entry = next((r for r in profile.get("cancel_days", []) if iso_day(r.get("date")) == prior_day), {})
+                cancel_origin = join_source_texts(
+                    source_text(entry.get("_field_origins", {}).get("cancel") or profile.get("cancel_source")),
+                    source_text(prior_entry.get("_field_origins", {}).get("cancel") or profile.get("cancel_source")) if prior_entry else "") + "（相邻日累计差分）"
             if valid(daily_cancel):
                 filename, sheet = _source_parts(profile.get("cancel_source"))
                 candidates.append({"订单分析代际名": profile["model"], "日期": date_cell(day_key),
                     "退订数量": daily_cancel, "来源类型": "小订退订",
-                    "来源文件": filename, "来源Sheet": sheet})
+                    "来源文件": filename, "来源Sheet": sheet, "_origins": {"退订数量": cancel_origin}})
     for item in data.get("history", []):
         model = item.get("generation") or item["model"]
         start = item.get("launch_date")
@@ -481,7 +506,8 @@ def resolved_daily_rows(candidates, data, masters, history_file, today, raw_prof
     for (model, day, field), (value, source) in data.get("mix_daily", {}).items():
         filename, sheet = _source_parts(source)
         candidates.append({"订单分析代际名": model, "日期": date_cell(day),
-            ORDER_FIELDS[field]: value, "来源类型": "选配实际", "来源文件": filename, "来源Sheet": sheet})
+            ORDER_FIELDS[field]: value, "来源类型": "选配实际", "来源文件": filename, "来源Sheet": sheet,
+            "_origins": {ORDER_FIELDS[field]: source_text(source)}})
     rows, ranks, origins = {}, {}, {}
     def rank_for(source, field, target, day):
         kind = source.get("来源类型")
@@ -598,6 +624,7 @@ def backfill_launch_cumulative(rows, ranks, origins, data, targets, profiles, to
         if not start or not finish or calendar_day(profile.get("cumulative_launch_date")) != start:
             continue
         source = source_text(profile.get("cumulative_source") or profile.get("day_source"))
+        anchor_rows = {calendar_day(r.get("date")): r for r in profile.get("cumulative_days", [])}
         for key, field in ORDER_FIELDS.items():
             anchors = {calendar_day(r.get("date")): r[key] for r in profile.get("cumulative_days", [])
                        if start <= calendar_day(r.get("date")) <= finish
@@ -630,7 +657,10 @@ def backfill_launch_cumulative(rows, ranks, origins, data, targets, profiles, to
                     continue
                 rows.setdefault((model, day), {"订单分析代际名": model, "日期": date_cell(day)})[field] = value-base
                 ranks[(model, day, field)] = 2
-                origins.setdefault((model, day), {})[field] = source + "（相邻日累计差分）"
+                actual_source = join_source_texts(
+                    source_text(anchor_rows[day].get("_field_origins", {}).get(key) or source),
+                    source_text(anchor_rows[previous].get("_field_origins", {}).get(key) or source) if previous in anchors else "")
+                origins.setdefault((model, day), {})[field] = actual_source + "（相邻日累计差分）"
     data["resolved_launch_cumulative"] = resolved
     if conflicts:
         grouped = {}

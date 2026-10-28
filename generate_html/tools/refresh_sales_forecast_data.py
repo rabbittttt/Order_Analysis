@@ -305,6 +305,50 @@ def as_number(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def optional_reference_quantity(value: Any) -> int | None:
+    """Read a maintained count with the same rules as exported daily counts."""
+    from modules.sales_forecast import _optional_count
+    try:
+        return _optional_count([value], 0)
+    except OverflowError:
+        return None
+
+
+def optional_reference_rate(value: Any) -> float | None:
+    """Keep an independently maintained rate only when it is finite and valid."""
+    if isinstance(value, bool):
+        return None
+    number = as_number(value, float("nan"))
+    return number if math.isfinite(number) and 0 <= number <= 1 else None
+
+
+REFERENCE_QUANTITY_FIELDS = ("总小订", "小订转大定量", "大定量", "直接大定量", "小订后退定",
+                             "首销期留存大定", "首销期锁单", "首销期天数")
+REFERENCE_RATE_FIELDS = ("小订转化率", "直接大定占比", "小订后退定占比", "留存大定率",
+                        "留存大定到锁单率", "大定到锁单率")
+
+
+def normalize_reference_sheet(sheet) -> None:
+    """Normalize only maintained numeric cells in an imported, temporary roster."""
+    identities = {"车型", "历史传播名", "历史车型名", "订单分析代际名"}
+    header = next(((number, labels) for number, labels, _ in scan_header_rows(sheet)
+                   if identities.intersection(labels)
+                   and (set(REFERENCE_QUANTITY_FIELDS) | set(REFERENCE_RATE_FIELDS)).intersection(labels)), None)
+    if header is None:
+        return
+    row_number, headers = header
+    parsers = {index: optional_reference_quantity if name in REFERENCE_QUANTITY_FIELDS
+               else optional_reference_rate
+               for index, name in enumerate(headers)
+               if name in REFERENCE_QUANTITY_FIELDS or name in REFERENCE_RATE_FIELDS}
+    model_column = next(index for index, name in enumerate(headers) if name in identities)
+    for cells in sheet.iter_rows(min_row=row_number+1):
+        if canonical_header(cells[model_column].value) in identities:
+            break
+        for index, parser in parsers.items():
+            cells[index].value = parser(cells[index].value)
+
+
 def safe_div(numerator: Any, denominator: Any) -> float | None:
     if numerator in (None, ""):
         return None
@@ -737,6 +781,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     source_workbook = load_workbook(source, read_only=True, data_only=True)
     try:
         header_index = workbook_header_index(source_workbook)
+        summary_sheet_name = find_summary_sheet(source_workbook, header_index)[0].title
         summary = read_summary(source_workbook, header_index)
 
         raw_curves: dict[str, dict[str, list[Any]]] = {}
@@ -819,7 +864,23 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     daily_small_rows, daily_direct_rows, daily_gross_rows, daily_cancel_rows, small_cancel_rows = [], [], [], [], []
     model_data: list[dict[str, Any]] = []
     for record in summary:
+        record = dict(record)
         model = str(record["车型"]).strip()
+        invalid = []
+        for field in REFERENCE_QUANTITY_FIELDS:
+            raw = record.get(field)
+            record[field] = optional_reference_quantity(raw)
+            if record[field] is None and raw is not None and str(raw).strip():
+                invalid.append(f"{field}={raw!r}")
+        for field in REFERENCE_RATE_FIELDS:
+            raw = record.get(field)
+            record[field] = optional_reference_rate(raw)
+            if record[field] is None and raw is not None and str(raw).strip():
+                invalid.append(f"{field}={raw!r}")
+        if invalid:
+            LOGGER.warning("[历史维护值无效] 文件=%s | Sheet=%s | 代际=%s | 字段=%s | "
+                           "处理=保留未知，等待有效日量或真实累计补缺；有效独立比例保留",
+                           source.name, summary_sheet_name, model, "；".join(invalid))
         map_record = mapping_record_for(model, mapping, aliases)
         mapped = bool(str(map_record.get("订单分析代际名") or "").strip())
         generation = str(map_record.get("订单分析代际名") or model)
@@ -831,29 +892,32 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         energy = usable_attribute(map_record.get("能源类型"))
         release_type = usable_attribute(map_record.get("发布类型"))
         release_period = usable_attribute(map_record.get("首销发布时段"))
-        total_small = as_number(record.get("总小订"))
-        small_to_big = as_number(record.get("小订转大定量"))
-        gross = as_number(record.get("大定量"))
-        direct = as_number(record.get("直接大定量"))
-        cancel = as_number(record.get("小订后退定"))
+        total_small = record.get("总小订")
+        small_to_big = record.get("小订转大定量")
+        gross = record.get("大定量")
+        direct = record.get("直接大定量")
+        cancel = record.get("小订后退定")
         raw_conversion = record.get("小订转化率")
         raw_direct_share = record.get("直接大定占比")
         raw_cancel_rate = record.get("小订后退定占比")
-        conversion = as_number(raw_conversion) if raw_conversion not in (None, "") else (safe_div(small_to_big, total_small) or 0)
-        direct_share = as_number(raw_direct_share) if raw_direct_share not in (None, "") else (safe_div(direct, gross) or 0)
-        cancel_rate = as_number(raw_cancel_rate) if raw_cancel_rate not in (None, "") else (safe_div(cancel, total_small) or 0)
-        net = as_number(record.get("首销期留存大定"))
+        conversion = raw_conversion if raw_conversion is not None else safe_div(small_to_big, total_small)
+        direct_share = raw_direct_share if raw_direct_share is not None else safe_div(direct, gross)
+        cancel_rate = raw_cancel_rate if raw_cancel_rate is not None else safe_div(cancel, total_small)
+        net = record.get("首销期留存大定")
         raw_net_rate = record.get("留存大定率")
-        net_rate = as_number(raw_net_rate) if raw_net_rate not in (None, "") else (safe_div(net, gross) or 0)
-        lock = as_number(record.get("首销期锁单"))
+        net_rate = raw_net_rate if raw_net_rate is not None else safe_div(net, gross)
+        lock = record.get("首销期锁单")
         calculated_lock_rate = safe_div(record.get("首销期锁单"), record.get("大定量"))
-        lock_rate = calculated_lock_rate if calculated_lock_rate is not None else (as_number(record.get("大定到锁单率")) if record.get("大定到锁单率") not in (None, "") else None)
+        lock_rate = calculated_lock_rate if calculated_lock_rate is not None else record.get("大定到锁单率")
+        net_lock_rate = safe_div(lock, net)
+        if net_lock_rate is None:
+            net_lock_rate = record.get("留存大定到锁单率")
         if not any((net, lock)):
             LOGGER.debug("[初读整理表] 历史经营结果为空：%s；尚未合并其他订单来源，不要求提前填写终局", model)
         field_completeness, consistency, quality_issues = summary_quality(
-            total_small, small_to_big, conversion, gross, direct, direct_share, cancel, cancel_rate,
-            net, net_rate, lock, lock_rate or 0,
-            tuple(record.get(field) not in (None, "") for field in (
+            *[as_number(value) for value in (total_small, small_to_big, conversion, gross, direct,
+                direct_share, cancel, cancel_rate, net, net_rate, lock, lock_rate)],
+            provided_fields=tuple(record.get(field) is not None for field in (
                 "总小订", "小订转大定量", "小订转化率", "大定量", "直接大定量", "直接大定占比",
                 "小订后退定", "小订后退定占比", "首销期留存大定", "留存大定率", "首销期锁单", "锁单率",
             )),
@@ -862,20 +926,10 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         base_rows.append([
             model, generation, mapping_status, brand, tier, energy, launch_date, release_type, end_date,
             int(as_number(record.get("首销期天数"), 0)),
-            int(total_small) if record.get("总小订") not in (None, "") else None,
-            int(small_to_big) if record.get("小订转大定量") not in (None, "") else None,
-            as_number(raw_conversion) if raw_conversion not in (None, "") else safe_div(record.get("小订转大定量"), record.get("总小订")),
-            int(gross) if record.get("大定量") not in (None, "") else None,
-            int(direct) if record.get("直接大定量") not in (None, "") else None,
-            as_number(raw_direct_share) if raw_direct_share not in (None, "") else safe_div(record.get("直接大定量"), record.get("大定量")),
-            int(cancel) if record.get("小订后退定") not in (None, "") else None,
-            as_number(raw_cancel_rate) if raw_cancel_rate not in (None, "") else safe_div(record.get("小订后退定"), record.get("总小订")),
+            total_small, small_to_big, conversion, gross, direct, direct_share, cancel, cancel_rate,
             field_completeness, consistency, quality_status, "；".join(quality_issues),
             "历史首销参考数量汇总；映射与车型属性来自车型基本信息.xlsx单表", weekday_name(launch_date),
-            release_period, int(as_number(net)) if record.get("首销期留存大定") not in (None, "") else None,
-            as_number(raw_net_rate) if raw_net_rate not in (None, "") else safe_div(record.get("首销期留存大定"), record.get("大定量")),
-            int(as_number(lock)) if record.get("首销期锁单") not in (None, "") else None, lock_rate,
-            safe_div(record.get("首销期锁单"), record.get("首销期留存大定")) if record.get("首销期锁单") not in (None, "") and as_number(record.get("首销期留存大定")) > 0 else record.get("留存大定到锁单率"),
+            release_period, net, net_rate, lock, lock_rate, net_lock_rate,
         ])
 
         small_curve = pad_curve(curve_for(model, raw_curves["small"], mapping, aliases, "小转大"), day_count)
@@ -948,14 +1002,16 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         c1, c2 = (item["cancel_curve"] + [None, None])[:2]
         d1_valid, d1_issue = day_structure_quality(s1, d1, g1, "D1")
         d2_valid, d2_issue = day_structure_quality(s2, d2, g2, "D2")
-        s12, d12, g12 = as_number(s1) + as_number(s2), as_number(d1) + as_number(d2), as_number(g1) + as_number(g2)
+        def pair(left, right):
+            return left + right if left is not None and right is not None else None
+        s12, d12, g12, c12 = pair(s1, s2), pair(d1, d2), pair(g1, g2), pair(c1, c2)
         d12_valid, d12_issue = day_structure_quality(s12, d12, g12, "D1+D2")
         valid_s1, valid_d1, valid_g1 = (s1, d1, g1) if d1_valid else (None, None, None)
         valid_s2, valid_d2, valid_g2 = (s2, d2, g2) if d2_valid else (None, None, None)
         valid_s12, valid_d12, valid_g12 = (s12, d12, g12) if d12_valid else (None, None, None)
         structure_issues = [issue for issue in (d1_issue, d2_issue, d12_issue) if issue]
         d12_rows.append([
-            item["model"], item["generation"], item["mapping_status"], item["tier"], item["days"], int(item["small_to_big"]), int(item["direct"]), int(item["gross"]), int(item["total_small"]),
+            item["model"], item["generation"], item["mapping_status"], item["tier"], item["days"], item["small_to_big"], item["direct"], item["gross"], item["total_small"],
             s1, safe_div(valid_s1, item["small_to_big"]), s2, safe_div(valid_s2, item["small_to_big"]),
             s12, safe_div(valid_s12, item["small_to_big"]),
             safe_div(valid_s2, valid_s1), safe_div(valid_s1, valid_s12),
@@ -966,8 +1022,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
             g2, safe_div(valid_s2, valid_g2), safe_div(valid_d2, valid_g2),
             g12, safe_div(valid_s12, valid_g12), safe_div(valid_d12, valid_g12),
             c1, safe_div(c1, item["total_small"]), c2, safe_div(c2, item["total_small"]),
-            as_number(c1)+as_number(c2), safe_div(as_number(c1)+as_number(c2), item["total_small"]),
-            safe_div(c2, c1), safe_div(c1, as_number(c1)+as_number(c2)),
+            c12, safe_div(c12, item["total_small"]), safe_div(c2, c1), safe_div(c1, c12),
             "通过" if d1_valid else "异常", "通过" if d2_valid else "异常", "通过" if d12_valid else "异常", "；".join(structure_issues),
         ])
     write_rows(workbook, D12_SHEET, d12_headers, d12_rows, "D1D2Metrics", PERCENT_FIELDS)
@@ -978,8 +1033,12 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     write_rows(workbook, LAUNCH_CANCEL_DAILY_SHEET, ["传播名", *day_headers], daily_cancel_rows, "DailyCancel")
     small_cancel_headers = [f"D{i+1}" for i in range(small_cancel_days)]
     write_rows(workbook, SMALL_CANCEL_DAILY_SHEET, ["传播名", *small_cancel_headers], small_cancel_rows, "SmallDailyCancel")
+    def completion(values, total):
+        # cumulative(values, None) returns counts, not rates. An unknown
+        # maintained denominator must instead leave every completion blank.
+        return cumulative(values, total) if total is not None else [None]*len(values)
     write_rows(workbook, SMALL_CANCEL_SHEET, ["传播名", *small_cancel_headers],
-               [[item["model"], *cumulative(item["small_cancel_curve"], item["total_small"])] for item in model_data],
+               [[item["model"], *completion(item["small_cancel_curve"], item["total_small"])] for item in model_data],
                "SmallCumulativeCancelRate", set(small_cancel_headers))
 
     derived_specs = [
@@ -988,11 +1047,11 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
         (GROSS_PROGRESS_SHEET, "gross_curve", "gross", "GrossCompletion"),
     ]
     for sheet_name, curve_field, denominator_field, table_name in derived_specs:
-        rows = [[item["model"], *cumulative(item[curve_field], item[denominator_field])] for item in model_data]
+        rows = [[item["model"], *completion(item[curve_field], item[denominator_field])] for item in model_data]
         write_rows(workbook, sheet_name, ["传播名", *day_headers], rows, table_name, set(day_headers))
 
     cumulative_conversion_rows = [
-        [item["model"], *cumulative(item["small_curve"], item["total_small"])]
+        [item["model"], *completion(item["small_curve"], item["total_small"])]
         for item in model_data
     ]
     write_rows(
@@ -1005,7 +1064,7 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     )
 
     cumulative_cancel_rows = [
-        [item["model"], *cumulative(item["cancel_curve"], item["total_small"])]
+        [item["model"], *completion(item["cancel_curve"], item["total_small"])]
         for item in model_data
     ]
     write_rows(
@@ -1035,6 +1094,13 @@ def build_secondary(source: Path, output: Path, mapping_path: Path, orders_dir: 
     if orders_dir is not None:
         stage_started = perf_counter()
         append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_date, preserve_layout=False)
+        # These source copies feed both the roster and raw small-order history.
+        # Do not let an invalid copied value bypass the normalized baseline.
+        copied_summaries = [r.get("汇总Sheet") for r in table_records(workbook, INDEX_SHEET)
+                            if r.get("类别") == "历史" and r.get("原始Sheet") == summary_sheet_name]
+        for name in dict.fromkeys(["车型基本信息", *copied_summaries]):
+            if name in workbook.sheetnames:
+                normalize_reference_sheet(workbook[name])
         timings['读取整理订单来源'] = perf_counter() - stage_started
         stage_started = perf_counter()
         append_forecast_views(temporary, as_of_date, workbook=workbook)
@@ -1222,7 +1288,8 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
     """Collect quantities after file-boundary merging, split stage-boundary weeks by day."""
     from modules.sales_forecast import (_iso_week_bounds, _as_date, _canonical_model,
         _read_model_mapping, _fill_sparse_dates, _optional_count)
-    from core.excel import sheet_subject, display_period, _source_date_ranges, subject_type
+    from core.excel import (sheet_subject, display_period, _source_date_ranges, subject_type,
+                            cell_source_text, covered_date_source_text)
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
     targets = {r["name"]: r for r in [*data.get("targets", []), *data.get("steady_targets", [])]}
     mapping = _read_model_mapping()
@@ -1254,24 +1321,25 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
                     continue
                 source = f"{item.path.name}｜{sheet.title}"
                 rank = 0 if keyword == ("锁单选配比例" if field == "lock" else "大定选配比例") else 1
-                def keep(table, identity, value):
+                def keep(table, identity, value, actual_source):
                     key = (grain, *identity)
                     if identity not in table or (value is not None and
                             (table[identity][0] is None or rank < selected_ranks.get(key, 99))):
-                        table[identity] = (value, source)
+                        table[identity] = (value, actual_source)
                         selected_ranks[key] = rank
                 observed = []
                 for cell in row[3:]:
                     header = sheet.cell(1, cell.column)
                     value = _optional_count([cell.value], 0)
+                    actual_source = cell_source_text(sheet, cell.row, cell.column, item.path.name) or source
                     if grain == "day":
                         day = _as_date(header.value)
                         if day:
-                            observed.append({"date": day.isoformat(), field: value})
+                            observed.append({"date": day.isoformat(), field: value, "_source": actual_source})
                     else:
                         period = display_period(header.value, header.number_format)
                         if _iso_week_bounds(period):
-                            keep(weekly, (model, period, field), value)
+                            keep(weekly, (model, period, field), value, actual_source)
                 if grain == "day":
                     # File-wide bounds prove the update cutoff, not when this
                     # generation first existed. Do not pad new models to 2021.
@@ -1279,7 +1347,10 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
                     filled = (_fill_sparse_dates(observed, (field,), coverage, start=first, end=today)
                               if first else observed)
                     for entry in filled:
-                        keep(daily, (model, entry["date"], field), entry.get(field))
+                        actual_source = entry.get("_source") or covered_date_source_text(item, sheet, entry["date"]) or source
+                        if entry.get("absent_as_zero"):
+                            actual_source += "（覆盖范围内省略日期按0）"
+                        keep(daily, (model, entry["date"], field), entry.get(field), actual_source)
     data["mix_daily"], data["mix_weekly"] = daily, weekly
     if daily_output is not None:
         daily_output.update(daily)
