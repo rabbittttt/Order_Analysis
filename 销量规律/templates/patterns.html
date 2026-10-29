@@ -16,20 +16,7 @@
         <span class="brand-mark" aria-hidden="true"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f3bb3'/%3E%3Ccircle cx='27' cy='27' r='14' fill='none' stroke='%23079a87' stroke-width='5'/%3E%3Cpath d='M37 37l15 15' fill='none' stroke='%23dfe7ff' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M16 30l8-9 7 5 9-11' fill='none' stroke='%23ffffff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='30' r='3' fill='%23ffffff'/%3E%3Ccircle cx='24' cy='21' r='3' fill='%23ffffff'/%3E%3Ccircle cx='31' cy='26' r='3' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='15' r='3' fill='%23ffffff'/%3E%3C/svg%3E"></span>
         <span class="brand-copy"><strong>鸿蒙智行</strong><small>销量预测规律研究</small></span>
       </a>
-      <nav class="workflow-guide" aria-label="分析流程">
-        <button type="button" data-go="patterns"><span class="step-number">1</span><span>发现规律<small>看比例与适用范围</small></span></button>
-        <button type="button" data-go="forecast"><span class="step-number">2</span><span>验证与试算<small>对比回测基准</small></span></button>
-        <button type="button" data-go="evidence"><span class="step-number">3</span><span>核对与导出<small>追溯原始观测</small></span></button>
-      </nav>
-      <div class="topbar-meta">
-        <span class="offline-badge"><span class="status-dot"></span>本地离线分析</span>
-        <a id="excelTopLink" class="header-excel" href="鸿蒙智行销量规律分析.xlsx" download>下载 Excel</a><span id="generatedAt" class="generated-at"></span>
-      </div>
-    </header>
-
-    <aside class="sidebar" aria-label="分析导航">
-      <div class="sidebar-label visually-hidden">分析工作台</div>
-      <nav class="main-nav" role="tablist" aria-label="分析页面">
+      <nav class="main-nav topbar-nav" role="tablist" aria-label="分析页面">
         <button class="nav-item is-active" id="nav-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-panel="overview">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span>概览</span>
         </button>
@@ -43,6 +30,13 @@
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></svg></span><span>证据明细</span>
         </button>
       </nav>
+      <div class="topbar-meta">
+        <span class="offline-badge"><span class="status-dot"></span>本地离线分析</span>
+        <a id="excelTopLink" class="header-excel" href="鸿蒙智行销量规律分析.xlsx" download>下载 Excel</a><span id="generatedAt" class="generated-at"></span>
+      </div>
+    </header>
+
+    <aside class="sidebar" aria-label="分析筛选">
       <div class="sidebar-filters">
         <section class="metric-control" aria-label="销量口径" aria-describedby="metricSourceLabel">
           <div class="metric-control-copy">

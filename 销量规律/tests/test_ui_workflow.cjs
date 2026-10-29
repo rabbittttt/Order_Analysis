@@ -166,7 +166,10 @@ async function capture(page, filename) {
       assert.equal(await page.locator('[data-pattern="launch"]').getAttribute("aria-selected"), "true");
       await page.keyboard.press("ArrowRight");
       assert.equal(await page.locator('[data-pattern="holiday"]').getAttribute("aria-selected"), "true");
-      await page.locator('.workflow-guide [data-go="evidence"]').click();
+      assert.equal(await page.locator(".topbar .main-nav .nav-item").count(), 4);
+      assert.equal(await page.locator(".sidebar .main-nav").count(), 0);
+      assert.equal(await page.locator(".workflow-guide").count(), 0);
+      await page.locator('footer [data-go="evidence"]').click();
       assert.equal(await page.evaluate(() => document.activeElement.id), "pageTitle");
       assert.equal(await page.locator("#evidenceTableWrap").getAttribute("tabindex"), "0");
       await page.locator(".skip-link").focus(); await page.keyboard.press("Enter");
