@@ -215,7 +215,7 @@ async function capture(page, filename) {
       const transition = await page.locator("#nav-patterns").evaluate(e => getComputedStyle(e).transitionDuration);
       assert.equal(transition, "0s"); await page.emulateMedia({reducedMotion: "no-preference"});
     });
-    const sizes = [[320,740],[375,812],[390,844],[768,1024],[844,390],[1440,1000],[1920,1080]];
+    const sizes = [[320,740],[375,812],[390,844],[768,1024],[844,390],[1440,1000],[1920,1080],[2560,1440],[3840,2160]];
     for (const [width,height] of sizes) {
       await check(width + "×" + height + " 四页布局与触摸导航", async () => {
         const p = await context.newPage(); await p.setViewportSize({width,height}); await p.goto(url);
@@ -225,6 +225,27 @@ async function capture(page, filename) {
           if(name==="patterns"){await p.locator("#stageFilter").selectOption("首销");await p.locator("#pattern-launch").click();if(width===390)await capture(p,"sales-launch-mobile.png");}
           assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), name + " has document overflow");
           assert.equal(await p.locator("#panel-" + name).isVisible(), true);
+          if (width >= 1920) {
+            const geometry = await p.evaluate(() => {
+              const workspace = document.querySelector(".workspace");
+              const panel = document.querySelector(".page-panel:not([hidden])");
+              const workspaceRect = workspace.getBoundingClientRect();
+              const panelRect = panel.getBoundingClientRect();
+              const style = getComputedStyle(workspace);
+              const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+              const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+              return {
+                viewportRight: document.documentElement.clientWidth,
+                workspaceRight: workspaceRect.right,
+                panelLeft: panelRect.left,
+                panelRight: panelRect.right,
+                contentLeft: workspaceRect.left + paddingLeft,
+                contentRight: workspaceRect.right - paddingRight,
+              };
+            });
+            assert.ok(Math.abs(geometry.workspaceRight - geometry.viewportRight) <= 1, name + " workspace does not reach the viewport right edge");
+            assert.ok(Math.abs(geometry.panelLeft - geometry.contentLeft) <= 1 && Math.abs(geometry.panelRight - geometry.contentRight) <= 1, name + " content panel does not fill the workspace content area");
+          }
           const lowContrast = await p.evaluate(() => {
             const rgb = s => (s.match(/[\d.]+/g)||[]).slice(0,3).map(Number);
             const light = c => c.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;}).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0);
