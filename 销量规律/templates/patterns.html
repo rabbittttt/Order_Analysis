@@ -28,7 +28,7 @@
     </header>
 
     <aside class="sidebar" aria-label="分析导航">
-      <div class="sidebar-label">分析工作台</div>
+      <div class="sidebar-label visually-hidden">分析工作台</div>
       <nav class="main-nav" role="tablist" aria-label="分析页面">
         <button class="nav-item is-active" id="nav-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-panel="overview">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span>概览</span>
@@ -37,26 +37,26 @@
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16l5-7 5 4 8-10M3 21h18"/></svg></span><span>规律探索</span>
         </button>
         <button class="nav-item" id="nav-forecast" role="tab" aria-selected="false" aria-controls="panel-forecast" data-panel="forecast">
-          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18l7-7 4 4 7-12M15 3h6v6"/></svg></span><span>预测试算与回测</span>
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 18l7-7 4 4 7-12M15 3h6v6"/></svg></span><span>预测回测</span>
         </button>
         <button class="nav-item" id="nav-evidence" role="tab" aria-selected="false" aria-controls="panel-evidence" data-panel="evidence">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></svg></span><span>证据明细</span>
         </button>
       </nav>
       <div class="sidebar-filters">
-        <section class="metric-control" aria-label="销量口径">
+        <section class="metric-control" aria-label="销量口径" aria-describedby="metricSourceLabel">
           <div class="metric-control-copy">
-            <span class="control-label">分析口径</span>
-            <strong id="metricSourceLabel">净大定 · 源字段留存大定</strong>
+            <span class="control-label">口径</span>
+            <strong id="metricSourceLabel" class="visually-hidden">净大定 · 源字段留存大定</strong>
           </div>
           <div class="segmented metric-switch" role="group" aria-label="切换销量指标">
             <button type="button" class="metric-option is-selected" data-metric="留存大定" aria-pressed="true">净大定</button>
             <button type="button" class="metric-option" data-metric="交车锁单" aria-pressed="false">锁单</button>
           </div>
-          <div class="metric-separation"><span aria-hidden="true">↔</span> 两种口径分别计算，不相加</div>
+          <div class="metric-separation visually-hidden" aria-hidden="true"><span aria-hidden="true">↔</span> 两种口径分别计算，不相加</div>
         </section>
         <section class="filterbar" aria-label="全局筛选">
-          <div class="filter-title"><span class="filter-glyph" aria-hidden="true">⌕</span>分析范围</div>
+          <div class="filter-title visually-hidden"><span class="filter-glyph" aria-hidden="true">⌕</span>分析范围</div>
           <label class="filter-field"><span>车型分类</span><select id="categoryFilter" aria-label="按车型分类筛选"></select></label>
           <label class="filter-field"><span>车型</span><select id="modelFilter" aria-label="按车型筛选"></select></label>
           <label class="filter-field stage-field"><span>销售阶段</span><select id="stageFilter" aria-label="按销售阶段筛选"></select></label>
@@ -67,12 +67,11 @@
         </section>
         <div id="dateError" class="field-error" role="alert" hidden></div>
       </div>
-      <div class="sidebar-spacer"></div>
-      <div class="sidebar-method">
-        <span class="method-mark" aria-hidden="true">i</span>
-        <div><strong>预测辅助口径</strong><p>净大定与锁单分开分析；规律仅用于提出预测假设，是否有效以留出回测为准。</p></div>
-      </div>
-      <div class="sidebar-foot">数据保留在本机 · 无网络请求</div>
+      <details class="sidebar-details">
+        <summary>口径说明</summary>
+        <p>净大定与锁单分开分析；规律仅用于提出预测假设，是否有效以留出回测为准。</p>
+        <p>数据保留在本机 · 无网络请求</p>
+      </details>
     </aside>
 
     <main class="workspace" id="mainContent" tabindex="-1">
