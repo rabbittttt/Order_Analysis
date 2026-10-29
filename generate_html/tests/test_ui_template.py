@@ -788,6 +788,44 @@ assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).incl
         result = subprocess.run([shutil.which("node"), "-e", helpers + checks], capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is required for chart rendering checks")
+    def test_forecast_result_charts_keep_all_values_at_a_compact_natural_size(self):
+        script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
+        helpers = script[script.index("  const displayText ="):script.index("  const colors =")]
+        helpers += script[script.index("  function renderForecastQuantityChart("):script.index("  function renderForecastDecisionChartV2(")]
+        helpers += script[script.index("  function renderForecastEvidenceLines("):script.index("  function compactForecastScorePage(")]
+        checks = r'''
+const assert=require('node:assert/strict');
+for(const length of [1,7,35,120]){
+ const rows=Array.from({length},(_,i)=>({label:'D'+(i+1),date:'2026-10-'+String(i+1).padStart(2,'0'),value:i===2?null:i===0?0:123456+i,actual:i<4,small_conversion:.2,direct_share:.3}));
+ const before=JSON.stringify(rows),known=rows.filter(row=>Number.isFinite(row.value));
+ for(const launch of [false,true]){
+  const html=renderForecastQuantityChart(rows,{valueKey:'value',launch}),box=html.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/),labels=[...html.matchAll(/<text data-forecast-quantity-label[^>]*>(.*?)<\/text>/g)];
+  assert.equal(Number(box[2]),220);assert.equal(labels.length,known.length);
+  assert.deepEqual(labels.map(match=>match[1]),known.map(row=>fmt(row.value)));
+  assert.equal((html.match(/<rect /g)||[]).length,known.length);
+  assert([...html.matchAll(/<rect [^>]*width="([\d.]+)"/g)].every(match=>Number(match[1])<=18));
+  assert(html.includes('tabindex="0" role="region"'));assert(html.includes('查看图表数值'));
+  if(length>12)assert(Number(box[1])>length*55,'wide quantity labels keep their own horizontal space');
+ }
+ const args={series:[{label:'actual',role:'actual',color:'#1677FF',values:rows.map(row=>row.value)},{label:'external',role:'reference',dashed:true,color:'#7C3AED',values:rows.map(row=>row.value)}],labels:rows.map(row=>row.date),ariaLabel:'external',unit:'number'};
+ const compact=renderLifecycleLineChart({...args,compact:true});
+ const grid=compact.match(/<line x1="([\d.]+)"[^>]*x2="([\d.]+)"/);
+ for(const label of compact.matchAll(/<text data-forecast-external-label x="([\d.]+)"[^>]*>(.*?)<\/text>/g)){
+  assert(Number(label[1])-label[2].length*3.25>Number(grid[1]),'first value label must remain inside the plot, clear of the y-axis');
+  assert(Number(label[1])+label[2].length*3.25<Number(grid[2]),'last value label must keep space inside the plot');
+ }
+ assert.equal((compact.match(/data-forecast-external-label/g)||[]).length,known.length*2);
+ assert.equal((compact.match(/<circle /g)||[]).length,known.length*2);
+ assert(compact.includes('forecast-compact-line-scroll'));assert(compact.includes(' 220" role="img"'));
+ assert(compact.includes('stroke-dasharray="7 5"'));assert(compact.includes('0单'));
+ assert(renderLifecycleLineChart(args).includes('viewBox="0 0 920 245"'),'reference evidence geometry must remain unchanged');
+ assert.equal(JSON.stringify(rows),before,'display must not mutate forecast rows');
+}
+'''
+        result = subprocess.run([shutil.which("node"), "-e", helpers + checks], capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_sales_forecast_result_layout_stays_expanded_and_uses_horizontal_space(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")

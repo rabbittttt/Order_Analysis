@@ -4277,8 +4277,11 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .forecast-workspace.forecast-studio .forecast-pane-head h4{font-size:14px;margin:0;color:var(--ink)}
 .forecast-workspace.forecast-studio .forecast-pane-head small,
 .forecast-workspace.forecast-studio .forecast-pane-head>span{font-size:11px;color:var(--muted);letter-spacing:0}
-.forecast-workspace.forecast-studio .forecast-result-chart-scroll{overflow-x:auto;background:#fff;border-radius:0}
-.forecast-workspace.forecast-studio .forecast-result-chart-scroll .forecast-decision-svg{width:100%;min-width:720px;max-width:none;height:auto;aspect-ratio:900/280}
+.forecast-workspace.forecast-studio .forecast-result-chart-scroll,
+.forecast-workspace.forecast-studio .forecast-compact-line-scroll{max-width:100%;overflow-x:auto;overflow-y:hidden;background:#fff;border-radius:0;overscroll-behavior-x:contain}
+.forecast-workspace.forecast-studio .forecast-result-chart-scroll .forecast-decision-svg,
+.forecast-workspace.forecast-studio .forecast-compact-line-scroll svg{width:var(--forecast-chart-width);min-width:0;max-width:none;height:220px;aspect-ratio:auto;margin-inline:auto}
+.forecast-workspace.forecast-studio .forecast-result-chart-scroll:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
 .forecast-workspace.forecast-studio .forecast-chart-legend{justify-content:flex-start;gap:6px 16px;padding:6px 0;margin:0;font-size:11px;color:var(--ink-2)}
 .forecast-workspace.forecast-studio .forecast-chart-legend .forecast-outline-key{width:10px;height:8px;border:2px dashed;border-radius:2px}
 .forecast-chart-key-note{color:var(--muted);margin-left:auto}
