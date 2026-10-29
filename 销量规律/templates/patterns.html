@@ -16,6 +16,11 @@
         <span class="brand-mark" aria-hidden="true"><img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%231f3bb3'/%3E%3Ccircle cx='27' cy='27' r='14' fill='none' stroke='%23079a87' stroke-width='5'/%3E%3Cpath d='M37 37l15 15' fill='none' stroke='%23dfe7ff' stroke-width='6' stroke-linecap='round'/%3E%3Cpath d='M16 30l8-9 7 5 9-11' fill='none' stroke='%23ffffff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='30' r='3' fill='%23ffffff'/%3E%3Ccircle cx='24' cy='21' r='3' fill='%23ffffff'/%3E%3Ccircle cx='31' cy='26' r='3' fill='%23ffffff'/%3E%3Ccircle cx='40' cy='15' r='3' fill='%23ffffff'/%3E%3C/svg%3E"></span>
         <span class="brand-copy"><strong>鸿蒙智行</strong><small>销量预测规律研究</small></span>
       </a>
+      <nav class="workflow-guide" aria-label="分析流程">
+        <button type="button" data-go="patterns"><span class="step-number">1</span><span>发现规律<small>看比例与适用范围</small></span></button>
+        <button type="button" data-go="forecast"><span class="step-number">2</span><span>验证与试算<small>对比回测基准</small></span></button>
+        <button type="button" data-go="evidence"><span class="step-number">3</span><span>核对与导出<small>追溯原始观测</small></span></button>
+      </nav>
       <div class="topbar-meta">
         <span class="offline-badge"><span class="status-dot"></span>本地离线分析</span>
         <a id="excelTopLink" class="header-excel" href="鸿蒙智行销量规律分析.xlsx" download>下载 Excel</a><span id="generatedAt" class="generated-at"></span>
@@ -38,6 +43,30 @@
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1"/></svg></span><span>证据明细</span>
         </button>
       </nav>
+      <div class="sidebar-filters">
+        <section class="metric-control" aria-label="销量口径">
+          <div class="metric-control-copy">
+            <span class="control-label">分析口径</span>
+            <strong id="metricSourceLabel">净大定 · 源字段留存大定</strong>
+          </div>
+          <div class="segmented metric-switch" role="group" aria-label="切换销量指标">
+            <button type="button" class="metric-option is-selected" data-metric="留存大定" aria-pressed="true">净大定</button>
+            <button type="button" class="metric-option" data-metric="交车锁单" aria-pressed="false">锁单</button>
+          </div>
+          <div class="metric-separation"><span aria-hidden="true">↔</span> 两种口径分别计算，不相加</div>
+        </section>
+        <section class="filterbar" aria-label="全局筛选">
+          <div class="filter-title"><span class="filter-glyph" aria-hidden="true">⌕</span>分析范围</div>
+          <label class="filter-field"><span>车型分类</span><select id="categoryFilter" aria-label="按车型分类筛选"></select></label>
+          <label class="filter-field"><span>车型</span><select id="modelFilter" aria-label="按车型筛选"></select></label>
+          <label class="filter-field stage-field"><span>销售阶段</span><select id="stageFilter" aria-label="按销售阶段筛选"></select></label>
+          <label class="filter-field date-field"><span>开始日期</span><input type="date" id="dateStart" aria-label="开始日期" aria-describedby="dateError"></label>
+          <span class="date-separator" aria-hidden="true">至</span>
+          <label class="filter-field date-field"><span>结束日期</span><input type="date" id="dateEnd" aria-label="结束日期" aria-describedby="dateError"></label>
+          <button type="button" id="resetFilters" class="button button-quiet reset-button">重置</button>
+        </section>
+        <div id="dateError" class="field-error" role="alert" hidden></div>
+      </div>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-method">
         <span class="method-mark" aria-hidden="true">i</span>
@@ -56,34 +85,6 @@
         <div id="sourceBadge" class="source-badge visually-hidden"></div>
       </section>
 
-      <nav class="workflow-guide" aria-label="分析流程">
-        <button type="button" data-go="patterns"><span class="step-number">1</span><span>发现规律<small>看比例与适用范围</small></span></button>
-        <button type="button" data-go="forecast"><span class="step-number">2</span><span>验证与试算<small>对比回测基准</small></span></button>
-        <button type="button" data-go="evidence"><span class="step-number">3</span><span>核对与导出<small>追溯原始观测</small></span></button>
-      </nav>
-      <section class="metric-control" aria-label="销量口径">
-        <div class="metric-control-copy">
-          <span class="control-label">分析口径</span>
-          <strong id="metricSourceLabel">净大定 · 源字段留存大定</strong>
-        </div>
-        <div class="segmented metric-switch" role="group" aria-label="切换销量指标">
-          <button type="button" class="metric-option is-selected" data-metric="留存大定" aria-pressed="true">净大定</button>
-          <button type="button" class="metric-option" data-metric="交车锁单" aria-pressed="false">锁单</button>
-        </div>
-        <div class="metric-separation"><span aria-hidden="true">↔</span> 两种口径分别计算，不相加</div>
-      </section>
-
-      <section class="filterbar" aria-label="全局筛选">
-        <div class="filter-title"><span class="filter-glyph" aria-hidden="true">⌕</span>分析范围</div>
-        <label class="filter-field"><span>车型分类</span><select id="categoryFilter" aria-label="按车型分类筛选"></select></label>
-        <label class="filter-field"><span>车型</span><select id="modelFilter" aria-label="按车型筛选"></select></label>
-        <label class="filter-field stage-field"><span>销售阶段</span><select id="stageFilter" aria-label="按销售阶段筛选"></select></label>
-        <label class="filter-field date-field"><span>开始日期</span><input type="date" id="dateStart" aria-label="开始日期" aria-describedby="dateError"></label>
-        <span class="date-separator" aria-hidden="true">至</span>
-        <label class="filter-field date-field"><span>结束日期</span><input type="date" id="dateEnd" aria-label="结束日期" aria-describedby="dateError"></label>
-        <button type="button" id="resetFilters" class="button button-quiet reset-button">重置</button>
-      </section>
-      <div id="dateError" class="field-error" role="alert" hidden></div>
       <div id="rangeNotice" class="range-notice" role="status" aria-live="polite"></div>
 
       <section id="panel-overview" class="page-panel" role="tabpanel" aria-labelledby="nav-overview">
