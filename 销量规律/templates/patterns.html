@@ -38,6 +38,10 @@
 
     <aside class="sidebar" aria-label="分析筛选">
       <div class="sidebar-filters">
+        <div class="sidebar-filter-head">
+          <span class="sidebar-filter-title">筛选</span>
+          <button type="button" id="resetFilters" class="button button-quiet reset-button" aria-label="重置筛选条件" title="重置筛选条件"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a8 8 0 1 1-1 6"/><path d="M4 3v4h4"/></svg><span>重置</span></button>
+        </div>
         <section class="metric-control" aria-label="销量口径" aria-describedby="metricSourceLabel">
           <div class="metric-control-copy">
             <span class="control-label">口径</span>
@@ -54,10 +58,9 @@
           <label class="filter-field"><span>车型分类</span><select id="categoryFilter" aria-label="按车型分类筛选"></select></label>
           <label class="filter-field"><span>车型</span><select id="modelFilter" aria-label="按车型筛选"></select></label>
           <label class="filter-field stage-field"><span>销售阶段</span><select id="stageFilter" aria-label="按销售阶段筛选"></select></label>
-          <label class="filter-field date-field"><span>开始日期</span><input type="date" id="dateStart" aria-label="开始日期" aria-describedby="dateError"></label>
+          <label class="filter-field date-field date-range-start"><span>开始日期</span><input type="date" id="dateStart" aria-label="开始日期" aria-describedby="dateError"></label>
           <span class="date-separator" aria-hidden="true">至</span>
           <label class="filter-field date-field"><span>结束日期</span><input type="date" id="dateEnd" aria-label="结束日期" aria-describedby="dateError"></label>
-          <button type="button" id="resetFilters" class="button button-quiet reset-button">重置</button>
         </section>
         <div id="dateError" class="field-error" role="alert" hidden></div>
       </div>
