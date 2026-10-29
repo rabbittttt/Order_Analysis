@@ -602,5 +602,50 @@ class UnifiedDailyTests(unittest.TestCase):
             self.resolved([self.resolved_row(),self.resolved_row(留存大定=99)])
 
 
+class WebpageLaunchTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        self.report=self.root/'中文 报告 #1.html'
+        self.report.write_text('<!doctype html>',encoding='utf-8')
+
+    def test_windows_uses_native_path_and_leaves_browser_choice_to_system(self):
+        with patch.object(m.sys,'platform','win32'), \
+             patch.object(m.os,'startfile',create=True) as startfile, \
+             patch.object(m.webbrowser,'open_new_tab') as browser, patch.object(m,'log'):
+            self.assertTrue(m.open_generated_webpage(self.report))
+            startfile.assert_called_once_with(str(self.report))
+            browser.assert_not_called()
+
+    def test_windows_open_failure_does_not_select_another_browser_or_change_report(self):
+        original=self.report.read_bytes()
+        with patch.object(m.sys,'platform','win32'), \
+             patch.object(m.os,'startfile',side_effect=OSError('no association'),create=True), \
+             patch.object(m.webbrowser,'open_new_tab') as browser, patch.object(m,'log') as log:
+            self.assertFalse(m.open_generated_webpage(self.report))
+            browser.assert_not_called()
+            self.assertIn('请手动打开',log.call_args.args[0])
+            self.assertEqual(self.report.read_bytes(),original)
+
+    def test_other_systems_use_default_browser_with_encoded_file_url(self):
+        for result in (True,False):
+            with self.subTest(result=result), patch.object(m.sys,'platform','linux'), \
+                 patch.object(m.os,'startfile',create=True) as startfile, \
+                 patch.object(m.webbrowser,'open_new_tab',return_value=result) as browser, \
+                 patch.object(m,'log') as log:
+                self.assertEqual(m.open_generated_webpage(self.report),result)
+                browser.assert_called_once_with(self.report.as_uri())
+                startfile.assert_not_called()
+                if not result: self.assertIn('请手动打开',log.call_args.args[0])
+
+    def test_default_browser_exception_is_only_logged(self):
+        for error in (OSError('no association'),m.webbrowser.Error('no browser')):
+            with self.subTest(error=error), patch.object(m.sys,'platform','linux'), \
+                 patch.object(m.webbrowser,'open_new_tab',side_effect=error), patch.object(m,'log') as log:
+                self.assertFalse(m.open_generated_webpage(self.report))
+                self.assertIn('请手动打开',log.call_args.args[0])
+
+
 if __name__=='__main__': unittest.main()
 
