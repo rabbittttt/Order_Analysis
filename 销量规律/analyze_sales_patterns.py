@@ -1,5 +1,5 @@
 """Single-workbook descriptive sales analysis. Python 3.10+ and openpyxl."""
-import argparse, calendar, hashlib, importlib.util, json, math, re, time
+import argparse, calendar, hashlib, importlib.util, json, math, re, time, webbrowser
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -657,6 +657,22 @@ def load_component(path, name):
     return module
 
 
+
+def open_generated_webpage(path):
+    """Ask the default browser to open the completed report without invalidating exports."""
+    path=Path(path).resolve()
+    try:
+        opened=webbrowser.open_new_tab(path.as_uri())
+    except (OSError, webbrowser.Error) as exc:
+        log(f'网页已生成，自动打开失败（{exc}）；请手动打开：{path}')
+        return False
+    if opened:
+        log('已请求默认浏览器打开网页：'+str(path))
+    else:
+        log('网页已生成，未能启动默认浏览器；请手动打开：'+str(path))
+    return opened
+
+
 def main():
     started=time.perf_counter()
     ap=argparse.ArgumentParser(description=__doc__)
@@ -758,6 +774,7 @@ def main():
     print('Excel：'+str(final),flush=True)
     print('网页：'+str(web_final),flush=True)
     print('源文件未修改；结果数量：'+str({k:len(v) for k,v in result.items()}),flush=True)
+    open_generated_webpage(web_final)
 if __name__=='__main__': main()
 
 
