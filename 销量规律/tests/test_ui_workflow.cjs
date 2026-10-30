@@ -272,7 +272,11 @@ async function capture(page, filename) {
              {year:2024,holiday:"UI节日",start:"2024-01-08",end:"2024-01-10"},
              {year:2024,holiday:"UI零值节日",start:"2024-01-25",end:"2024-01-27"},
              {year:2024,holiday:"UI旧网页节日",start:"2024-02-10",end:"2024-02-12"},
-             {year:2024,holiday:"UI冲突节日",start:"2024-02-25",end:"2024-02-27"}
+             {year:2024,holiday:"UI冲突节日",start:"2024-02-25",end:"2024-02-27"},
+             {year:2024,holiday:"UI春节与调休假期",start:"2024-03-01",end:"2024-03-03"},
+             {year:2024,holiday:"UI劳动节假期",start:"2024-03-08",end:"2024-03-10"},
+             {year:2024,holiday:"UI中秋国庆合并假期",start:"2024-03-15",end:"2024-03-17"},
+             {year:2024,holiday:"UI跨年连续休假",start:"2024-03-20",end:"2024-03-22"}
            ];
            const dates=Array.from({length:90},(_,i)=>new Date(Date.UTC(2024,0,i+1)).toISOString().slice(0,10));
            const series=metricDefs.flatMap(def=>models.flatMap(m=>["平销","首销"].flatMap(stage=>dates.map(date=>({model:m.model,metric:def.key,stage,cycle:"UI节日周期",source,date,value:m.values[def.key][0],life:null})))));
@@ -295,9 +299,35 @@ async function capture(page, filename) {
        let scope=fixture.locator("#patternPanels .pattern-card").first();if(!(await scope.count()))throw new Error("holiday fixture render failed: "+fixtureErrors.join(" | "));
        const scopeRows=async()=>scope.locator("tbody tr").evaluateAll(nodes=>nodes.map(tr=>[...tr.cells].map(td=>td.innerText.trim())));
        const scopeRow=async holiday=>{const row=(await scopeRows()).find(cells=>cells[0]===holiday);assert.ok(row,"missing holiday row: "+holiday);return row;};
-       assert.equal(await scope.locator(".bar-row").count(),9);
+       assert.equal(await scope.locator(".bar-row").count(),21);
        assert.equal(await scope.locator(".pattern-chart").getAttribute("tabindex"),"0");
        assert.equal(await scope.locator(".bar-label").first().innerText(),"2024年UI节日 · 节前");
+       const modelHolidayCard=fixture.locator("#patternPanels .pattern-card").filter({hasText:"节前、节中、节后日均指数（逐车型）"}).first();
+       const modelHolidayChart=modelHolidayCard.locator(".pattern-chart");
+       assert.equal(await modelHolidayChart.locator(".bar-row").count(),24);
+       assert.equal(await modelHolidayChart.locator("svg").count(),0);
+       assert.equal(await modelHolidayChart.getAttribute("tabindex"),"0");
+       assert.equal(await modelHolidayChart.getAttribute("aria-label"),"横向条形图，可上下滚动查看全部内容");
+       const holidayLabels=await modelHolidayChart.locator(".bar-label").allTextContents();
+       const holidayValues=await modelHolidayChart.locator(".bar-value").allTextContents();
+       for(const width of [1440,1920,390]){
+         await fixture.setViewportSize({width,height:1000});
+         assert.ok(await fixture.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+         assert.deepEqual(await modelHolidayChart.locator(".bar-label").allTextContents(),holidayLabels);
+         assert.deepEqual(await modelHolidayChart.locator(".bar-value").allTextContents(),holidayValues);
+         assert.ok(await modelHolidayChart.evaluate(node=>{
+           const rows=[...node.querySelectorAll(".bar-row")];
+           return node.scrollHeight>node.clientHeight&&node.scrollWidth<=node.clientWidth+1&&rows.every((row,i)=>{
+             const label=row.querySelector(".bar-label"),track=row.querySelector(".bar-track"),value=row.querySelector(".bar-value");
+             return label.scrollWidth<=label.clientWidth+1&&label.getBoundingClientRect().right<=track.getBoundingClientRect().left+1&&track.getBoundingClientRect().right<=value.getBoundingClientRect().left+1&&(!i||rows[i-1].getBoundingClientRect().bottom<=row.getBoundingClientRect().top+1);
+           });
+         }),"holiday labels must remain readable without overlap");
+         await modelHolidayChart.scrollIntoViewIfNeeded();
+         await capture(fixture,`sales-holiday-second-${width}.png`);
+       }
+       await modelHolidayChart.evaluate(node=>{node.scrollTop=0;});
+       await modelHolidayChart.focus();await fixture.keyboard.press("End");
+       await until(()=>modelHolidayChart.evaluate(node=>node.scrollTop>0));
        await capture(fixture,"sales-holiday-fixture.png");
       let text=await scope.innerText();
       assert.ok(text.includes("鸿蒙智行全部车型"));assert.ok(text.includes("UI节日"));assert.ok(text.includes("110%"));assert.ok(text.includes("2"));

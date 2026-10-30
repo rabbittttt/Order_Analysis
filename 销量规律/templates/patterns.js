@@ -811,10 +811,15 @@ function renderPatternTabs(){
       if(holidayStageAvailable){const button=el("button","button button-quiet","切换到平销阶段",note);button.type="button";button.addEventListener("click",()=>setPatternStage("平销"));}
       scopeCard.insertBefore(note,scopeChart);
     }
-    const chart=el("div","pattern-chart","",c);
+    const chart=el("div","pattern-chart bar-list","",c);
+    chart.style.maxHeight="420px";
+    chart.style.marginBottom="16px";
+    chart.tabIndex=0;
+    chart.setAttribute("role","region");
+    chart.setAttribute("aria-label","逐车型节假日指数图，可上下滚动查看节日和阶段");
     const pRows=[];
     [["before","节前"],["during","节中"],["after","节后"]].forEach(([phase,label])=>groupedStats(hs,phase,r=>r.holiday,r=>r.period).forEach(x=>pRows.push({label:x.key+label,value:x.median,n:x.periods})));
-    drawBars(chart,pRows.filter(x=>num(x.value)!==null),"label","value",fmtPct,"vertical");
+    drawBars(chart,pRows.filter(x=>num(x.value)!==null),"label","value",fmtPct,"horizontal");
     const table=el("div","table-wrap","",c);makeTable(table,["节日","年份","车型","节前日均","节中日均","节后日均","控制日期数","车型批次/来源记录"],hs.map(r=>[r.holiday,r.year,r.model,fmtPct(r.before),fmtPct(r.during),fmtPct(r.after),fmtInt(r.control_days),fmtInt(r.n)]),"当前日期窗没有完整节假日对照；需覆盖节日前后各7日，且该年份节假日日历可用。");
     const detail=card(container,"节假日原始对照明细","逐条保留车型、阶段、批次和来源，用于核对上方范围汇总。");
     const detailTable=el("div","table-wrap","",detail);
@@ -910,6 +915,9 @@ function renderPatterns(){
   renderPatternTabs();
   document.querySelectorAll(".pattern-chart").forEach(node=>{
     node.tabIndex=0;node.setAttribute("role","region");node.setAttribute("aria-label","规律图表，可横向滚动查看全部内容");
+    if(node.classList.contains("bar-list")){
+      node.setAttribute("aria-label","横向条形图，可上下滚动查看全部内容");
+    }
     node.classList.toggle("has-wide-chart",Boolean(node.querySelector("svg")));
   });
 }
