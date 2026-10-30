@@ -2,6 +2,7 @@
 from __future__ import annotations
 import calendar
 import math
+import re
 from collections import defaultdict
 from datetime import date, datetime
 from numbers import Real
@@ -150,14 +151,20 @@ def _conclusion(item):
 def _launch_conclusion(item):
     """Describe launch pacing without implying cross-batch validation."""
     if item["typical"] is None:
-        base = "无合格样本：首销窗口缺少完整可比数据。"
+        base = "无合格样本：上市后周期缺少完整可比数据。"
     elif item["periods"] < 3 or item["models"] < 2:
-        base = (f"样本不足：{item['models']}个车型、{item['periods']}个不同首销起始日期；"
+        base = (f"样本不足：{item['models']}个车型、{item['periods']}个不同上市起始日期；"
                 "仅作描述，暂不归纳组级通用方向。")
     else:
         direction = "高于持平" if item["typical"] > 1 else "低于持平" if item["typical"] < 1 else "等于持平"
-        base = f"车型等权中位数为{item['typical']:.1%}，{direction}；仅为描述性汇总。"
-    return base + "首销批次描述，未做跨批次留出验证。"
+        base = f"相邻周期日均比的车型等权中位数为{item['typical']:.1%}，{direction}；仅为描述性汇总。"
+    return base + "上市批次描述，首销、跨阶段和平销分别汇总；未做跨批次留出验证。"
+
+
+def _launch_pattern_order(pattern):
+    match = re.search(r"第(\d+)(周|月)", pattern)
+    return (0 if match and match[2] == "周" else 1,
+            int(match[1]) if match else 0, pattern)
 
 
 def build_rule_summary(results, model_map, categories, selected_metrics=None):
@@ -332,7 +339,7 @@ def build_rule_summary(results, model_map, categories, selected_metrics=None):
     # validation because each row describes a launch batch rather than a
     # recurring calendar period.
     for cat, metric, stage, pattern in sorted(launch_specs,
-                                               key=lambda x: (x[0], str(x[1]), str(x[2]), x[3])):
+                                               key=lambda x: (x[0], str(x[1]), str(x[2]), _launch_pattern_order(x[3]))):
         values = []
         for row in launch_rows:
             if (row.get("pattern") != pattern or row.get("status") != "有效"
@@ -341,15 +348,15 @@ def build_rule_summary(results, model_map, categories, selected_metrics=None):
             cycle = _date(row.get("cycle"))
             if cycle is None:
                 continue
-            item = make_sample(row, row.get("ratio"), cycle, cycle.year)
+            item = make_sample(row, row.get("daily_ratio", row.get("ratio")), cycle, cycle.year)
             if item:
                 values.append(item)
         summary = _aggregate(values)
         summary.update(category=cat, metric=metric, stage=stage, pattern=pattern,
                        conclusion="", train_ratio=None, validation_year=None,
                        validation_ratio=None, validation_status="未做跨批次留出验证",
-                       validation_note="首销批次描述，未做跨批次留出验证",
-                       unit="比例", detail_sheet="生命周期明细",
+                       validation_note="上市批次描述；上市月按首销日逐月划分，使用日均比；未做跨批次留出验证",
+                       unit="日均比例", detail_sheet="生命周期明细",
                        validation_models=0, validation_train_years=0)
         summary["conclusion"] = _launch_conclusion(summary)
         output.append({field: summary.get(field) for field in FIELDS})

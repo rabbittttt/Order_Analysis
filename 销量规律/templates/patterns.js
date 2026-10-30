@@ -21,7 +21,7 @@ const pctFmt = new Intl.NumberFormat("zh-CN", {style:"percent", maximumFractionD
 const state = {
   page:"overview", pattern:"months", evidence:"daily", metric:"",
   category:"__ALL__", model:"__ALL__", stage:"",
-  start:"", end:"", grain:"月", compare:false, search:"", pageNo:0,
+  start:"", end:"", grain:"月", launchGrain:"周", compare:false, search:"", pageNo:0,
   forecastModel:"", forecastGrain:"月", profileKey:""
 };
 const $ = id => document.getElementById(id);
@@ -139,10 +139,30 @@ function scopedOptionRows(metric) {
 function scopedStages(metric) {
   return unique(scopedOptionRows(metric).map(r => String(r.stage || "")).filter(Boolean)).sort((a,b)=>a.localeCompare(b,"zh-CN"));
 }
-function matchingRows(baseRows, metric, useDate) {
+function launchStageOptions() {
+  const stages=scopedStages(state.metric);
+  return state.page==="patterns"&&state.pattern==="launch"&&stages.includes("首销")&&stages.includes("平销")?stages.concat("首销及平销"):stages;
+}
+function stageMatches(row,kind) {
+  const requested=String(state.stage||""),joint=requested==="首销及平销"&&state.page==="patterns"&&state.pattern==="launch";
+  if(kind==="launch_periods"){
+    const stage=String(row.stage||"");
+    return joint?["首销","平销","跨阶段"].includes(stage):stage===requested;
+  }
+  if(kind==="launch_pacing"){
+    const current=String(row.current_stage||row.stage||""),previous=String(row.previous_stage||row.stage||"");
+    if(current||previous){
+      if(joint)return [current,previous].some(x=>["首销","平销","跨阶段"].includes(x));
+      return current===requested&&previous===requested;
+    }
+  }
+  if(joint)return ["首销","平销","跨阶段"].includes(String(row.stage||""));
+  return row.stage===state.stage;
+}
+function matchingRows(baseRows, metric, useDate, kind) {
   const from = state.start, to = state.end;
   return baseRows.filter(r => {
-    if (r.metric !== metric || r.stage !== state.stage) return false;
+    if (r.metric !== metric || !stageMatches(r,kind)) return false;
     const model = String(r.model || "");
     if (state.model !== "__ALL__" && model !== state.model) return false;
     if (state.model === "__ALL__" && state.category !== "__ALL__" && categoryOf(model) !== state.category) return false;
@@ -160,7 +180,7 @@ function currentSeries(metric) {
 }
 function resultBase(name, metric) {
   const key = "r:"+name+"|"+metric+"|"+state.category+"|"+state.model+"|"+state.stage;
-  if (!cache.has(key)) cache.set(key, matchingRows(result[name] || [], metric, false));
+  if (!cache.has(key)) cache.set(key, matchingRows(result[name] || [], metric, false,name));
   return cache.get(key);
 }
 function setMetricSwitch() {
@@ -188,10 +208,10 @@ function updateFilters(resetDate) {
   if (!modelOptions.some(o=>o.value===state.model)) state.model="__ALL__";
   setOptions($("modelFilter"),modelOptions,state.model);
 
-  const stages = scopedStages(state.metric);
-  const stagePref = stages.includes(state.stage) ? state.stage : stages.includes("平销") ? "平销" : stages.includes("首销") ? "首销" : stages[0] || "";
+  const stages = scopedStages(state.metric),stageOptions=launchStageOptions();
+  const stagePref = stageOptions.includes(state.stage) ? state.stage : stages.includes("平销") ? "平销" : stages.includes("首销") ? "首销" : stages[0] || "";
   state.stage = stagePref;
-  setOptions($("stageFilter"),stages.map(x=>({value:x,label:x})),stagePref);
+  setOptions($("stageFilter"),stageOptions.map(x=>({value:x,label:x})),stagePref);
 
   const bounds = metricBounds.get(state.metric) || ["",""];
   if (resetDate || !state.start || !state.end) {
@@ -208,7 +228,7 @@ function updateFilters(resetDate) {
   setMetricSwitch();
 }
 function inScope(row, metric) {
-  if (row.metric !== metric || row.stage !== state.stage) return false;
+  if (row.metric !== metric || !stageMatches(row)) return false;
   const model=String(row.model||"");
   if (state.model!=="__ALL__" && model!==state.model) return false;
   if (state.model==="__ALL__" && state.category!=="__ALL__" && categoryOf(model)!==state.category) return false;
@@ -575,10 +595,112 @@ function holidayScopeRows(metric){
   }
   return rows;
 }
+function normalizeLaunchGrain(value){
+  const text=String(value||"");
+  if(text==="月"||text.toLowerCase()==="month")return "月";
+  if(text==="周"||text.toLowerCase()==="week")return "周";
+  return "";
+}
+function launchRows(name,metric){
+  return resultBase(name,metric,false).filter(r=>{
+    const grain=normalizeLaunchGrain(r.grain);
+    return grain?grain===state.launchGrain:state.launchGrain==="周";
+  });
+}
+function launchObservedStart(row){
+  if(Object.prototype.hasOwnProperty.call(row,"observed_start"))return dateOnly(row.observed_start);
+  return dateOnly(row.observedStart||row.actual_start||row.start);
+}
+function launchObservedEnd(row){
+  if(Object.prototype.hasOwnProperty.call(row,"observed_end"))return dateOnly(row.observed_end);
+  return dateOnly(row.observedEnd||row.actual_end||row.end);
+}
+function launchEvidenceInWindow(row){
+  const start=launchObservedStart(row),end=launchObservedEnd(row);
+  if(!start||!end)return false;
+  return (!state.start||start>=state.start)&&(!state.end||end<=state.end);
+}
+function launchPeriodNo(row,index){
+  const value=Number(row.period_no);
+  return Number.isFinite(value)?value:null;
+}
+function launchPeriodTotal(row){
+  return num(row.current);
+}
+function launchPeriodDaily(row){
+  return num(row.daily_avg);
+}
+function launchPeriodValid(row){
+  const daily=launchPeriodDaily(row),total=launchPeriodTotal(row),status=String(row.status||"");
+  return (status==="有效"||status==="ok"||!status)&&daily!==null&&daily>=0&&total!==null&&total>=0;
+}
+function launchPeriodRows(metric){
+  return launchRows("launch_periods",metric).filter(launchEvidenceInWindow);
+}
+function launchCurrentStart(row){return launchObservedStart(row)||dateOnly(row.current_start||row.start);}
+function launchCurrentEnd(row){return launchObservedEnd(row)||dateOnly(row.current_end||row.end);}
+function launchPreviousStart(row){return launchObservedStart(row)||dateOnly(row.previous_start||row.start);}
+function launchPreviousEnd(row){return launchObservedEnd(row)||dateOnly(row.previous_end||row.end);}
+function launchComparisonRows(metric){
+  return launchRows("launch_pacing",metric).filter(launchEvidenceInWindow);
+}
+function launchComparisonDaily(row){
+  const hasDailyRatio=Object.prototype.hasOwnProperty.call(row,"daily_ratio");
+  const value=num(row.daily_ratio);if(hasDailyRatio)return value;
+  if(String(row.status||"")!=="有效")return null;
+  const current=launchPeriodTotal(row),previous=num(row.previous);
+  const currentDays=num(row.current_days)??num(row.current_observed),previousDays=num(row.previous_days)??num(row.previous_observed);
+  if(current!==null&&previous!==null&&previous>0&&currentDays!==null&&previousDays!==null&&currentDays>0&&previousDays>0)return (current/currentDays)/(previous/previousDays);
+  return null;
+}
+function launchComparisonTotal(row){
+  const hasRatio=Object.prototype.hasOwnProperty.call(row,"ratio");
+  const value=num(row.ratio);if(hasRatio)return value;
+  if(String(row.status||"")!=="有效")return null;
+  const current=num(row.current),previous=num(row.previous);return current!==null&&previous!==null&&previous>0?current/previous:null;
+}
+function launchStageText(row){return String(row.stage||row.current_stage||"");}
+function launchPeriodLabel(periodNo){return Number.isFinite(Number(periodNo))?"第"+periodNo+state.launchGrain:"—";}
+function launchPeriodStats(rows){
+  const bases=new Map();
+  rows.forEach((row,index)=>{
+    if(!launchPeriodValid(row))return;
+    const key=[row.model,row.cycle,row.source].map(x=>String(x||"")).join("|");
+    const periodNo=launchPeriodNo(row,index),daily=launchPeriodDaily(row);
+    if(periodNo===null)return;
+    if(periodNo===1&&daily>0&&!bases.has(key))bases.set(key,{periodNo,daily});
+  });
+  const buckets=new Map();
+  rows.forEach((row,index)=>{
+    if(!launchPeriodValid(row))return;
+    const periodNo=launchPeriodNo(row,index),daily=launchPeriodDaily(row);
+    if(periodNo===null)return;
+    const key=String(periodNo);
+    if(!buckets.has(key))buckets.set(key,{periodNo,daily:[],index:[],models:new Set(),records:0,stages:new Set()});
+    const bucket=buckets.get(key);bucket.daily.push({model:row.model,cycle:row.cycle,value:daily});bucket.models.add(String(row.model));bucket.records++;bucket.stages.add(launchStageText(row));
+    const base=bases.get([row.model,row.cycle,row.source].map(x=>String(x||"")).join("|"));
+    if(base&&base.daily>0)bucket.index.push({model:row.model,cycle:row.cycle,value:daily/base.daily});
+  });
+  return [...buckets.values()].sort((a,b)=>a.periodNo-b.periodNo).map(bucket=>{
+    const daily=summary(bucket.daily,"value"),index=summary(bucket.index,"value");
+    return {...bucket,label:launchPeriodLabel(bucket.periodNo),dailyTypical:daily.typical,dailyP25:daily.p25,dailyP75:daily.p75,indexTypical:index.typical,indexP25:index.p25,indexP75:index.p75,models:bucket.models.size,n:bucket.records,indexModels:index.models,indexN:index.samples,stage:[...bucket.stages].filter(Boolean).join(" / ")||"—"};
+  });
+}
+function launchComparisonStats(rows){
+  const valid=rows.map(row=>({...row,dailyValue:launchComparisonDaily(row),totalValue:launchComparisonTotal(row)})).filter(row=>String(row.status||"")==="有效"&&row.dailyValue!==null);
+  const groups=new Map();
+  valid.forEach(row=>{
+    const previous=Number(row.previous_period_no),current=Number(row.period_no),label=Number.isFinite(previous)&&Number.isFinite(current)?launchPeriodLabel(previous)+"→"+launchPeriodLabel(current):"相邻周期";
+    if(!groups.has(label))groups.set(label,[]);groups.get(label).push(row);
+  });
+  const stats=[...groups.entries()].map(([label,items])=>{const daily=summary(items.map(r=>({model:r.model,cycle:r.cycle,value:r.dailyValue})),"value"),total=summary(items.map(r=>({model:r.model,cycle:r.cycle,value:r.totalValue})),"value");return {label,periodNo:Number(items[0].period_no),dailyTypical:daily.typical,dailyP25:daily.p25,dailyP75:daily.p75,totalTypical:total.typical,models:daily.models,n:daily.samples};}).sort((a,b)=>a.periodNo-b.periodNo);
+  return {valid,stats};
+}
 function renderPatternTabs(){
   document.querySelectorAll("[data-pattern]").forEach(b=>{b.classList.toggle("is-active",b.dataset.pattern===state.pattern);b.setAttribute("aria-selected",b.dataset.pattern===state.pattern?"true":"false");b.tabIndex=b.dataset.pattern===state.pattern?0:-1;});
   $("patternPanels").setAttribute("aria-labelledby","pattern-"+state.pattern);
   const container=$("patternPanels");clear(container);
+  const launchControl=$("launchControls");if(launchControl)launchControl.hidden=state.pattern!=="launch";
   const metric=state.metric;
   const intro=$("patternIntro");
   if(state.pattern==="months"){
@@ -622,38 +744,47 @@ function renderPatternTabs(){
     c=card(container,"首销生命周期补充","生命周期规律按完整首7日批次计算，不并入平销。");
     const lif=lifecycleRows(metric);const lt=el("div","table-wrap","",c);makeTable(lt,["车型","首销批次","D1 / D3–D7 日均","首2天占首7天","有效批次数"],lif.map(r=>[r.model,r.cycle,fmtPct(r.d1_ratio),fmtPct(r.first2_share),fmtInt(lif.length)]),"该阶段没有完整生命周期样本。");
   }else if(state.pattern==="launch"){
-    intro.textContent="取自‘小订首销平销by天’；小订/首销等组合标签按指标拆分，净大定与锁单使用首销部分（含起止当日）。按首销开始日对齐：第1周为D1–D7，第2周为D8–D14，第3周为D15–D21。净大定、锁单分别比较本周与前周；前后两个窗口均须完整落在所选日期内。";
-    const launchStageAvailable=scopedStages(metric).includes("首销");
-    const allLaunch=resultBase("launch_pacing",metric),launch=allLaunch.filter(r=>dateOnly(r.previous_start)>=state.start&&dateOnly(r.end)<=state.end);
-    const valid=launch.filter(r=>r.status==="有效"&&num(r.ratio)!==null);
-    const patterns=unique(launch.map(r=>r.pattern));
-    const stats=patterns.map(pattern=>({pattern,...summary(valid.filter(r=>r.pattern===pattern),"ratio")}));
+    const control=$("launchControls");if(control){control.hidden=false;$("launchGrain").value=state.launchGrain;}
+    const stageLabel=state.stage==="首销及平销"?"首销及平销":state.stage||"当前阶段",canJoint=scopedStages(metric).includes("首销")&&scopedStages(metric).includes("平销");
+    intro.textContent="上市后销量节奏取自首销开始后的实际周/月期间：周按首销日D1起每7天，月按首销日逐月对齐（月末日期截到当月末，不是自然月）。联合阶段展示首销、平销及跨阶段记录，单选阶段只保留对应完整期间。日均销量按完整、非负期间计算，净大定与锁单严格分开。当前粒度："+state.launchGrain+"；当前阶段："+stageLabel+"。";
+    const periods=launchPeriodRows(metric),periodStats=launchPeriodStats(periods),comparisons=launchComparisonRows(metric),comparisonStats=launchComparisonStats(comparisons),validComparisons=comparisonStats.valid;
+    const allPeriodRows=launchRows("launch_periods",metric),allComparisonRows=launchRows("launch_pacing",metric);
+    const periodModels=unique(periods.map(r=>String(r.model||""))).length,comparisonModels=unique(validComparisons.map(r=>String(r.model||""))).length;
     miniKpis($("patternKpis"),[
-      {label:"有效比较",value:fmtInt(valid.length),foot:"同车型、批次、口径与来源"},
-      {label:"有效车型",value:fmtInt(unique(valid.map(r=>r.model)).length),foot:"各车型等权，不受销量大小支配"},
-      {label:"不可比记录",value:fmtInt(launch.length-valid.length),foot:"缺日、负值或前期为零"},
-      {label:"适用阶段",value:"首销",foot:"尚未做跨批次留出验证"}
+      {label:"完整上市期间",value:fmtInt(periodStats.reduce((a,r)=>a+r.n,0)),foot:"范围覆盖 "+periodModels+"个车型 · "+state.launchGrain+"粒度"},
+      {label:"有效相邻比较",value:fmtInt(validComparisons.length),foot:comparisonModels+"个车型 · 日均比"},
+      {label:"不可比记录",value:fmtInt(comparisons.length-validComparisons.length),foot:"缺日、负值、阶段或来源不一致"},
+      {label:"分析阶段",value:stageLabel,foot:"日期范围："+state.start+" 至 "+state.end}
     ]);
-    const c=card(container,"上市后销量延续或回落","典型比例按车型等权中位数计算；P25/P75为历史批次波动，不是预测区间。只有确认可比的上市批次，才适合用于新车型情景参考。");
-    if(state.stage!=="首销"){
-      const reason=launchStageAvailable?"当前销售阶段为“"+state.stage+"”，首销周节奏只使用“首销”阶段；日期范围不会自动调整。":"当前筛选范围没有“首销”阶段数据；请切换车型或分类，或点击“重置”恢复完整范围。";
-      const note=el("div","pattern-intro",reason,c);
-      if(launchStageAvailable){const button=el("button","button button-quiet","切换到首销阶段",note);button.type="button";button.addEventListener("click",()=>setPatternStage("首销"));}
-    }else if(allLaunch.length&&!launch.length){
-      const note=el("div","pattern-intro","当前日期范围排除了所有首销周比较记录；日期范围不会自动调整。",c);
-      const button=el("button","button button-quiet","恢复当前口径日期",note);button.type="button";button.addEventListener("click",restorePatternDates);
+    const noPeriodData=!allPeriodRows.length&&!allComparisonRows.length;
+    const noWindowData=!periods.length&&!comparisons.length&&(allPeriodRows.length||allComparisonRows.length);
+    const noCompleteWindow=periods.length&&!periodStats.length&&!validComparisons.length;
+    const scopeNote=noPeriodData?"当前车型、分类和口径没有上市后期间记录；请检查首销日期或切换车型。":noWindowData?"当前日期范围排除了上市后期间或相邻比较记录；日期范围未自动扩大，请扩大日期范围或恢复当前口径日期。":noCompleteWindow?"当前日期范围没有完整可比期间，已有观测保留在下方证据中；日期范围未自动扩大。":"";
+    const bounds=metricBounds.get(metric)||["",""];
+    if(noWindowData||(noCompleteWindow&&(state.start>bounds[0]||state.end<bounds[1]))){
+      const scopeGuide=el("div","pattern-intro",scopeNote,container);
+      const restore=el("button","button button-quiet","恢复当前口径日期",scopeGuide);restore.type="button";restore.addEventListener("click",restorePatternDates);
     }
-    const chart=el("div","pattern-chart","",c);
-    drawBars(chart,stats.filter(r=>r.typical!==null),"pattern","typical",fmtPct,"vertical");
-    const t=el("div","table-wrap","",c);
-    const launchEmptyText=state.stage!=="首销"?(launchStageAvailable?"当前阶段不是首销，请点击“切换到首销阶段”。":"当前车型或分类没有首销阶段数据，请调整车型或分类。"):
-      !allLaunch.length?"当前车型或分类尚无首销周比较记录；至少需要两个相邻首销周，首销日期及每日数据也须可用。":
-      !launch.length?"当前日期范围排除了所有首销周比较记录；请扩大日期范围或点击“恢复当前口径日期”。":
-      "当前日期范围内的首销周记录均不可比（缺日、负值或前期为零）；具体原因见下方逐车型证据。";
-    makeTable(t,["比较","P25","典型比例","P75","车型数","不同起始日期","有效记录数"],stats.map(r=>[r.pattern,fmtPct(r.p25),fmtPct(r.typical),fmtPct(r.p75),fmtInt(r.models),fmtInt(r.periods),fmtInt(r.samples)]),launchEmptyText);
-    const detail=card(container,"逐车型首销周证据","前期和本期均为7日观测合计；缺失保持未知，不补零，原始观测合计可查，只有完整且非负窗口计算倍率。");
+    if(canJoint&&state.stage!=="首销及平销"){
+      const note=el("div","pattern-intro","当前阶段为“"+stageLabel+"”，仅使用该阶段的完整期间比较；联合查看首销到平销可切换为“首销及平销”。",container);
+      const button=el("button","button button-quiet","切换到首销及平销",note);button.type="button";button.addEventListener("click",()=>setPatternStage("首销及平销"));
+    }
+    const dual=el("div","pattern-dual","",container);
+    let c=card(dual,"上市第N"+state.launchGrain+"日均销量","各上市期间按完整天数计算日均，再按车型等权汇总；覆盖车型数/期间记录数会随期间变化。"+(scopeNote?" "+scopeNote:""));
+    let chart=el("div","pattern-chart bar-list","",c);chart.style.maxHeight="420px";chart.style.marginBottom="16px";chart.tabIndex=0;chart.setAttribute("role","region");chart.setAttribute("aria-label","上市期间日均销量图，可上下滚动查看各上市周期");drawBars(chart,periodStats.filter(r=>r.dailyTypical!==null).map(r=>({label:r.label+" · "+r.models+"车",value:r.dailyTypical,n:r.n})),"label","value",fmtNum,"horizontal");
+    let table=el("div","table-wrap","",c);makeTable(table,["上市期间","日均销量 P25","典型日均销量","P75","覆盖车型","期间记录"],periodStats.map(r=>[r.label,fmtNum(r.dailyP25),fmtNum(r.dailyTypical),fmtNum(r.dailyP75),fmtInt(r.models),fmtInt(r.n)]),scopeNote||"当前日期范围没有完整的上市期间；请扩大日期范围或恢复当前口径日期。");
+    c=card(dual,"上市第N"+state.launchGrain+"首期相对指数","仅以同车型、同批次、同来源且完整非负的第1期日均为100%；没有合格第1期的批次不绘制相对指数。"+(scopeNote?" "+scopeNote:""));
+    chart=el("div","pattern-chart bar-list","",c);chart.style.maxHeight="420px";chart.style.marginBottom="16px";chart.tabIndex=0;chart.setAttribute("role","region");chart.setAttribute("aria-label","上市期间首期相对指数图，可上下滚动查看各上市周期");drawBars(chart,periodStats.filter(r=>r.indexTypical!==null).map(r=>({label:r.label+" · "+r.indexModels+"车",value:r.indexTypical,n:r.indexN})),"label","value",fmtPct,"horizontal");
+    table=el("div","table-wrap","",c);makeTable(table,["上市期间","P25","首期相对指数","P75","有效基期车型","有效指数记录"],periodStats.map(r=>[r.label,fmtPct(r.indexP25),fmtPct(r.indexTypical),fmtPct(r.indexP75),fmtInt(r.indexModels),fmtInt(r.indexN)]),scopeNote||"当前日期范围没有可用于首期相对指数的完整基期。");
+    c=card(container,"相邻上市期间日均比","主看日均比；总量比作为证据同时保留。周/月期间的天数不同，不直接比较总量高低。"+(state.stage==="首销及平销"?" 当前联合阶段允许首销→平销的跨阶段比较，但不会塞入单阶段比较。":""));
+    chart=el("div","pattern-chart bar-list","",c);chart.style.maxHeight="420px";chart.style.marginBottom="16px";chart.tabIndex=0;chart.setAttribute("role","region");chart.setAttribute("aria-label","相邻上市期间日均比图，可上下滚动查看各上市周期");drawBars(chart,comparisonStats.stats.filter(r=>r.dailyTypical!==null).map(r=>({label:r.label,value:r.dailyTypical,n:r.n})),"label","value",fmtPct,"horizontal");
+    table=el("div","table-wrap","",c);makeTable(table,["相邻期间","P25 日均比","典型日均比","P75","车型数","有效记录"],comparisonStats.stats.map(r=>[r.label,fmtPct(r.dailyP25),fmtPct(r.dailyTypical),fmtPct(r.dailyP75),fmtInt(r.models),fmtInt(r.n)]),noPeriodData?scopeNote:"当前日期范围没有完整的相邻上市期间比较；请扩大日期范围或调整阶段。");
+    const detail=card(container,"上市期间逐车型证据","保留上市期间、阶段、观测天数、应有天数、日均、批次与来源；完整性不足或负值不补倍率。" );
     const dt=el("div","table-wrap","",detail);
-    makeTable(dt,["车型","比较","前期日期","本期日期","前期观测量","本期观测量","本期/前期","前期天数","本期天数","状态","来源"],launch.map(r=>[r.model,r.pattern,dateOnly(r.previous_start)+"～"+dateOnly(r.previous_end),dateOnly(r.start)+"～"+dateOnly(r.end),fmtNum(r.previous),fmtNum(r.current),fmtPct(r.ratio),fmtInt(r.previous_observed)+"/7",fmtInt(r.current_observed)+"/7",r.status,r.source]),launchEmptyText);
+    makeTable(dt,["车型","上市期间","预期开始","预期结束","观测开始","观测结束","阶段","期间总量","观测/应有天数","日均","状态","批次 / 来源"],periods.map((r,i)=>[r.model,launchPeriodLabel(launchPeriodNo(r,i)),dateOnly(r.start),dateOnly(r.end),launchObservedStart(r),launchObservedEnd(r),launchStageText(r),fmtNum(launchPeriodTotal(r)),fmtInt(r.observed)+"/"+fmtInt(r.expected_days),fmtNum(launchPeriodDaily(r)),r.status||"—",String(r.cycle||"")+" · "+String(r.source||"")]),scopeNote||"当前日期范围没有上市期间证据。" );
+    const compareDetail=card(container,"逐车型相邻期间证据","日均比用于节奏判断；总量比单列，阶段和来源切换会标记为不可比。" );
+    const ct=el("div","table-wrap","",compareDetail);
+    makeTable(ct,["车型","前一期间","当前期间","前阶段","当前阶段","前/当前总量","前/当前天数","总量比","日均比","状态","前→后来源"],comparisons.map(r=>[r.model,launchPeriodLabel(Number(r.previous_period_no)),launchPeriodLabel(Number(r.period_no)),r.previous_stage||r.stage||"—",r.current_stage||r.stage||"—",fmtNum(r.previous)+" / "+fmtNum(r.current),fmtInt(r.previous_days||r.previous_observed)+" / "+fmtInt(r.current_days||r.current_observed),fmtPct(launchComparisonTotal(r)),fmtPct(launchComparisonDaily(r)),r.status||"—",String(r.previous_source||r.source||"")+" → "+String(r.current_source||r.source||"")]),noPeriodData?scopeNote:"当前日期范围没有相邻期间证据。" );
   }else if(state.pattern==="holiday"){
     intro.textContent="节假日只提供历史解释：与同星期节前/节后对照计算，不视为可直接外推的预测系数。当前日期窗需覆盖节前7日至节后7日；主分析限定平销阶段。";
     const holidayStageAvailable=scopedStages(metric).includes("平销");
@@ -665,6 +796,7 @@ function renderPatternTabs(){
       {label:"适用阶段",value:"平销",foot:state.stage==="平销"?"当前选择为平销":"当前阶段无节日对照"}
     ]);
     const scopeCard=card(container,"当前筛选范围节假日指数","范围："+holidayScopeLabel()+"。每日先合计所选车型的实际值与同星期基准，再计算节前、节中、节后日均倍率；不会简单平均车型指数。");
+    el("p","card-subtitle","100%基准：对每一天，取节日开始前第8—35天及节日结束后第8—35天中，同星期的普通日销量平均值；排除节假日、调休工作日及其他节日前后7天。每个星期至少4个对照日，且节日前后均有对照。每日指数＝实际销量÷同星期基准；节前7天、节中、节后7天分别取每日指数的平均。对照包含节后日期，仅用于解释历史。",scopeCard);
     const scopeChart=el("div","pattern-chart bar-list","",scopeCard);
     scopeChart.style.maxHeight="420px";scopeChart.style.marginBottom="16px";
     scopeChart.tabIndex=0;scopeChart.setAttribute("role","region");scopeChart.setAttribute("aria-label","当前筛选范围节假日指数图，可上下滚动查看各年节日");
@@ -1009,10 +1141,14 @@ function exportCsv(){
 }
 function updatePage(page,save=true){
   if(!["overview","patterns","forecast","evidence"].includes(page))page="overview";
+  const previousPage=state.page,previousStage=state.stage;
+  if(page!=="patterns"&&state.stage==="首销及平销")normalizeStageOutsideLaunch();
   state.page=page;
+  if(page==="patterns"&&state.pattern==="launch"&&previousPage!=="patterns"&&save)syncPatternStage("launch");
+  if(previousPage!==page||previousStage!==state.stage){cache.clear();updateFilters(false);renderRangeNotice();}
   const info={
     overview:["销量规律概览","先确认口径与样本范围，再查看可用于预测的历史信号。"],
-    patterns:["规律探索","用同口径、同阶段的完整周期，检验规律是否稳定。"],
+    patterns:["规律探索","用同口径、同阶段或上市后联合阶段的完整周期，检验规律是否稳定。"],
     forecast:["预测试算与回测","先看同车型留出回测，再用单一倍率构造可复核情景。"],
     evidence:["证据明细","从汇总指标追溯到每日观测和净大定→锁单共同日期相关性。"]
   }[page];
@@ -1059,7 +1195,7 @@ function announce(message){
   node.textContent=message;node.classList.add("is-visible");
   statusTimer=setTimeout(()=>node.classList.remove("is-visible"),5000);
 }
-const routeKeys=["page","pattern","metric","category","model","stage","start","end","grain","compare","evidence","forecastModel","forecastGrain","profileKey"];
+const routeKeys=["page","pattern","metric","category","model","stage","start","end","grain","launchGrain","compare","evidence","forecastModel","forecastGrain","profileKey"];
 function saveRoute(push){
   const params=new URLSearchParams();routeKeys.forEach(k=>params.set(k,String(state[k])));
   const hash="#"+params.toString();
@@ -1074,6 +1210,7 @@ function restoreRoute(){
   if(!["months","week","launch","holiday","cycles"].includes(state.pattern))state.pattern="months";
   if(!["daily","lags"].includes(state.evidence))state.evidence="daily";
   if(!["日","周","月","年"].includes(state.grain))state.grain="月";
+  if(!["周","月"].includes(state.launchGrain))state.launchGrain="周";
   if(!["日","周","月"].includes(state.forecastGrain))state.forecastGrain="月";
   const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+"T00:00:00Z"))&&new Date(value+"T00:00:00Z").toISOString().slice(0,10)===value;
   if(!validDate(state.start)||!validDate(state.end)){state.start="";state.end="";}
@@ -1099,14 +1236,19 @@ function applyDates(){
   state.start=from.value;state.end=to.value;refresh();
 }
 function syncPatternStage(pattern){
-  const target=pattern==="launch"?"首销":pattern==="holiday"?"平销":"";
-  if(!target||!scopedStages(state.metric).includes(target))return false;
+  const stages=scopedStages(state.metric),target=pattern==="launch"?(stages.includes("首销")&&stages.includes("平销")?"首销及平销":stages.includes("首销")?"首销":stages.includes("平销")?"平销":""):pattern==="holiday"?"平销":"";
+  if(!target||!stages.includes(target)&&target!=="首销及平销")return false;
   state.stage=target;
   const select=$("stageFilter");if(select)select.value=target;
   return true;
 }
+function normalizeStageOutsideLaunch(){
+  const stages=scopedStages(state.metric),target=stages.includes("平销")?"平销":stages.includes("首销")?"首销":stages[0]||"";
+  state.stage=target;const select=$("stageFilter");if(select)select.value=target;return target;
+}
 function setPatternStage(stage){
-  if(!scopedStages(state.metric).includes(stage))return false;
+  const stages=scopedStages(state.metric),joint=stage==="首销及平销"&&state.page==="patterns"&&state.pattern==="launch"&&stages.includes("首销")&&stages.includes("平销");
+  if(!joint&&!stages.includes(stage))return false;
   state.stage=stage;$("stageFilter").value=stage;refresh();return true;
 }
 function restorePatternDates(){
@@ -1116,7 +1258,8 @@ function restorePatternDates(){
 }
 function activatePattern(pattern){
   const previousStage=state.stage;
-  state.pattern=pattern;syncPatternStage(pattern);refresh(false);showUpdate($("patternPanels"));
+  if(state.pattern==="launch"&&pattern!=="launch"&&state.stage==="首销及平销")normalizeStageOutsideLaunch();
+  state.pattern=pattern;syncPatternStage(pattern);updateFilters(false);refresh(false);showUpdate($("patternPanels"));
   if(state.stage!==previousStage)announce("已切换到“"+state.stage+"”阶段，保留当前车型和日期范围。");
 }
 function bindTabs(container,selector,activate){
@@ -1146,9 +1289,10 @@ $("modelFilter").addEventListener("change",e=>{state.model=e.target.value;update
 $("stageFilter").addEventListener("change",e=>{state.stage=e.target.value;refresh();});
 $("dateStart").addEventListener("change",applyDates);
 $("dateEnd").addEventListener("change",applyDates);
-$("resetFilters").addEventListener("click",()=>{state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.compare=false;$("trendGrain").value="月";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();announce("已恢复默认口径、车型和日期范围。");});
+$("resetFilters").addEventListener("click",()=>{state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.launchGrain="周";state.compare=false;$("trendGrain").value="月";$("launchGrain").value="周";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();announce("已恢复默认口径、车型和日期范围。");});
 $("trendGrain").addEventListener("change",e=>{state.grain=e.target.value;refresh();});
 $("compareMetrics").addEventListener("change",e=>{state.compare=e.target.checked;refresh();});
+$("launchGrain").addEventListener("change",e=>{state.launchGrain=e.target.value;refresh();});
 document.querySelectorAll("[data-pattern]").forEach(b=>b.addEventListener("click",()=>activatePattern(b.dataset.pattern)));
 $("forecastModel").addEventListener("change",e=>{state.forecastModel=e.target.value;state.profileKey="";renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});
 $("forecastGrain").addEventListener("change",e=>{state.forecastGrain=e.target.value;state.profileKey="";renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});

@@ -581,6 +581,9 @@ class UnifiedDailyTests(unittest.TestCase):
         self.assertEqual(stage_by_date[(date(2025,8,5),'留存大定')], '首销')
         self.assertEqual(stage_by_date[(date(2025,8,7),'留存大定')], '首销')
         self.assertEqual(stage_by_date[(date(2025,8,8),'留存大定')], '平销')
+        flat = next(r for r in panel if r['date'] == date(2025,8,8) and r['metric'] == '留存大定')
+        self.assertEqual((flat['launch_start'], flat['launch_end']),
+                         (date(2025,8,5), date(2025,8,7)))
         self.assertEqual(audit['复合阶段按指标拆分'], 5)
         self.assertEqual(audit['阶段标签与日期字段推导不一致'], 4)
 

@@ -106,3 +106,4 @@ body{background:var(--canvas);color:var(--ink)}
 
 /* Refined topbar action: center the label in the touch target and remove the intro accent rule. */
 .header-excel{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:44px;min-height:44px;padding:0 12px;line-height:1.1;font-size:12px;font-weight:600;white-space:nowrap;vertical-align:middle}.header-excel-icon{width:15px;height:15px;flex:0 0 15px}.pattern-intro{border:0}
+ .launch-controls{justify-content:flex-end;margin:8px 0 0;padding:0 2px}.launch-controls .compact-select{min-height:44px}

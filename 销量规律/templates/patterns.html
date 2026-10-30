@@ -130,9 +130,12 @@
         <div class="subnav" role="tablist" aria-label="规律类别">
           <button class="subnav-item is-active" role="tab" id="pattern-months" aria-controls="patternPanels" data-pattern="months" aria-selected="true">月度变化</button>
           <button class="subnav-item" role="tab" id="pattern-week" aria-controls="patternPanels" data-pattern="week">周内与月末</button>
-          <button class="subnav-item" role="tab" id="pattern-launch" aria-controls="patternPanels" data-pattern="launch">首销周节奏</button>
+          <button class="subnav-item" role="tab" id="pattern-launch" aria-controls="patternPanels" data-pattern="launch">上市后销量节奏</button>
           <button class="subnav-item" role="tab" id="pattern-holiday" aria-controls="patternPanels" data-pattern="holiday">节假日</button>
           <button class="subnav-item" role="tab" id="pattern-cycles" aria-controls="patternPanels" data-pattern="cycles">周期比例</button>
+        </div>
+        <div id="launchControls" class="chart-controls launch-controls" hidden>
+          <label class="compact-select"><span>上市粒度</span><select id="launchGrain" aria-label="上市粒度"><option value="周">周</option><option value="月">月</option></select></label>
         </div>
         <div class="pattern-intro" id="patternIntro"></div>
         <div class="pattern-kpis" id="patternKpis"></div>

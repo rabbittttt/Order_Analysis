@@ -214,6 +214,29 @@ class RuleSummaryTests(unittest.TestCase):
         rows = build_rule_summary(results, models, ["A"], selected_metrics=["小订数量"])
         self.assertEqual(rows, [])
 
+    def test_post_launch_rules_use_daily_ratio_and_keep_phase_and_metric_separate(self):
+        base = dict(model="a", metric="留存大定", stage="跨阶段", cycle="2025-01-01",
+                    source="逐日", grain="月", pattern="上市第2月/第1月", status="有效",
+                    previous=310, current=280, ratio=280/310, daily_ratio=1)
+        results = {"launch_pacing": [base, dict(base, stage="平销", daily_ratio=.8),
+                                      dict(base, metric="交车锁单", daily_ratio=1.2),
+                                      dict(base, model="b", status="来源切换不可比", daily_ratio=9)]}
+        rows = build_rule_summary(results, {"a":{"category":"A"},"b":{"category":"A"}}, ["A"])
+        overall = {(r["metric"],r["stage"]):r for r in rows if r["category"]=="全部车型"}
+        self.assertEqual(overall["留存大定","跨阶段"]["typical"],1)
+        self.assertEqual(overall["留存大定","平销"]["typical"],.8)
+        self.assertEqual(overall["交车锁单","跨阶段"]["typical"],1.2)
+        self.assertEqual(overall["留存大定","跨阶段"]["models"],1)
+        self.assertEqual(overall["留存大定","跨阶段"]["unit"],"日均比例")
+        self.assertIn("未做跨批次",overall["留存大定","跨阶段"]["conclusion"])
+
+    def test_post_launch_missing_daily_ratio_is_not_replaced_by_total_ratio(self):
+        row = dict(model="a",metric="留存大定",stage="平销",cycle="2025-01-01",source="逐日",
+                   pattern="上市第3月/第2月",status="有效",ratio=2,daily_ratio=None)
+        rows = build_rule_summary({"launch_pacing":[row]}, {"a":{"category":"A"}}, ["A"])
+        self.assertTrue(rows)
+        self.assertTrue(all(r["typical"] is None for r in rows))
+
 
 if __name__ == "__main__":
     unittest.main()

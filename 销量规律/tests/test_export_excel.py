@@ -129,6 +129,7 @@ class ExportTests(unittest.TestCase):
                 self.assertEqual(len(matches),1)
                 self.assertEqual(matches[0][3:6],(100,50,.5))
                 self.assertIn('7/7天',matches[0][6])
+                self.assertEqual(matches[0][7],.5)
                 self.assertEqual(len(wb.sheetnames),17)
             finally:wb.close()
         headline=e._headline_findings([dict(row,category='全部车型',typical=.5,models=4,periods=4,
@@ -136,6 +137,34 @@ class ExportTests(unittest.TestCase):
         self.assertIn('第2周',headline['finding'])
         self.assertNotIn('同星期',headline['finding'])
         self.assertIn('未做跨批次',headline['evidence_level'])
+
+    def test_post_launch_month_export_keeps_total_and_daily_ratios_distinct(self):
+        payload=fixture()
+        payload['forecast']={'profiles':[],'backtests':[]}
+        base=dict(model="测试车型",metric="留存大定",stage="平销",cycle="2025-01-01",source="逐日表",
+                  grain="月",period_no=2,start=date(2025,2,1),end=date(2025,2,28),status="有效")
+        payload['results']['launch_periods']=[dict(base,current=280,daily_avg=10,observed=28,expected_days=28)]
+        row=dict(base,stage="跨阶段",previous_stage="跨阶段",current_stage="平销",pattern="上市第2月/第1月",
+                 previous_start=date(2025,1,1),previous_end=date(2025,1,31),previous=310,current=280,
+                 ratio=280/310,daily_ratio=1,previous_observed=31,current_observed=28,
+                 previous_days=31,current_days=28)
+        payload['results']['launch_pacing']=[row]
+        with tempfile.TemporaryDirectory() as folder:
+            target=Path(folder)/'report.xlsx';e.export_workbook(payload,target)
+            wb=load_workbook(target)
+            try:
+                sheet=wb['生命周期明细']
+                cells=next(r for r in sheet if r[2].value==row['pattern'])
+                self.assertAlmostEqual(cells[5].value,280/310)
+                self.assertEqual(cells[7].value,1)
+                self.assertEqual(cells[7].number_format,"0.0%")
+                self.assertIn('前31/31天，本28/28天',cells[6].value)
+                self.assertIn('跨阶段',cells[6].value)
+                observation=next(r for r in sheet.iter_rows(values_only=True) if r[2]=='第2月')
+                self.assertEqual(observation[3:6],(280,10,'28/28天'))
+                self.assertTrue(all(s.freeze_panes is None for s in wb))
+                self.assertEqual(len(wb.sheetnames),17)
+            finally:wb.close()
 
     def test_headlines_require_actual_multi_model_validation_and_current_direction(self):
         base=dict(category="全部车型",metric="留存大定",stage="平销",pattern="周末/工作日（日均）",

@@ -302,8 +302,13 @@ def read_resolved_panel(wb, audit):
                 anchor, life = start,(d-start).days+1
             if stage == '平销': life, anchor = None,None
             cycle = str(anchor) if anchor else stage
+            launch_start = dt(order_info.get('首销开始'))
+            launch_end = dt(order_info.get('首销结束'))
+            if stage != '小订阶段' and (launch_start is None or launch_end is None):
+                launch_start = dt(metric_info.get('首销开始'))
+                launch_end = dt(metric_info.get('首销结束'))
             key = (str(model),d,metric)
-            signature = (value,stage,source,cycle)
+            signature = (value,stage,source,cycle,launch_start,launch_end)
             if key in seen:
                 if seen[key] != signature: raise ValueError('已合并逐日表重复键冲突：'+str(key))
                 audit['相同重复去重'] += 1
@@ -311,7 +316,9 @@ def read_resolved_panel(wb, audit):
             seen[key] = signature
             if value<0: audit[metric+'负值不参与倍率'] += 1
             panel.append(dict(model=str(model),date=d,metric=metric,stage=stage,source=source,
-                              cycle=cycle,value=float(value),life=life,sheet=UNIFIED_DAILY_SHEET,row=rowno))
+                              cycle=cycle,value=float(value),life=life,
+                              launch_start=launch_start,launch_end=launch_end,
+                              sheet=UNIFIED_DAILY_SHEET,row=rowno))
     audit['字段级来源表已识别'] = 1
     attach_model_classes(wb,panel,audit)
     return panel,dict(audit)
@@ -387,6 +394,8 @@ def read_unified_panel(wb, audit):
                 anchor, life = start, (d-start).days+1
         normalized_stage = '小订阶段' if small_stage else stage
         cycle = str(anchor) if anchor and stage != '平销' else normalized_stage
+        launch_start = dt(model_info.get('首销开始')) or dt(row.get('首销开始'))
+        launch_end = dt(model_info.get('首销结束')) or dt(row.get('首销结束'))
         source = ' | '.join((kind, filename, source_sheet))
         normalized_row = dict(row, 来源类型=kind, 来源文件=filename, 订单阶段=stage)
         for metric, column in columns.items():
@@ -408,6 +417,7 @@ def read_unified_panel(wb, audit):
             seen[source_key] = signature
             item = dict(model=str(model), date=d, metric=metric, stage=normalized_stage,
                         source=source, cycle=cycle, value=float(value), life=life,
+                        launch_start=launch_start, launch_end=launch_end,
                         sheet=UNIFIED_DAILY_SHEET, row=rowno)
             rank = _daily_source_rank(normalized_row, metric, model_info, cutoff)
             candidates[key].append((rank, item))
@@ -473,7 +483,11 @@ def read_panel(path):
                         audit['相同重复去重']+=1; continue
                     seen[key]=signature
                     if v<0: audit[metric+'负值不参与倍率']+=1
-                    panel.append(dict(model=str(model),date=d,metric=metric,stage=stage,source=src,cycle=cycle,value=float(v),life=life,sheet=name,row=rowno))
+                    panel.append(dict(model=str(model),date=d,metric=metric,stage=stage,source=src,
+                                      cycle=cycle,value=float(v),life=life,
+                                      launch_start=dt(r.get('首销开始')),
+                                      launch_end=dt(r.get('首销结束')),
+                                      sheet=name,row=rowno))
         attach_model_classes(wb, panel, audit)
     finally: wb.close()
     return panel,dict(audit)
@@ -787,7 +801,7 @@ def main():
     log('分析目的：辅助销量预测；净大定（留存大定）与交车锁单分别研究')
     required=(('输入工作簿',src),('节假日日历',calendar_path),
               ('Excel导出器',exporter),('报告规则配置',config_path),
-              ('规律汇总模块',rules_path),('首销周节奏模块',launch_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
+              ('规律汇总模块',rules_path),('上市后销量节奏模块',launch_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
               *((f'网页模板 {name}',templates/name) for name in ('patterns.html','patterns.css','patterns.js')))
     missing=[f'{label}不存在：{path}' for label,path in required if not path.is_file()]
     if a.calendar is not None and not a.calendar.is_file():
@@ -824,8 +838,10 @@ def main():
     log('正在计算周期环比、车型分类和锁单滞后...')
     stage=time.perf_counter()
     result.update(extended_analysis(panel,c))
-    result['launch_pacing']=load_component(launch_path,'sales_launch_patterns').build_launch_pacing(panel)
-    log(f"首销相对周节奏：{len(result['launch_pacing'])} 条比较，净大定与锁单分别计算")
+    launch_analysis=load_component(launch_path,'sales_launch_patterns').build_launch_analysis(panel)
+    result['launch_periods']=launch_analysis['periods']
+    result['launch_pacing']=launch_analysis['comparisons']
+    log(f"上市后销量节奏：{len(result['launch_periods'])} 个周期、{len(result['launch_pacing'])} 条相邻比较，净大定与锁单分别计算")
     log(f'周期比较、车型分类和锁单滞后计算完成，用时 {time.perf_counter()-stage:.1f} 秒')
 
     log('正在建立净大定、锁单预测基准并做滚动回测...')
