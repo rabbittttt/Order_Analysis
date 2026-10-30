@@ -61,6 +61,18 @@ class HtmlExportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):e.render_html(payload,templates(tmp))
 
+    def test_holiday_daily_baselines_survive_compaction_and_json_dates(self):
+        payload=data()
+        payload['results']['holidays']=[dict(model='车型A',metric='留存大定',year=2025,holiday='测试节',
+            daily=[dict(date=date(2025,4,10),actual=0,expected=123.456789)]) for _ in range(40)]
+        with tempfile.TemporaryDirectory() as tmp:
+            html=e.render_html(payload,templates(tmp))
+        recovered=json.loads(re.search(r'type="application/json">(.*?)</script>',html,re.S)[1])
+        table=recovered['results']['holidays']
+        self.assertEqual(table['$table'],1)
+        i=table['columns'].index('daily')
+        self.assertEqual(table['rows'][0][i],[dict(date='2025-04-10',actual=0,expected=123.456789)])
+
     def test_failed_replace_preserves_old_page_and_unrelated_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             target=Path(tmp)/'report.html';target.write_text('old',encoding='utf-8')

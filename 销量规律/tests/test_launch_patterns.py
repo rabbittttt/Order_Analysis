@@ -113,6 +113,16 @@ class LaunchPatternTests(unittest.TestCase):
         self.assertEqual(output[0]["current_observed"], 1)
         self.assertIsNone(output[0]["ratio"])
 
+    def test_launch_pacing_traces_resolved_daily_sheet_and_rejects_other_sheets(self):
+        rows = panel_rows(values=[1] * 7 + [2] * 7)
+        for row in rows:
+            row["sheet"] = "首销by时"
+        rows.extend(dict(row, sheet="小订首销平销by天") for row in panel_rows(
+            model="车型B", values=[1] * 7 + [3] * 7))
+        output = launch.build_launch_pacing(rows)
+        self.assertEqual({row["model"] for row in output}, {"车型B"})
+        self.assertTrue(all(row["sheet"] == "小订首销平销by天" for row in output))
+
     def test_rule_summary_uses_model_equal_launch_pacing_and_marks_no_holdout(self):
         rows = []
         rows.extend(panel_rows(model="车型A", values=[1] * 7 + [2] * 7))

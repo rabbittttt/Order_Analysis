@@ -124,6 +124,7 @@ def _window_result(
         "metric": first.get("metric"),
         "stage": first.get("stage"),
         "cycle": anchor.isoformat(),
+        "sheet": first.get("sheet", ""),
         "source": first.get("source", ""),
         "brand": first.get("brand", "未提供"),
         "segment": first.get("segment", "未提供"),
@@ -160,6 +161,11 @@ def build_launch_pacing(panel: Iterable[Mapping[str, Any]] | None) -> list[dict[
     seen: set[tuple[tuple[str, str, str, str, str], date]] = set()
     for row in panel or ():
         if not isinstance(row, Mapping) or row.get("metric") not in TARGET_METRICS:
+            continue
+        # The report's launch pacing is defined only by the resolved daily
+        # sheet.  Synthetic callers may omit ``sheet`` for backwards
+        # compatibility; an explicit different sheet is never accepted.
+        if row.get("sheet") not in (None, "", "小订首销平销by天"):
             continue
         if row.get("stage") != "首销":
             continue

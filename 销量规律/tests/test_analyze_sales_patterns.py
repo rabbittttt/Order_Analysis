@@ -377,6 +377,14 @@ class UnifiedDailyTests(unittest.TestCase):
     def resolved(self, rows, models=()):
         headers = ['代际名','二级代际名','日期','订单阶段','生命周期','字段来源',
                    '小订数量','大定','留存大定','小转大','直接大定','交车锁单']
+        # The production reader must not infer an order stage from a raw label
+        # when model boundaries are absent.  Most resolved-fixture tests are
+        # about provenance/deduplication, so give their default model a real
+        # post-launch window explicitly; tests that exercise missing metadata
+        # pass their own model rows.
+        if not models:
+            models = [dict(代际名='新代际',小订开始='2025-08-01',小订结束='2025-08-31',
+                           首销开始='2025-01-01',首销结束='2025-07-31')]
         return self.read(rows,models,headers=headers)
 
     def resolved_row(self, **changes):
@@ -392,6 +400,9 @@ class UnifiedDailyTests(unittest.TestCase):
 
     def new_read(self, rows, models=(),判定日='2025-12-31', headers=None):
         headers = headers or self.NEW_HEADERS
+        if not models:
+            models = [dict(代际名='新代际',二级代际名='纯电版',小订开始='2025-08-01',
+                           小订结束='2025-08-31',首销开始='2025-01-01',首销结束='2025-12-31')]
         model_head = ['代际名','二级代际名','首销开始','首销结束','小订开始','小订结束',
                       '品牌','产品档位','能源类型']
         model_head = list(dict.fromkeys(model_head + [k for r in models for k in r]))
@@ -513,12 +524,15 @@ class UnifiedDailyTests(unittest.TestCase):
                          留存大定=12,净大定=12,交车锁单=8),
         ]
         panel, _ = self.new_read(rows)
-        self.assertEqual({r['date'] for r in panel}, {date(2025,8,3)})
-        valid = panel
-        self.assertEqual({r['metric']: r['value'] for r in valid},
-                         {'小订数量': 11, '大定': 88, '留存大定': 12,
-                          '交车锁单': 8})
-        self.assertEqual({r['stage'] for r in valid}, {'小订阶段','平销'})
+        # Raw labels are audit hints only.  All three rows have an order value
+        # and fall in the fixture's launch window, so they are retained even
+        # when the source label is unknown/blank.  Reference columns still do
+        # not become metrics.
+        self.assertEqual({r['date'] for r in panel},
+                         {date(2025,8,1),date(2025,8,2),date(2025,8,3)})
+        self.assertEqual({r['stage'] for r in panel}, {'小订阶段','首销'})
+        self.assertEqual({r['metric'] for r in panel},
+                         {'小订数量','大定','留存大定','交车锁单'})
         self.assertNotIn('小订退订', {r['metric'] for r in panel})
         self.assertNotIn('首销分时核对', {r['metric'] for r in panel})
 
@@ -544,6 +558,69 @@ class UnifiedDailyTests(unittest.TestCase):
         self.assertEqual((small['brand'], small['segment'], small['energy']), ('品牌甲','SUV','纯电'))
         self.assertEqual(audit['复合阶段按指标拆分'], 3)
 
+    def test_new_schema_rebuilds_composite_stage_from_date_and_present_fields(self):
+        models = [dict(代际名='新代际',二级代际名='纯电版',小订开始='2025-08-01',
+                       小订结束='2025-08-05',首销开始='2025-08-05',首销结束='2025-08-07')]
+        rows = [
+            # Raw labels are deliberately wrong: the date and fields are the
+            # source of truth for the derived stage.
+            self.new_row(日期=date(2025,8,1),订单阶段='平销',生命周期=None,
+                         小订=10,留存大定=20,交车锁单=8),
+            self.new_row(日期=date(2025,8,5),订单阶段='首销前',生命周期=None,
+                         小订=11,留存大定=21,交车锁单=9),
+            self.new_row(日期=date(2025,8,7),订单阶段='小订',生命周期=None,
+                         小订=None,留存大定=22,交车锁单=10),
+            self.new_row(日期=date(2025,8,8),订单阶段='首销',生命周期=None,
+                         小订=None,留存大定=23,交车锁单=11),
+        ]
+        panel, audit = self.new_read(rows, models)
+        stage_by_date = {(r['date'], r['metric']): r['stage'] for r in panel}
+        self.assertEqual(stage_by_date[(date(2025,8,1),'小订数量')], '小订阶段')
+        self.assertNotIn((date(2025,8,1),'留存大定'), stage_by_date)
+        self.assertEqual(stage_by_date[(date(2025,8,5),'小订数量')], '小订阶段')
+        self.assertEqual(stage_by_date[(date(2025,8,5),'留存大定')], '首销')
+        self.assertEqual(stage_by_date[(date(2025,8,7),'留存大定')], '首销')
+        self.assertEqual(stage_by_date[(date(2025,8,8),'留存大定')], '平销')
+        self.assertEqual(audit['复合阶段按指标拆分'], 5)
+        self.assertEqual(audit['阶段标签与日期字段推导不一致'], 4)
+
+    def test_new_schema_same_model_batches_match_small_and_order_windows_independently(self):
+        # The same model name can have overlapping generations whose small
+        # order and launch windows do not start on the same day.  At 8/7 the
+        # small-order value belongs to batch B while the order values still
+        # belong to batch A.  A single raw-label-based match would lose the
+        # small value or assign both metrics to one batch.
+        models = [
+            dict(代际名='新代际',二级代际名='批次A',小订开始='2025-08-01',小订结束='2025-08-03',
+                 首销开始='2025-08-01',首销结束='2025-08-20'),
+            dict(代际名='新代际',二级代际名='批次B',小订开始='2025-08-05',小订结束='2025-08-10',
+                 首销开始='2025-08-10',首销结束='2025-08-20'),
+        ]
+        row = self.new_row(二级代际名=None,日期=date(2025,8,7),订单阶段='小订/首销',生命周期=None,
+                           小订=11,小订数量=None,大定=None,小转大=None,直接大定=None,
+                           留存大定=21,净大定=None,交车锁单=9,
+                           字段来源='小订=小订.xlsx｜by天；留存大定=首销.xlsx｜by天；'
+                                 '交车锁单=首销.xlsx｜by天')
+        panel, _ = self.new_read([row], models)
+        small = next(r for r in panel if r['metric']=='小订数量')
+        net = next(r for r in panel if r['metric']=='留存大定')
+        lock = next(r for r in panel if r['metric']=='交车锁单')
+        self.assertEqual((small['stage'],small['cycle'],small['life']),
+                         ('小订阶段','2025-08-05',3))
+        self.assertEqual((net['stage'],net['cycle'],net['life']),
+                         ('首销','2025-08-01',7))
+        self.assertEqual((lock['stage'],lock['cycle'],lock['life']),
+                         ('首销','2025-08-01',7))
+
+    def test_new_schema_missing_launch_boundary_is_unknown_but_small_order_is_kept(self):
+        models = [dict(代际名='新代际',二级代际名='纯电版',小订开始='2025-08-01',
+                       小订结束=None,首销开始='2025-08-05',首销结束=None)]
+        row = self.new_row(日期=date(2025,8,5),订单阶段='首销',生命周期=None,
+                           小订=11,留存大定=21,交车锁单=9)
+        panel, _ = self.new_read([row], models)
+        self.assertEqual({r['metric'] for r in panel}, {'小订数量'})
+        self.assertEqual(panel[0]['stage'], '小订阶段')
+
     def test_resolved_sources_are_metric_specific_and_values_are_not_reselected(self):
         panel,audit=self.resolved([self.resolved_row(大定=12)])
         net=next(r for r in panel if r['metric']=='留存大定')
@@ -555,13 +632,21 @@ class UnifiedDailyTests(unittest.TestCase):
         self.assertEqual(audit['字段级来源表已识别'],1)
 
     def test_resolved_secondary_models_keep_distinct_values_and_properties(self):
-        models=[dict(代际名='新代际',二级代际名='增程版',品牌='品牌甲',产品档位='SUV',能源类型='增程'),
-                dict(代际名='新代际',二级代际名='纯电版',品牌='品牌甲',产品档位='SUV',能源类型='纯电')]
+        models=[dict(代际名='新代际',二级代际名='增程版',品牌='品牌甲',产品档位='SUV',能源类型='增程',
+                     小订开始='2025-08-01',小订结束='2025-08-31',首销开始='2025-01-01',首销结束='2025-07-31'),
+                dict(代际名='新代际',二级代际名='纯电版',品牌='品牌甲',产品档位='SUV',能源类型='纯电',
+                     小订开始='2025-08-01',小订结束='2025-08-31',首销开始='2025-01-01',首销结束='2025-07-31')]
         panel,audit=self.resolved([self.resolved_row(二级代际名='增程版'),
                                    self.resolved_row(二级代际名='纯电版',留存大定=20)],models)
         self.assertEqual({r['model'] for r in panel},{'增程版','纯电版'})
         self.assertEqual({r['model']:r['energy'] for r in panel},{'增程版':'增程','纯电版':'纯电'})
         self.assertEqual(audit['属性冲突车型数'],0)
+
+    def test_resolved_multiple_undated_model_rows_are_not_first_row_wins(self):
+        models = [dict(代际名='新代际',二级代际名='批次A'),
+                  dict(代际名='新代际',二级代际名='批次B')]
+        with self.assertRaisesRegex(ValueError,'车型阶段日期冲突'):
+            self.resolved([self.resolved_row()], models)
 
     def test_resolved_composite_stage_uses_each_metric_window(self):
         row=self.resolved_row(订单阶段='小订/首销',日期=date(2025,9,1),生命周期='D32',小订数量=30,
@@ -573,14 +658,15 @@ class UnifiedDailyTests(unittest.TestCase):
         net=next(r for r in panel if r['metric']=='留存大定')
         self.assertEqual((small['stage'],small['cycle'],small['life']),('小订阶段','2025-09-01',1))
         self.assertEqual((net['stage'],net['cycle'],net['life']),('首销','2025-08-01',32))
+        regular_models=[dict(代际名='新代际',小订开始='2025-08-01',小订结束='2025-08-31',
+                             首销开始='2025-01-01',首销结束='2025-07-31')]
         regular,_=self.resolved([self.resolved_row(订单阶段='小订/平销',小订数量=0,
-                                字段来源='小订数量=小订.xlsx｜by天；留存大定=大定.xlsx｜by天；交车锁单=锁单.xlsx｜by天')])
+                                字段来源='小订数量=小订.xlsx｜by天；留存大定=大定.xlsx｜by天；交车锁单=锁单.xlsx｜by天')],
+                                regular_models)
         self.assertEqual({r['stage'] for r in regular},{'小订阶段','平销'})
         outside,_=self.resolved([self.resolved_row(订单阶段='首销',日期=date(2025,10,1),生命周期='D62',
                                小订数量=30,字段来源='小订数量=小订.xlsx｜by天；留存大定=首销.xlsx｜by天')],models)
-        small=next(r for r in outside if r['metric']=='小订数量')
-        self.assertIsNone(small['life'])
-        self.assertEqual(small['cycle'],'小订阶段')
+        self.assertNotIn('小订数量', {r['metric'] for r in outside})
 
     def test_resolved_missing_metric_source_is_not_borrowed_and_zero_is_preserved(self):
         row=self.resolved_row(留存大定=0,交车锁单=0,字段来源='留存大定=大定.xlsx｜by天')
@@ -600,6 +686,52 @@ class UnifiedDailyTests(unittest.TestCase):
             self.resolved([self.resolved_row(字段来源='留存大定=a；留存大定=b')])
         with self.assertRaisesRegex(ValueError,'重复键冲突'):
             self.resolved([self.resolved_row(),self.resolved_row(留存大定=99)])
+
+
+class HolidayScopeEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.start,self.end=date(2025,4,10),date(2025,4,12)
+        self.cal=dict(years={2025},events=[(2025,'测试节',self.start,self.end)],
+                      holidays={d:'测试节' for d in m.span(self.start,self.end)},work=set())
+
+    def observations(self,model,scale,during):
+        return [dict(model=model,metric='留存大定',stage='平销',cycle='平销',source='实测',life=None,
+                     date=d,value=scale*(d.weekday()+1)*(during if self.start<=d<=self.end else 1))
+                for d in m.span(self.start-timedelta(days=40),self.end+timedelta(days=40))]
+
+    def test_daily_components_reconcile_model_indexes_and_volume_weighted_scope(self):
+        panel=self.observations('A',100,2)+self.observations('B',900,1)
+        panel += [dict(r,metric='交车锁单',value=r['value']*3) for r in self.observations('A',100,4)]
+        rows=m.analyze(panel,self.cal)['holidays']
+        self.assertEqual(len(rows),3)
+        net=[r for r in rows if r['metric']=='留存大定']
+        by_date={}
+        for row in rows:
+            self.assertEqual(len(row['daily']),17)
+            phases={'before':[],'during':[],'after':[]}
+            for daily in row['daily']:
+                day=daily['date']; phase='before' if day<self.start else 'after' if day>self.end else 'during'
+                phases[phase].append(daily['actual']/daily['expected'])
+            for phase,values in phases.items(): self.assertAlmostEqual(mean(values),row[phase])
+        for row in net:
+            for daily in row['daily']:
+                values=by_date.setdefault(daily['date'],[0,0])
+                values[0]+=daily['actual'];values[1]+=daily['expected']
+        scope=mean(actual/expected for d,(actual,expected) in by_date.items() if self.start<=d<=self.end)
+        self.assertAlmostEqual(scope,1.1)
+        self.assertAlmostEqual(mean(r['during'] for r in net),1.5)
+        self.assertEqual(next(r['during'] for r in rows if r['metric']=='交车锁单'),4)
+
+    def test_zero_actual_is_valid_but_missing_or_negative_target_is_not(self):
+        zero=self.observations('零实际',100,0)
+        missing=[r for r in self.observations('缺日',200,1) if r['date']!=self.start]
+        negative=self.observations('负值',300,1)
+        next(r for r in negative if r['date']==self.start)['value']=-1
+        rows=m.analyze(zero+missing+negative,self.cal)['holidays']
+        self.assertEqual([r['model'] for r in rows],['零实际'])
+        self.assertEqual(rows[0]['during'],0)
+        self.assertTrue(all(d['actual']==0 and d['expected']>0 for d in rows[0]['daily']
+                            if self.start<=d['date']<=self.end))
 
 
 class WebpageLaunchTests(unittest.TestCase):

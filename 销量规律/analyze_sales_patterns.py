@@ -60,8 +60,6 @@ RESOLVED_METRIC_COLUMNS = {
     **{metric: tuple(column for column, _ in aliases)
        for metric, aliases in ORDER_METRIC_COLUMNS.items()},
 }
-RESOLVED_STAGES = {'小订', '小订阶段', '首销前', '首销', '平销'}
-
 
 def _workbook_records(wb, name):
     rows = iter(wb[name].iter_rows(values_only=True))
@@ -93,6 +91,14 @@ def _daily_source_rank(row, metric, model_info, cutoff):
 
 def _match_model_phase(records, row, day):
     """Match repeated model entries by original name and period, not row order."""
+    records = list(records)
+    # Keep an undated model row available.  It is useful evidence for the
+    # explicit "阶段未知" rule: a missing boundary must not be treated as a
+    # valid launch period merely because the row has an order value.
+    if records and not any(dt(r.get('首销开始')) or dt(r.get('小订开始')) for r in records):
+        if len(records) > 1:
+            raise ValueError('车型阶段日期冲突：'+str(row.get('订单分析代际名') or row.get('代际名')))
+        return records[0]
     dated = [r for r in records if dt(r.get('首销开始')) or dt(r.get('小订开始'))]
     same_name = [r for r in dated if row.get('历史传播名') and
                  r.get('历史传播名') == row['历史传播名']]
@@ -110,6 +116,57 @@ def _match_model_phase(records, row, day):
     if len(boundaries) > 1:
         raise ValueError('车型阶段日期冲突：'+str(row.get('订单分析代际名')))
     return matches[0]
+
+
+_ORDER_STAGE_FIELDS = frozenset({
+    '大定', '留存大定', '净大定', '小转大', '直接大定', '交车锁单',
+    '小订退订', '退订数量', '首销期退订', '首销期退订数量',
+})
+
+
+def _derived_stage_tags(row, day, small_info, order_info, columns):
+    """Derive independent small-order and order stages from row data.
+
+    The workbook's stage label is retained as an audit hint only.  A small
+    order tag is based on the presence of its own value and its small-order
+    window; the order tag is based on any order/return field and the launch
+    boundaries.  The two tags are then concatenated by callers, so a day can
+    legitimately be ``小订/首销``.
+    """
+    small_column = columns.get('小订数量')
+    small_value_present = bool(small_column and row.get(small_column) is not None)
+    small_info = small_info or {}
+    order_info = order_info or {}
+    if not small_info and not order_info:
+        # No model metadata means both order boundaries are missing.  Keep a
+        # small-order value (the user explicitly allows missing small bounds),
+        # but mark order data unknown so it cannot enter launch pacing.
+        tags = ['小订'] if small_value_present else []
+        if any(field in row and row.get(field) is not None
+               for field in (_ORDER_STAGE_FIELDS | {metric for metric in columns
+                                                     if metric != '小订数量'})):
+            tags.append('阶段未知')
+        return tags
+    small_start, small_end = dt(small_info.get('小订开始')), dt(small_info.get('小订结束'))
+    tags = []
+    if small_value_present and (not small_start or not small_end or
+                                small_start <= day <= small_end):
+        tags.append('小订')
+
+    order_fields = set(_ORDER_STAGE_FIELDS)
+    order_fields.update(metric for metric in columns if metric != '小订数量')
+    has_order_value = any(field in row and row.get(field) is not None for field in order_fields)
+    if has_order_value:
+        launch_start, launch_end = dt(order_info.get('首销开始')), dt(order_info.get('首销结束'))
+        if not launch_start or not launch_end:
+            tags.append('阶段未知')
+        elif day < launch_start:
+            tags.append('首销前')
+        elif day <= launch_end:
+            tags.append('首销')
+        else:
+            tags.append('平销')
+    return tags
 
 
 def _model_name(row):
@@ -186,8 +243,22 @@ def read_resolved_panel(wb, audit):
                 continue
         sources = _field_sources(row.get('字段来源'))
         raw_stage = str(row.get('订单阶段') or '').strip()
-        stages = [part.strip() for part in raw_stage.split('/') if part.strip()]
-        if not stages or any(stage not in RESOLVED_STAGES for stage in stages):
+        records = info.get(str(model), [])
+        # A repeated model can have different small-order and launch batches.
+        # Resolve each stage against its own date window before deriving the
+        # composite tags; matching once from the raw composite label can pick
+        # the launch batch and incorrectly discard a valid small-order value.
+        small_info = _match_model_phase(records, dict(row, 订单阶段='小订'), d)
+        order_info = _match_model_phase(records, dict(row, 订单阶段='首销'), d)
+        # The source stage is an audit hint.  Rebuild it from the row's own
+        # fields and model dates so a same-day small-order + launch row keeps
+        # both tags and launch boundaries remain inclusive.
+        stages = _derived_stage_tags(row, d, small_info, order_info, columns)
+        raw_tags = {('小订' if part == '小订阶段' else part)
+                    for part in raw_stage.split('/') if part}
+        if raw_tags != set(stages):
+            audit['阶段标签与日期字段推导不一致'] += 1
+        if not stages:
             audit['阶段不明确排除'] += 1
             continue
         if row.get('首销分时核对'):
@@ -206,20 +277,26 @@ def read_resolved_panel(wb, audit):
                 audit[metric+'字段来源排除'] += 1
                 continue
             if metric == '小订数量':
+                if '小订' not in stages:
+                    audit[metric+'阶段不明确排除'] += 1
+                    continue
                 stage = '小订阶段'
             else:
-                order_stages = [part for part in stages if part not in ('小订','小订阶段')]
+                order_stages = [part for part in stages if part != '小订']
                 if len(order_stages) != 1 or order_stages[0] not in ('首销', '平销'):
                     audit[metric+'阶段不明确排除'] += 1
                     continue
                 stage = order_stages[0]
             if len(stages)>1: audit['复合阶段按指标拆分'] += 1
-            model_info = _match_model_phase(info.get(str(model), []),dict(row,订单阶段=stage),d)
+            metric_info = _match_model_phase(
+                records,
+                dict(row, 订单阶段=('小订' if stage == '小订阶段' else stage)), d)
             prefix = '小订' if stage == '小订阶段' else '首销'
-            start, end = dt(model_info.get(prefix+'开始')), dt(model_info.get(prefix+'结束'))
+            start, end = dt(metric_info.get(prefix+'开始')), dt(metric_info.get(prefix+'结束'))
             match = re.fullmatch(r'D(\d+)',str(row.get('生命周期') or ''),re.I)
-            same_stage = (raw_stage in ('小订', '小订阶段')) if stage == '小订阶段' else raw_stage == stage
-            life = int(match[1]) if match and len(stages)==1 and same_stage else None
+            same_stage = ((raw_stage in ('小订', '小订阶段')) if stage == '小订阶段'
+                          else raw_stage == stage)
+            life = int(match[1]) if match and len(stages) == 1 and same_stage else None
             anchor = d-timedelta(days=life-1) if life and life>0 else None
             if stage in ('小订阶段','首销') and start and end and start<=d<=end:
                 anchor, life = start,(d-start).days+1
@@ -445,15 +522,16 @@ def analyze(panel,c):
             target=list(span(a-timedelta(days=7),b+timedelta(days=7)))
             if not all(d in days for d in target): continue
             controls=[d for d in days if ordinary(d,c) and (a-timedelta(days=35)<=d<=a-timedelta(days=8) or b+timedelta(days=8)<=d<=b+timedelta(days=35)) and not any(x-timedelta(days=7)<=d<=z+timedelta(days=7) for _,_,x,z in c['events'])]
-            ratios={}; used=set()
+            ratios={}; expected_by_day={}; used=set()
             for d in target:
                 cs=[x for x in controls if x.weekday()==d.weekday()]
                 if len(cs)<4 or not any(x<a for x in cs) or not any(x>b for x in cs): break
                 expected=mean(days[x]['value'] for x in cs)
                 if expected<=0: break
-                ratios[d]=days[d]['value']/expected; used.update(cs)
+                ratios[d]=days[d]['value']/expected; expected_by_day[d]=expected; used.update(cs)
             else:
-                out['holidays'].append(dict(base,year=y,holiday=name,before=mean(v for d,v in ratios.items() if d<a),during=mean(v for d,v in ratios.items() if a<=d<=b),after=mean(v for d,v in ratios.items() if d>b),control_days=len(used)))
+                out['holidays'].append(dict(base,year=y,holiday=name,before=mean(v for d,v in ratios.items() if d<a),during=mean(v for d,v in ratios.items() if a<=d<=b),after=mean(v for d,v in ratios.items() if d>b),control_days=len(used),
+                    daily=[dict(date=d,actual=days[d]['value'],expected=expected_by_day[d]) for d in target]))
     return out
 
 # Comparisons always retain each order metric and sales stage separately.
@@ -726,7 +804,8 @@ def main():
     log(f'源数据读取及校验完成：有效观测 {len(panel):,} 条，车型 {len({r["model"] for r in panel}):,} 个，用时 {time.perf_counter()-stage:.1f} 秒')
     log('读取工作表：'+'、'.join(sorted({r['sheet'] for r in panel})))
     for key in ('跨来源候选未累加', '累计快照或参考曲线排除', '未来或超过数据判定日期排除',
-                '未结束或未知日期状态排除', '数据判定当日未完整排除', '阶段不明确排除'):
+                '未结束或未知日期状态排除', '数据判定当日未完整排除', '阶段不明确排除',
+                '阶段标签与日期字段推导不一致'):
         if audit.get(key): log(f'{key}：{audit[key]:,} 条')
     log(f'数据日期范围：{min(r["date"] for r in panel)} 至 {max(r["date"] for r in panel)}')
 

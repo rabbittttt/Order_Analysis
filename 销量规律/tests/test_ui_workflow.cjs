@@ -148,6 +148,68 @@ async function capture(page, filename) {
       assert.equal(await fixture.locator("#backtestChart").getAttribute("tabindex"),"0");
       await fixture.close();await reset();
     });
+    await check("节假日范围汇总按日合计实际与基准并联动左侧筛选（测试夹具）", async () => {
+      await page.locator("#nav-patterns").click();await page.locator('[data-pattern="holiday"]').click();await capture(page,"sales-holiday-actual.png");
+      const fixture = await context.newPage();
+      const fixtureErrors=[];fixture.on("pageerror",e=>fixtureErrors.push(e.message));
+      await fixture.addInitScript(() => {
+        let value;
+        Object.defineProperty(window,"PATTERNS_DATA",{configurable:true,get:()=>value,set:incoming=>{
+           const source="UI节假日来源（非业务数据）";
+           const metricDefs=[{key:"留存大定",label:"净大定",source_label:"留存大定",available:true},{key:"交车锁单",label:"锁单",source_label:"交车锁单",available:true}];
+           const models=[{model:"UI车型A",category:"UI分类A",values:{"留存大定":[200,100],"交车锁单":[100,100]}},{model:"UI车型B",category:"UI分类B",values:{"留存大定":[900,900],"交车锁单":[600,900]}}];
+           const events=[
+             {year:2024,holiday:"UI节日",start:"2024-01-08",end:"2024-01-10"},
+             {year:2024,holiday:"UI零值节日",start:"2024-01-25",end:"2024-01-27"},
+             {year:2024,holiday:"UI旧网页节日",start:"2024-02-10",end:"2024-02-12"},
+             {year:2024,holiday:"UI冲突节日",start:"2024-02-25",end:"2024-02-27"}
+           ];
+           const dates=Array.from({length:90},(_,i)=>new Date(Date.UTC(2024,0,i+1)).toISOString().slice(0,10));
+           const series=metricDefs.flatMap(def=>models.flatMap(m=>["平销","首销"].flatMap(stage=>dates.map(date=>({model:m.model,metric:def.key,stage,cycle:"UI节日周期",source,date,value:m.values[def.key][0],life:null})))));
+           const entries=models.map(m=>({model:m.model,category:m.category,metrics:metricDefs.map(x=>x.key),brand:"UI测试品牌",segment:"测试",energy:"测试"}));
+           const windowDates=event=>{const first=Date.parse(event.start+"T00:00:00Z")-7*86400000,last=Date.parse(event.end+"T00:00:00Z")+7*86400000,out=[];for(let ts=first;ts<=last;ts+=86400000)out.push(new Date(ts).toISOString().slice(0,10));return out;};
+           const dailyFor=(m,event,metricKey)=>windowDates(event).map(date=>({date,actual:event.holiday==="UI零值节日"&&m.model==="UI车型A"?0:m.values[metricKey][0],expected:m.values[metricKey][1]}));
+           const holidayRows=metricDefs.flatMap(def=>events.flatMap(event=>models.flatMap(m=>{
+             if(event.holiday==="UI零值节日"&&m.model==="UI车型B")return [];
+             const base={model:m.model,metric:def.key,stage:"平销",cycle:"UI节日周期",source,year:event.year,holiday:event.holiday,before:m.values[def.key][0]/m.values[def.key][1],during:m.values[def.key][0]/m.values[def.key][1],after:m.values[def.key][0]/m.values[def.key][1],control_days:14};
+             if(event.holiday==="UI旧网页节日"&&m.model==="UI车型A")return [base];
+             const daily=dailyFor(m,event,def.key),row={...base,daily};
+             if(event.holiday==="UI冲突节日"&&m.model==="UI车型A")return [row,{...row,daily:daily.map((x,i)=>i===0?{...x,actual:x.actual+1}:x)}];
+             return [row];
+           })));
+          const results=Object.fromEntries(Object.keys(incoming.results).map(k=>[k,k==="holidays"?holidayRows:k==="model_classes"?entries:[]]));
+           value={...incoming,meta:{...incoming.meta,source_name:"UI节假日测试夹具",date_start:dates[0],date_end:dates[dates.length-1],calendar_events:events},series,metrics:metricDefs,grouping:{entries,categories:[...new Set(entries.map(x=>x.category))],reason:"UI测试夹具"},rules:[],results,forecast:{profiles:[],backtests:[],notes:[]}};
+        }});
+      });
+      await fixture.goto(url);await fixture.locator("#nav-patterns").click();await fixture.locator('[data-pattern="holiday"]').click();
+       let scope=fixture.locator("#patternPanels .pattern-card").first();if(!(await scope.count()))throw new Error("holiday fixture render failed: "+fixtureErrors.join(" | "));
+       const scopeRows=async()=>scope.locator("tbody tr").evaluateAll(nodes=>nodes.map(tr=>[...tr.cells].map(td=>td.innerText.trim())));
+       const scopeRow=async holiday=>{const row=(await scopeRows()).find(cells=>cells[0]===holiday);assert.ok(row,"missing holiday row: "+holiday);return row;};
+       assert.equal(await scope.locator(".bar-row").count(),9);
+       assert.equal(await scope.locator(".pattern-chart").getAttribute("tabindex"),"0");
+       assert.equal(await scope.locator(".bar-label").first().innerText(),"2024年UI节日 · 节前");
+       await capture(fixture,"sales-holiday-fixture.png");
+      let text=await scope.innerText();
+      assert.ok(text.includes("鸿蒙智行全部车型"));assert.ok(text.includes("UI节日"));assert.ok(text.includes("110%"));assert.ok(text.includes("2"));
+       let row=await scopeRow("UI节日");assert.deepEqual(row.slice(3,8),["110%","110%","110%","2","2"]);
+       row=await scopeRow("UI零值节日");assert.equal(row[3],"0%");assert.equal(row[6],"1");assert.match(row[8],/无历史对照 1\/2/);
+       row=await scopeRow("UI冲突节日");assert.equal(row[6],"1");assert.equal(row[7],"2");assert.match(row[8],/逐日对照冲突 1\/2/);
+       await fixture.locator("#categoryFilter").selectOption("UI分类B");await fixture.locator('[data-pattern="holiday"]').click();
+       text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("UI分类B"));assert.ok(text.includes("100%"));
+       await fixture.locator("#categoryFilter").selectOption("__ALL__");await fixture.locator('[data-metric="交车锁单"]').click();await fixture.locator('[data-pattern="holiday"]').click();
+        text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("70%"));row=await scopeRow("UI节日");assert.deepEqual(row.slice(3,8),["70%","70%","70%","2","2"]);
+       await fixture.locator('[data-metric="留存大定"]').click();await fixture.locator("#modelFilter").selectOption("UI车型A");await fixture.locator('[data-pattern="holiday"]').click();
+        text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("UI车型A"));assert.ok(text.includes("200%"));row=await scopeRow("UI节日");assert.deepEqual(row.slice(3,8),["200%","200%","200%","1","1"]);
+      await fixture.locator("#modelFilter").selectOption("UI车型B");await fixture.locator('[data-pattern="holiday"]').click();
+       text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("UI车型B"));assert.ok(text.includes("100%"));
+       await fixture.locator("#modelFilter").selectOption("__ALL__");await fixture.locator("#stageFilter").selectOption("首销");await fixture.locator('[data-pattern="holiday"]').click();
+       text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("0/2"));assert.ok(text.includes("无历史对照"));
+       await fixture.locator("#stageFilter").selectOption("平销");await fixture.locator("#dateStart").fill("2024-01-02");await fixture.locator("#dateStart").dispatchEvent("change");await fixture.locator('[data-pattern="holiday"]').click();
+       text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(!text.includes("UI节日"));assert.ok(text.includes("UI零值节日"));
+       await fixture.locator("#dateStart").fill("2024-01-01");await fixture.locator("#dateStart").dispatchEvent("change");
+       text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("UI旧网页节日"),text);assert.ok(text.includes("旧网页缺少逐日基准"),text);assert.ok(text.includes("UI冲突节日"),text);assert.ok(text.includes("逐日对照冲突"),text);
+       assert.deepEqual(fixtureErrors,[]);await fixture.close();await reset();
+    });
     await check("刷新和浏览器后退保留页面、规律类别与筛选", async () => {
       await page.locator("#nav-patterns").click(); await page.locator('[data-pattern="week"]').click();
       await page.locator("#modelFilter").selectOption({index: 1});
@@ -166,6 +228,13 @@ async function capture(page, filename) {
       assert.equal(await page.locator('[data-pattern="launch"]').getAttribute("aria-selected"), "true");
       await page.keyboard.press("ArrowRight");
       assert.equal(await page.locator('[data-pattern="holiday"]').getAttribute("aria-selected"), "true");
+      await page.locator("#categoryFilter").selectOption("__ALL__");
+      await page.locator("#modelFilter").selectOption("__ALL__");
+      await page.locator('[data-pattern="holiday"]').click();
+      const holidayScopeText = await page.locator("#patternPanels").innerText();
+      assert.ok(holidayScopeText.includes("当前筛选范围节假日指数"));
+      assert.ok(holidayScopeText.includes("鸿蒙智行全部车型") || holidayScopeText.includes("范围有效事件"));
+      assert.ok(holidayScopeText.includes("有效车型"));
       assert.equal(await page.locator(".topbar .main-nav .nav-item").count(), 4);
       assert.equal(await page.locator(".sidebar .main-nav").count(), 0);
       assert.equal(await page.locator(".workflow-guide").count(), 0);

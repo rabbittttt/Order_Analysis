@@ -487,6 +487,89 @@ function holidayPhaseRows(metric){
     n:g.rows.length
   }));
 }
+function holidayScopeLabel(){
+  if(state.model!=="__ALL__") return String(state.model);
+  if(state.category!=="__ALL__") return String(state.category);
+  return "鸿蒙智行全部车型";
+}
+function holidayScopeModels(metric){
+  return unique(currentSeries(metric).map(r=>String(r.model||"")).filter(Boolean));
+}
+function holidayDailyMap(row){
+  if(!Array.isArray(row&&row.daily))return {map:null,reason:"缺少逐日基准"};
+  const map=new Map();
+  for(const item of row.daily){
+    const d=dateOnly(item&&item.date),actual=num(item&&item.actual),expected=num(item&&item.expected);
+    if(!d||actual===null||expected===null)return {map:null,reason:"逐日值不完整"};
+    const previous=map.get(d);
+    if(previous&&(previous.actual!==actual||previous.expected!==expected))return {map:null,reason:"逐日重复值冲突"};
+    map.set(d,{actual,expected});
+  }
+  return {map,reason:""};
+}
+function holidayScopeRows(metric){
+  const selected=holidayScopeModels(metric),selectedSet=new Set(selected),raw=holidayRows(metric),rows=[];
+  for(const event of currentEvents()){
+    const allEventRows=raw.filter(r=>Number(r.year)===Number(event.year)&&String(r.holiday)===String(event.holiday));
+    const eventRows=allEventRows.filter(r=>selectedSet.has(String(r.model)));
+    const byModel=new Map();
+    for(const row of eventRows){const model=String(row.model);if(!byModel.has(model))byModel.set(model,[]);byModel.get(model).push(row);}
+    const target=[...Array(dateRangeDays(isoAdd(event.start,-7),isoAdd(event.end,7)))].map((_,i)=>isoAdd(event.start,i-7));
+    const validRows=[];let legacyMissingModels=0,noHistoryModels=0,invalidModels=0,conflictModels=0;
+    const sameWindow=(left,right)=>target.every(d=>{
+      const a=left.get(d),b=right.get(d);
+      return a&&b&&a.actual===b.actual&&a.expected===b.expected;
+    });
+    for(const model of selected){
+      const candidates=byModel.get(model)||[];
+      if(!candidates.length){noHistoryModels++;continue;}
+      const completeMaps=[];let legacyMissing=false,invalidCandidate=false,internalConflict=false;
+      for(const row of candidates){
+        const daily=holidayDailyMap(row);
+        if(!daily.map){
+          if(daily.reason==="缺少逐日基准")legacyMissing=true;
+          else invalidCandidate=true;
+          if(daily.reason==="逐日重复值冲突")internalConflict=true;
+          continue;
+        }
+        if(target.every(d=>daily.map.has(d)&&daily.map.get(d).actual>=0&&daily.map.get(d).expected>0))completeMaps.push(daily.map);
+        else invalidCandidate=true;
+      }
+      if(internalConflict){conflictModels++;continue;}
+      if(completeMaps.length){
+        const reference=completeMaps[0];
+        if(completeMaps.every(map=>sameWindow(reference,map)))validRows.push({row:candidates[0],map:reference});
+        else conflictModels++;
+      }else if(legacyMissing)legacyMissingModels++;
+      else if(invalidCandidate)invalidModels++;
+      else invalidModels++;
+    }
+    const phaseAverage=(from,to)=>{
+      let total=0,count=0;
+      for(const d of target){if(d<from||d>to)continue;let actual=0,expected=0;
+        for(const item of validRows){const value=item.map.get(d);if(!value){return null;}actual+=value.actual;expected+=value.expected;}
+        if(expected<=0)return null;total+=actual/expected;count++;
+      }
+      return count?total/count:null;
+    };
+    const before=phaseAverage(isoAdd(event.start,-7),isoAdd(event.start,-1));
+    const during=phaseAverage(event.start,event.end);
+    const after=phaseAverage(isoAdd(event.end,1),isoAdd(event.end,7));
+    const validCount=validRows.length,selectedCount=selected.length;
+    let status="有效";
+    if(!selectedCount)status="当前筛选无车型";
+    else if(validCount<selectedCount){
+      const notes=[];
+      if(legacyMissingModels)notes.push("旧网页缺少逐日基准，请重新运行分析脚本（"+legacyMissingModels+"/"+selectedCount+"）");
+      if(conflictModels)notes.push("逐日对照冲突 "+conflictModels+"/"+selectedCount);
+      if(invalidModels)notes.push("日窗口不完整 "+invalidModels+"/"+selectedCount);
+      if(noHistoryModels)notes.push("无历史对照 "+noHistoryModels+"/"+selectedCount);
+      status=(validCount?"部分车型有完整对照（":"无完整节假日对照（")+validCount+"/"+selectedCount+")"+(notes.length?"；"+notes.join("；"):"");
+    }
+    rows.push({event:String(event.year)+"年"+String(event.holiday),period:String(event.year)+"|"+String(event.holiday),holiday:event.holiday,year:event.year,scope:holidayScopeLabel(),before,during,after,selected_models:selectedCount,valid_models:validCount,invalid_models:selectedCount-validCount,legacy_missing_models:legacyMissingModels,no_history_models:noHistoryModels,conflict_models:conflictModels,requires_daily:legacyMissingModels>0,status,n:validCount});
+  }
+  return rows;
+}
 function renderPatternTabs(){
   document.querySelectorAll("[data-pattern]").forEach(b=>{b.classList.toggle("is-active",b.dataset.pattern===state.pattern);b.setAttribute("aria-selected",b.dataset.pattern===state.pattern?"true":"false");b.tabIndex=b.dataset.pattern===state.pattern?0:-1;});
   $("patternPanels").setAttribute("aria-labelledby","pattern-"+state.pattern);
@@ -534,7 +617,7 @@ function renderPatternTabs(){
     c=card(container,"首销生命周期补充","生命周期规律按完整首7日批次计算，不并入平销。");
     const lif=lifecycleRows(metric);const lt=el("div","table-wrap","",c);makeTable(lt,["车型","首销批次","D1 / D3–D7 日均","首2天占首7天","有效批次数"],lif.map(r=>[r.model,r.cycle,fmtPct(r.d1_ratio),fmtPct(r.first2_share),fmtInt(lif.length)]),"该阶段没有完整生命周期样本。");
   }else if(state.pattern==="launch"){
-    intro.textContent="按首销开始日对齐：第1周为D1–D7，第2周为D8–D14，第3周为D15–D21。净大定、锁单分别比较本周与前周；前后两个窗口均须完整落在所选日期内。";
+    intro.textContent="取自‘小订首销平销by天’；小订/首销等组合标签按指标拆分，净大定与锁单使用首销部分（含起止当日）。按首销开始日对齐：第1周为D1–D7，第2周为D8–D14，第3周为D15–D21。净大定、锁单分别比较本周与前周；前后两个窗口均须完整落在所选日期内。";
     const launch=resultBase("launch_pacing",metric).filter(r=>dateOnly(r.previous_start)>=state.start&&dateOnly(r.end)<=state.end);
     const valid=launch.filter(r=>r.status==="有效"&&num(r.ratio)!==null);
     const patterns=unique(launch.map(r=>r.pattern));
@@ -555,21 +638,29 @@ function renderPatternTabs(){
     makeTable(dt,["车型","比较","前期日期","本期日期","前期观测量","本期观测量","本期/前期","前期天数","本期天数","状态","来源"],launch.map(r=>[r.model,r.pattern,dateOnly(r.previous_start)+"～"+dateOnly(r.previous_end),dateOnly(r.start)+"～"+dateOnly(r.end),fmtNum(r.previous),fmtNum(r.current),fmtPct(r.ratio),fmtInt(r.previous_observed)+"/7",fmtInt(r.current_observed)+"/7",r.status,r.source]),"该阶段和日期窗没有首销周证据。");
   }else if(state.pattern==="holiday"){
     intro.textContent="节假日只提供历史解释：与同星期节前/节后对照计算，不视为可直接外推的预测系数。当前日期窗需覆盖节前7日至节后7日；主分析限定平销阶段。";
-    const hs=holidayPhaseRows(metric);
+    const hs=holidayPhaseRows(metric),scopeRows=holidayScopeRows(metric),selectedModels=holidayScopeModels(metric);
     miniKpis($("patternKpis"),[
-      {label:"完整节假日记录",value:fmtInt(holidayRows(metric).length),foot:"同阶段车型周期"},
-      {label:"节日事件",value:fmtInt(unique(hs.map(r=>r.event)).length),foot:"日期窗口完整落入筛选"},
-      {label:"控制日期",value:fmtInt(summary(holidayRows(metric),"control_days").typical),foot:"中位控制日期数"},
+      {label:"范围有效事件",value:fmtInt(scopeRows.filter(r=>r.status==="有效").length),foot:"当前筛选范围："+holidayScopeLabel()},
+      {label:"有效车型·事件数",value:fmtInt(scopeRows.reduce((a,r)=>a+r.valid_models,0)),foot:"按节日事件累计；所选车型数："+fmtInt(selectedModels.length)},
+      {label:"逐车型明细",value:fmtInt(holidayRows(metric).length),foot:"用于核对范围汇总"},
       {label:"适用阶段",value:"平销",foot:state.stage==="平销"?"当前选择为平销":"当前阶段无节日对照"}
     ]);
-    const c=card(container,"节前、节中、节后日均指数","100% 为匹配星期的控制日水平；只显示有效的历史对照。");
+    const scopeCard=card(container,"当前筛选范围节假日指数","范围："+holidayScopeLabel()+"。每日先合计所选车型的实际值与同星期基准，再计算节前、节中、节后日均倍率；不会简单平均车型指数。");
+    const scopeChart=el("div","pattern-chart bar-list","",scopeCard);
+    scopeChart.style.maxHeight="420px";scopeChart.style.marginBottom="16px";
+    scopeChart.tabIndex=0;scopeChart.setAttribute("role","region");scopeChart.setAttribute("aria-label","当前筛选范围节假日指数图，可上下滚动查看各年节日");
+    const scopeBars=[];scopeRows.filter(r=>!r.requires_daily).forEach(r=>[["before","节前"],["during","节中"],["after","节后"]].forEach(([phase,label])=>scopeBars.push({label:r.event+" · "+label,value:r[phase]})));
+    drawBars(scopeChart,scopeBars.filter(x=>num(x.value)!==null),"label","value",fmtPct,"horizontal");
+    const scopeTable=el("div","table-wrap","",scopeCard);
+     makeTable(scopeTable,["节日","年份","范围","节前指数","节中指数","节后指数","有效车型","所选车型","状态"],scopeRows.map(r=>[r.holiday,r.year,r.scope,fmtPct(r.before),fmtPct(r.during),fmtPct(r.after),fmtInt(r.valid_models),fmtInt(r.selected_models),r.status]),"当前日期窗没有可展示的节假日范围汇总；需覆盖节日前后各7日。若提示旧网页缺少逐日基准，请重新运行分析脚本。");
+    const c=card(container,"节前、节中、节后日均指数（逐车型）","100% 为匹配星期的控制日水平；以下明细用于核对范围汇总，不代表全部车型加权结果。");
     if(state.stage!=="平销")el("div","pattern-intro","节假日对照仅基于平销数据。当前筛选阶段为 "+state.stage+"，不会用其他阶段填补。",c);
     const chart=el("div","pattern-chart","",c);
     const pRows=[];
     [["before","节前"],["during","节中"],["after","节后"]].forEach(([phase,label])=>groupedStats(hs,phase,r=>r.holiday,r=>r.period).forEach(x=>pRows.push({label:x.key+label,value:x.median,n:x.periods})));
     drawBars(chart,pRows.filter(x=>num(x.value)!==null),"label","value",fmtPct,"vertical");
     const table=el("div","table-wrap","",c);makeTable(table,["节日","年份","车型","节前日均","节中日均","节后日均","控制日期数","车型批次/来源记录"],hs.map(r=>[r.holiday,r.year,r.model,fmtPct(r.before),fmtPct(r.during),fmtPct(r.after),fmtInt(r.control_days),fmtInt(r.n)]),"当前日期窗没有完整节假日对照；需覆盖节日前后各7日，且该年份节假日日历可用。");
-    const detail=card(container,"节假日原始对照明细","逐条保留车型、阶段、批次和来源，可追溯上方车型等权汇总。");
+    const detail=card(container,"节假日原始对照明细","逐条保留车型、阶段、批次和来源，用于核对上方范围汇总。");
     const detailTable=el("div","table-wrap","",detail);
     makeTable(detailTable,["节日","年份","车型","阶段","批次 / 周期","来源","节前日均指数","节中日均指数","节后日均指数","控制日期数"],holidayRows(metric).map(r=>[r.holiday,r.year,r.model,r.stage,r.cycle,r.source,fmtPct(r.before),fmtPct(r.during),fmtPct(r.after),fmtInt(r.control_days)]),"当前筛选没有完整的节假日原始对照记录。");
   }else{
@@ -609,10 +700,10 @@ function renderSignals(){
   cardEl=el("article","signal-card",null,c);el("div","signal-card-title","月末7天 / 月内前段",cardEl);
   el("strong","signal-value",fmtPct(endSummary.typical),cardEl);
   el("div","signal-detail","完整自然月车型周期记录 "+endSummary.samples+" 条；覆盖 "+endSummary.periods+" 个自然月",cardEl);
-  const h=holidayPhaseRows(state.metric),holidaySummary=summary(h,"during");
+  const h=holidayScopeRows(state.metric),holidaySummary=summary(h,"during");
   cardEl=el("article","signal-card",null,c);el("div","signal-card-title","节中 / 平常星期对照",cardEl);
   el("strong","signal-value",fmtPct(holidaySummary.typical),cardEl);
-  el("div","signal-detail",state.stage==="平销"?"完整节日车型事件 "+holidaySummary.samples+" 条；覆盖 "+holidaySummary.periods+"个事件":"仅平销有节日样本；当前为"+state.stage,cardEl);
+  el("div","signal-detail",state.stage==="平销"?"当前筛选范围有效节日事件 "+holidaySummary.samples+" 条；覆盖 "+holidaySummary.periods+"个事件":"仅平销有节日样本；当前为"+state.stage,cardEl);
 }
 function renderModelCompare(){
   const container=$("modelCompare");clear(container);
