@@ -796,7 +796,21 @@ function renderPatternTabs(){
       {label:"适用阶段",value:"平销",foot:state.stage==="平销"?"当前选择为平销":"当前阶段无节日对照"}
     ]);
     const scopeCard=card(container,"当前筛选范围节假日指数","范围："+holidayScopeLabel()+"。每日先合计所选车型的实际值与同星期基准，再计算节前、节中、节后日均倍率；不会简单平均车型指数。");
-    el("p","card-subtitle","100%基准：对每一天，取节日开始前第8—35天及节日结束后第8—35天中，同星期的普通日销量平均值；排除节假日、调休工作日及其他节日前后7天。每个星期至少4个对照日，且节日前后均有对照。每日指数＝实际销量÷同星期基准；节前7天、节中、节后7天分别取每日指数的平均。对照包含节后日期，仅用于解释历史。",scopeCard);
+    el("p","card-subtitle","每日指数＝当日销量÷同星期基准×100%；100%表示与基准持平，120%表示高20%。范围图先合计有效车型的实际与基准，再相除并按节前、节中、节后分别取日均。",scopeCard);
+    const method=el("details","profile-detail","",scopeCard);
+    const methodSummary=el("summary","","节假日指数怎么算",method);
+    methodSummary.setAttribute("aria-controls","holiday-method-body");
+    const methodBody=el("div","holiday-method-body","",method);methodBody.id="holiday-method-body";
+    [
+      "计算对象：净大定（源字段“留存大定”）与锁单分开；单车型在同口径、平销阶段、批次和来源内计算。",
+      "分段：节前为节日开始前7天，节中为节日起止日（含首尾），节后为结束后7天。",
+      "同星期基准：从节日开始前第8—35天、节日结束后第8—35天，选取与目标日相同星期的普通日，取其销量的算术平均。排除节假日、调休工作日及任一节日前后7天，普通周末可入选。同星期至少4个有效对照日，且节日前后两侧都有；基准必须大于0。",
+      "公式：每日指数＝当日销量÷同星期基准×100%；阶段指数＝该段每日指数的算术平均。0销量保留为有效值；100%持平，120%表示高20%，不是同比或环比。",
+      "第一图·范围汇总：每日先合计有效车型的实际销量和各自基准，再相除，最后对该段每日指数取平均。例：某日A车型实际200辆、基准100辆，B车型实际900辆、基准900辆，范围指数＝（200+900）÷（100+900）×100%＝110%。不是车型指数简单平均，也不是整段销量合计除以整段基准合计。",
+      "第二图·车型典型水平：同车型、同年、同节日的多批次/来源指数先取中位数；再对每个车型跨年的同名节日指数取中位数，最后在车型之间取中位数。图下表按年份和车型展示，第三张表保留原始批次/来源，不能将第二图视为全部车型销量加权结果。",
+      "有效条件与筛选：左侧筛选决定参与车型和事件，日期需完整覆盖节前7天至节后7天；每个目标日须有非负销量，对照不足或基准为0时不补0。范围汇总中，同车型重复的逐日实际值与基准相同只计一次，冲突则剔除；部分车型有效时，请结合“有效车型/所选车型”和“状态”阅读。",
+      "使用边界：同星期对照来自原始数据，可能在当前筛选日期窗外。由于包含节后对照，只用于解释历史，不作为未来预测系数。"
+    ].forEach(text=>el("p","",text,methodBody));
     const scopeChart=el("div","pattern-chart bar-list","",scopeCard);
     scopeChart.style.maxHeight="420px";scopeChart.style.marginBottom="16px";
     scopeChart.tabIndex=0;scopeChart.setAttribute("role","region");scopeChart.setAttribute("aria-label","当前筛选范围节假日指数图，可上下滚动查看各年节日");
@@ -804,7 +818,7 @@ function renderPatternTabs(){
     drawBars(scopeChart,scopeBars.filter(x=>num(x.value)!==null),"label","value",fmtPct,"horizontal");
     const scopeTable=el("div","table-wrap","",scopeCard);
      makeTable(scopeTable,["节日","年份","范围","节前指数","节中指数","节后指数","有效车型","所选车型","状态"],scopeRows.map(r=>[r.holiday,r.year,r.scope,fmtPct(r.before),fmtPct(r.during),fmtPct(r.after),fmtInt(r.valid_models),fmtInt(r.selected_models),r.status]),"当前日期窗没有可展示的节假日范围汇总；需覆盖节日前后各7日。若提示旧网页缺少逐日基准，请重新运行分析脚本。");
-    const c=card(container,"节前、节中、节后日均指数（逐车型）","100% 为匹配星期的控制日水平；以下明细用于核对范围汇总，不代表全部车型加权结果。");
+    const c=card(container,"节前、节中、节后日均指数（逐车型）","条形为车型典型水平（中位数）；下方表按年份/车型保留明细，第三表保留原始批次/来源。");
     if(state.stage!=="平销"){
       const reason=holidayStageAvailable?"节假日对照仅基于“平销”阶段；当前为“"+state.stage+"”，不会跨阶段填补。":"当前筛选范围没有“平销”阶段数据；请切换车型或分类，或点击“重置”恢复完整范围。";
       const note=el("div","pattern-intro",reason,scopeCard);

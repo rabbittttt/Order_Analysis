@@ -302,6 +302,24 @@ async function capture(page, filename) {
        assert.equal(await scope.locator(".bar-row").count(),21);
        assert.equal(await scope.locator(".pattern-chart").getAttribute("tabindex"),"0");
        assert.equal(await scope.locator(".bar-label").first().innerText(),"2024年UI节日 · 节前");
+       const methodDetails=scope.locator("details.profile-detail");
+       assert.equal(await methodDetails.count(),1);
+       assert.equal(await methodDetails.evaluate(node=>node.open),false);
+       assert.equal(await scope.locator("p.card-subtitle").filter({hasText:"每日指数＝当日销量÷同星期基准"}).count(),1);
+       await methodDetails.locator("summary").focus();await fixture.keyboard.press("Enter");
+       assert.equal(await methodDetails.evaluate(node=>node.open),true);
+       const methodText=await methodDetails.innerText();
+       for(const detail of ["第8—35天","算术平均","同星期至少4个","110%","跨年的同名节日","有效车型/所选车型","不作为未来预测系数"])assert.ok(methodText.includes(detail),detail);
+       for(const width of [1440,390]){
+         await fixture.setViewportSize({width,height:1000});
+         // The page redraws after a 150 ms resize debounce, resetting native details.
+         await fixture.waitForTimeout(200);
+         if(!(await methodDetails.evaluate(node=>node.open)))await methodDetails.locator("summary").click();
+         await until(()=>methodDetails.evaluate(node=>node.open));
+         assert.ok(await fixture.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+         if(screenshotDir)await methodDetails.screenshot({path:path.join(screenshotDir,`sales-holiday-method-${width}.png`),animations:"disabled"});
+       }
+       await methodDetails.locator("summary").click();await until(async()=>!(await methodDetails.evaluate(node=>node.open)));
        const modelHolidayCard=fixture.locator("#patternPanels .pattern-card").filter({hasText:"节前、节中、节后日均指数（逐车型）"}).first();
        const modelHolidayChart=modelHolidayCard.locator(".pattern-chart");
        assert.equal(await modelHolidayChart.locator(".bar-row").count(),24);
@@ -312,6 +330,7 @@ async function capture(page, filename) {
        const holidayValues=await modelHolidayChart.locator(".bar-value").allTextContents();
        for(const width of [1440,1920,390]){
          await fixture.setViewportSize({width,height:1000});
+         await fixture.waitForTimeout(200);
          assert.ok(await fixture.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
          assert.deepEqual(await modelHolidayChart.locator(".bar-label").allTextContents(),holidayLabels);
          assert.deepEqual(await modelHolidayChart.locator(".bar-value").allTextContents(),holidayValues);
