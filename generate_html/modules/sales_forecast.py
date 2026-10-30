@@ -1183,10 +1183,11 @@ def _fill_sparse_dates(rows, fields, coverage=(), start=None, end=None):
     return [by_date[key] for key in sorted(by_date)]
 
 
-def _read_steady_daily(workbook, generation: str, start: date, today: date, coverage=(), source_item=None):
+def _read_steady_daily(workbook, generation: str, start: date, today: date, coverage=(), source_item=None, *, sheets=None):
+    sheets = list(workbook.worksheets if sheets is None else sheets)
     result = []
     source_sheets = []
-    for sheet in workbook.worksheets:
+    for sheet in sheets:
         if '图表' in sheet.title or grain_from_sheet(sheet.title) != 'day' or not _same_model(sheet_subject(sheet.title), generation):
             continue
         metric = ''
@@ -1209,7 +1210,7 @@ def _read_steady_daily(workbook, generation: str, start: date, today: date, cove
     for row in result:
         row["complete"] = row["date"] < today.isoformat()
         if row.get("absent_as_zero") and source_item:
-            row["_field_origins"] = {"lock": next((origin for sheet in workbook.worksheets
+            row["_field_origins"] = {"lock": next((origin for sheet in sheets
                 if sheet.title in source_sheets and (origin := covered_date_source_text(source_item, sheet, row["date"]))), "")}
     return result, source_sheets
 
@@ -1263,11 +1264,13 @@ def _read_steady_history(
     result: list[dict[str, Any]] = []
     sources: list[SourceRef] = []
     for lock_item in lock_items:
-        for sheet in lock_item.workbook.worksheets:
+        # Canonical aliases share one history, using physical file/sheet precedence.
+        sheets = list(_forecast_event_sheets(lock_item, model_mapping))
+        for sheet in sheets:
             grain = grain_from_sheet(sheet.title)
             if "图表" in sheet.title or grain not in {"week", "day"}:
                 continue
-            if grain == 'day' and any(grain_from_sheet(other.title) == 'week' and '图表' not in other.title and _same_model(sheet_subject(other.title), sheet_subject(sheet.title)) for other in lock_item.workbook.worksheets):
+            if grain == 'day' and any(grain_from_sheet(other.title) == 'week' and '图表' not in other.title and _same_model(sheet_subject(other.title), sheet_subject(sheet.title)) for other in sheets):
                 continue
             generation = _canonical_model(sheet_subject(sheet.title), model_mapping)
             if not generation or subject_type(generation) != "generation" or is_aggregate_generation(generation):
@@ -1283,7 +1286,7 @@ def _read_steady_history(
                 continue
             steady_start = launch_end + timedelta(days=1)
             daily, daily_sheets = _read_steady_daily(lock_item.workbook, generation, steady_start, current,
-                                                    _source_date_ranges(lock_item), source_item=lock_item)
+                                                    _source_date_ranges(lock_item), source_item=lock_item, sheets=sheets)
             parsed = parse_metric_sheet(sheet)
             raw_locks: dict[str, Any] = {}
             raw_lock_origins = {}

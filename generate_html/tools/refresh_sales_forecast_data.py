@@ -1287,7 +1287,7 @@ def append_forecast_inputs(workbook, source, mapping_path, orders_dir, as_of_dat
 def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collect_only=False, resolved_daily=None):
     """Collect quantities after file-boundary merging, split stage-boundary weeks by day."""
     from modules.sales_forecast import (_iso_week_bounds, _as_date, _canonical_model,
-        _read_model_mapping, _fill_sparse_dates, _optional_count)
+        _read_model_mapping, _fill_sparse_dates, _optional_count, _forecast_event_sheets)
     from core.excel import (sheet_subject, display_period, _source_date_ranges, subject_type,
                             cell_source_text, covered_date_source_text)
     data = dashboard.views["week"]["pages"]["预测方案"]["workspace"]["data"]
@@ -1302,7 +1302,8 @@ def forecast_weekly_orders(store, dashboard, today, daily_output=None, *, collec
         if item is None:
             continue
         coverage = _source_date_ranges(item)
-        for sheet in item.workbook.worksheets:
+        # Restore physical order across maintained aliases before selecting cells.
+        for sheet in _forecast_event_sheets(item, mapping):
             grain = grain_from_sheet(sheet.title)
             if "图表" in sheet.title or grain not in {"day", "week"}:
                 continue

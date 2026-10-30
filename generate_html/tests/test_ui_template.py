@@ -566,7 +566,7 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         self.assertIn('const workspace=state.module==="sales_forecast"?{...page.workspace,data:linkedForecastData(page.workspace.data)}', script)
         self.assertNotIn('data-forecast-target="name"', script)
         self.assertIn("const targetState=()=>{const name=data.target?.name||''", script)
-        self.assertIn('$("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")}', script)
+        self.assertIn('$("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(await ensureState()===false)return;await renderAll();syncUrl("push")}', script)
         self.assertNotIn('[["generation","预测代际"]]', script)
         self.assertIn('[["group","集团"],["brand","品牌"],["generation","代际"]]', script)
 
@@ -1034,7 +1034,7 @@ for(const length of [1,7,35,120]){
         self.assertIn("const available=!rawDataError&&historyComplete", math_script)
         self.assertIn("showForecastCondition", script)
         self.assertIn("其他可用方法及已知实际数据保留", script)
-        self.assertIn("hasSmall?(small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1)", math_script)
+        self.assertIn("hasSmall?(Number.isSafeInteger(small)&&small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1)", math_script)
         self.assertIn(".forecast-data-error", css)
 
 

@@ -125,10 +125,11 @@
 
   // Launch terminal arithmetic has one owner; no DOM or source-reading dependencies.
   function launchParameterTerminal({rawDataError,endedComplete,componentsReady,hasSmall,small,baseConversion,baseShare,directD1,d1Ratio,actualSmall,actualDirect,actualGross,anchorSmall,anchorDirect}) {
-    const available=!rawDataError&&(endedComplete||(componentsReady&&(hasSmall?(small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1):(directD1>0&&d1Ratio>0))));
+    const available=!rawDataError&&(endedComplete||(componentsReady&&(hasSmall?(Number.isSafeInteger(small)&&small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1):(directD1>0&&d1Ratio>0))));
     const rawSmall=available&&hasSmall?small*baseConversion:0,rawDirect=available?(hasSmall?rawSmall*baseShare/(1-baseShare):directD1/d1Ratio):0;
     const totalSmall=endedComplete?actualSmall:available?Math.max(rawSmall,anchorSmall):0,totalDirect=endedComplete?actualDirect:available?Math.max(rawDirect,anchorDirect):0;
-    return {available,rawSmall,rawDirect,small:totalSmall,direct:totalDirect,gross:endedComplete?actualGross:totalSmall+totalDirect,
+    const quantityError=available&&!endedComplete&&![totalSmall,totalDirect,totalSmall+totalDirect].every(value=>Number.isFinite(value)&&value>=0&&value<=Number.MAX_SAFE_INTEGER)?'预测数量超出可计算范围，请核对总小订及转化参数':'';
+    return {available:available&&!quantityError,quantityError,rawSmall,rawDirect,small:totalSmall,direct:totalDirect,gross:endedComplete?actualGross:totalSmall+totalDirect,
       adjusted:!endedComplete&&available&&(totalSmall>rawSmall+.5||totalDirect>rawDirect+.5)};
   }
 
@@ -136,7 +137,16 @@
     const validCompletion = value => Number.isFinite(value) && value > 0 && value <= 1;
     const available=!rawDataError&&historyComplete&&(endedComplete||(!d1Unavailable&&componentsReady&&effectiveDays>0&&anchorSmall+anchorDirect>0&&(!hasSmall||validCompletion(smallCompletion))&&validCompletion(directCompletion)));
     const small=endedComplete?actualSmall:!hasSmall?0:available?Math.max(anchorSmall,anchorSmall/smallCompletion):0,direct=endedComplete?actualDirect:available?Math.max(anchorDirect,anchorDirect/directCompletion):0;
-    return {available,small,direct,gross:endedComplete?actualGross:small+direct};
+    const quantityError=available&&!endedComplete&&![small,direct,small+direct].every(value=>Number.isFinite(value)&&value>=0&&value<=Number.MAX_SAFE_INTEGER)?'预测数量超出可计算范围，请核对同期完成率':'';
+    return {available:available&&!quantityError,quantityError,small,direct,gross:endedComplete?actualGross:small+direct};
+  }
+
+  function launchSmallInput(raw) {
+    const supplied = raw !== null && raw !== undefined && String(raw).trim() !== '';
+    const value = supplied ? observedQuantity(raw) : NaN;
+    const error = supplied && !Number.isSafeInteger(value)
+      ? '总小订须为可安全计算的非负整数，请核对输入' : '';
+    return {supplied, value:error?NaN:value, error};
   }
 
   // A blank D1 means automatic; a deliberate zero is still a manual count.
@@ -190,7 +200,7 @@
 
   function distributeInteger(total, weights) {
     const integer = Math.max(Math.round(Number(total) || 0), 0);
-    if (!weights.length) return [];
+    if (!weights.length || !Number.isSafeInteger(integer)) return [];
     const clean = weights.map(weight => Math.max(Number(weight) || 0, 0));
     const sum = clean.reduce((left, right) => left + right, 0);
     const normalized = sum > 0
@@ -202,8 +212,17 @@
     const order = quotas
       .map((value, index) => ({ index, fraction: value - values[index] }))
       .sort((left, right) => right.fraction - left.fraction || left.index - right.index);
-    for (let index = 0; index < remainder; index += 1) {
-      values[order[index % order.length].index] += 1;
+    // Floating-point residue must never determine loop length. Keep work
+    // bounded by the number of dates even near the safe-integer boundary.
+    if (remainder > 0) {
+      const each = Math.floor(remainder / order.length), extra = remainder % order.length;
+      order.forEach((entry, index) => { values[entry.index] += each + (index < extra ? 1 : 0); });
+    } else if (remainder < 0) {
+      let excess = -remainder;
+      for (const entry of [...order].reverse()) {
+        const take = Math.min(excess, values[entry.index]);
+        values[entry.index] -= take; excess -= take;
+      }
     }
     return values;
   }
@@ -634,7 +653,7 @@
     const total = Math.round(Number(remaining));
     const n = shapes.length, warnings = [];
     const fail = error => ({values:[], base:[], weights:[], warnings, error});
-    if (!Number.isFinite(total) || total < 0) return fail('剩余量无效');
+    if (!Number.isSafeInteger(total) || total < 0) return fail('剩余量无效或超出可计算范围');
     if (!n) return total ? fail('没有剩余日期承接剩余量') : {values:[],base:[],weights:[],warnings,error:''};
     if (!shapes.every(v=>Number.isFinite(v)&&v>=0)) return fail('到天基础曲线缺失或无效，请检查所选参考车型的完整逐日数据');
     if (factors.length!==n || weights.length!==n || !factors.every(v=>Number.isFinite(v)&&v>0) || !weights.every(v=>Number.isFinite(v)&&v>=0)) return fail('日历系数必须为正数，差额权重必须为非负数且覆盖全部待预测日期');
@@ -832,6 +851,7 @@
     launchRowIssues,
     launchParameterTerminal,
     launchProgressTerminal,
+    launchSmallInput,
     launchD1Input,
     stretchCompletion,
     launchDailyReference,

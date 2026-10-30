@@ -457,7 +457,10 @@
   }
   async function syncForecastStageToTarget(){
     if(state.module!=="sales_forecast"||!state.forecastStageAuto)return;
-    const board=await getDashboard(),data=linkedForecastData(forecastDataFromBoard(board));
+    const subjectId=state.subject,campaign=state.forecastCampaign;
+    const board=await getDashboard();
+    if(subjectId!==state.subject||campaign!==state.forecastCampaign||state.module!=="sales_forecast"||!state.forecastStageAuto)return;
+    const data=linkedForecastData(forecastDataFromBoard(board));
     state.forecastStage=forecastStageFromTarget(data?.target);
   }
   function syncUrl(mode="replace"){
@@ -500,7 +503,7 @@
     state.forecastCampaign=params.get("forecastCampaign")||null;
     const requestedView=params.get("forecastView");state.forecastView=forecastViews.includes(requestedView)?requestedView:"result";
     readRawLocation(params);
-    try{await ensureState();await renderAll();if(reading){$('#page').scrollTop=reading.page||0;const table=$('#rawTable');if(table){table.scrollTop=reading.tableTop||0;table.scrollLeft=reading.tableLeft||0;}}}
+    try{if(await ensureState()===false)return;await renderAll();if(reading){$('#page').scrollTop=reading.page||0;const table=$('#rawTable');if(table){table.scrollTop=reading.tableTop||0;table.scrollLeft=reading.tableLeft||0;}}}
     finally{restoringReadingPosition=false;}
   }
 
@@ -516,7 +519,7 @@
     state.forecastCampaign=params.get("forecastCampaign")||null;
     if(forecastViews.includes(params.get("forecastView")))state.forecastView=params.get("forecastView");
     $("#updatedAt").textContent=`生成时间 ${DATA.meta.generated_at.replace("T"," ")}`;
-    bindStatic();renderSubjectSelect();await ensureState();await renderAll();syncUrl("replace");
+    bindStatic();renderSubjectSelect();if(await ensureState()===false)return;await renderAll();syncUrl("replace");
   }
   function bindStatic(){
     history.scrollRestoration='manual';
@@ -524,8 +527,8 @@
     document.addEventListener('scroll',event=>{if(event.target.matches?.('#page,#rawTable')&&!readingTimer)readingTimer=setTimeout(()=>{readingTimer=null;rememberReadingPosition()},500)},true);
     document.addEventListener('click',event=>{if(event.target.closest('[data-module],[data-panel-source],[data-workspace-source],[data-forecast-stage-switch],[data-forecast-tab],[data-file],[data-grain],[data-quick-generation]'))rememberReadingPosition()},true);
     document.addEventListener('change',event=>{if(event.target.matches('#subjectSelect,#periodSelect,#rawFile,#rawSheet'))rememberReadingPosition()},true);
-    $("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")};
-    $("#quickGenerationList").onclick=async event=>{const button=event.target.closest('[data-quick-generation]');if(!button)return;captureForecastDraft();state.subject=button.dataset.quickGeneration;if(state.module==="sales_forecast")state.forecastStageAuto=true;await ensureState();await renderAll();syncUrl("push")};
+    $("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(await ensureState()===false)return;await renderAll();syncUrl("push")};
+    $("#quickGenerationList").onclick=async event=>{const button=event.target.closest('[data-quick-generation]');if(!button)return;captureForecastDraft();state.subject=button.dataset.quickGeneration;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(await ensureState()===false)return;await renderAll();syncUrl("push")};
     $("#grainSelect").onclick=async event=>{const button=event.target.closest("button");if(!button||button.disabled)return;state.grain=button.dataset.grain;const board=await getDashboard();const view=board?.views?.[state.grain];state.period=view?.default_period||null;await renderAll();syncUrl("push")};
     $("#periodSelect").onchange=async event=>{if(state.module==="sales_forecast"){captureForecastDraft();state.forecastCampaign=event.target.value;await renderAll()}else{state.period=event.target.value;await renderPage()}syncUrl("push")};
     window.addEventListener("popstate",()=>restoreLocationState());
@@ -557,15 +560,21 @@
     });
   }
   async function ensureState(){
+    const revision=ensureState.revision=(ensureState.revision||0)+1;
     let item=subject();
     if(!moduleAvailable(item,state.module))state.module=item.modules.find(id=>id!=="raw"&&moduleAvailable(item,id))||"raw";
-    if(state.module==="raw")return;
+    if(state.module==="raw")return true;
+    const subjectId=state.subject,moduleId=state.module;
     const board=await getDashboard();
+    // A previous subject/module may finish decompressing after the next one.
+    // Check request identity too: switching A -> B -> A invalidates the first A.
+    if(revision!==ensureState.revision||subjectId!==state.subject||moduleId!==state.module)return false;
     const grains=Object.keys(board?.views||{});
     if(!grains.includes(state.grain))state.grain=grains[0]||"week";
     const view=board?.views?.[state.grain];
     if(!(view?.periods||[]).includes(state.period))state.period=view?.default_period||null;
     await syncForecastStageToTarget();
+    return revision===ensureState.revision&&subjectId===state.subject&&moduleId===state.module;
   }
   function renderSubjectSelect(){
     const order=[["group","集团"],["brand","品牌"],["generation","代际"]];
@@ -579,7 +588,7 @@
     const viewKey=state.subject+'|'+state.module,changed=page.dataset.viewKey!==viewKey;
     page.setAttribute("aria-busy","true");
     const timer=setTimeout(()=>{if(revision===navigationRevision&&status){status.textContent=`正在加载${subject()?.name||''} · ${moduleLabels[state.module]||'分析'}…`;status.classList.add("show")}},180);
-    try{renderSubjectSelect();renderQuickGenerationLinks();renderNav();await renderFilters();if(revision===navigationRevision){await renderPage();page.dataset.viewKey=viewKey;if(changed&&!restoringReadingPosition)page.scrollTop=0;}}
+    try{renderSubjectSelect();renderQuickGenerationLinks();renderNav();if(await renderFilters()===false)return;if(revision===navigationRevision){await renderPage();page.dataset.viewKey=viewKey;if(changed&&!restoringReadingPosition)page.scrollTop=0;}}
     finally{clearTimeout(timer);if(revision===navigationRevision){page.setAttribute("aria-busy","false");status?.classList.remove("show");page.getAnimations().forEach(animation=>animation.cancel());if(!matchMedia('(prefers-reduced-motion: reduce)').matches)page.animate([{opacity:.78},{opacity:1}],{duration:160,easing:'ease-out'});}}
   }
   // Display-only summary of the existing explanation; never selects or changes data.
@@ -639,7 +648,7 @@
     root?.querySelectorAll("[data-forecast-stage-switch]").forEach(button=>button.setAttribute("aria-pressed",String(button.dataset.forecastStageSwitch===id)));
     const page=$("#page");if(page)page.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});
     const owner=DATA.subjects.find(item=>item.modules.includes("sales_forecast")),source=forecastDataFromBoard(boardCache[`${owner?.id}|sales_forecast`]);
-    await renderFilters();
+    if(await renderFilters()===false)return;
     if((source?.targets||[]).some(t=>t.secondary_generation&&sameForecastModel(t.primary_generation,subject()?.name))){captureForecastDraft();await renderPage();}
     if(writeHistory)syncUrl("push");
   }
@@ -656,7 +665,7 @@
     $("#moduleNav").onclick=async event=>{
       const button=event.target.closest("[data-module]");
       if(!button||button.disabled||button.dataset.module===state.module)return;
-      captureForecastDraft();state.module=button.dataset.module;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(state.module==="launch_rhythm")state.grain="day";await ensureState();await renderAll();syncUrl("push");
+      captureForecastDraft();state.module=button.dataset.module;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(state.module==="launch_rhythm")state.grain="day";if(await ensureState()===false)return;await renderAll();syncUrl("push");
     };
   }
   function parseDay(text){
@@ -676,6 +685,9 @@
     });
   }
   async function renderFilters(){
+    const revision=renderFilters.revision=(renderFilters.revision||0)+1;
+    const subjectId=state.subject,moduleId=state.module,stage=state.forecastStage,campaign=state.forecastCampaign;
+    const isCurrent=()=>revision===renderFilters.revision&&subjectId===state.subject&&moduleId===state.module&&stage===state.forecastStage&&campaign===state.forecastCampaign;
     $('#filters').dataset.mode='period';
     $('#grainSelect').closest('.filter-group').hidden=false;
     $('#periodSelect').closest('label').hidden=false;
@@ -688,7 +700,9 @@
       $('#filters').dataset.mode='window';
       $('#grainSelect').closest('.filter-group').hidden=true;
       $("#grainSelect").innerHTML=Object.entries(DATA.config.grain_labels).map(([id,label])=>`<button data-grain="${id}" disabled>${label}</button>`).join("");
-      const board=state.module==="sales_forecast"?await getDashboard():null,data=forecastDataFromBoard(board),selected=subject(),campaigns=(data?.targets||[]).filter(t=>sameForecastModel(t.primary_generation||t.name,selected?.name));
+      const board=state.module==="sales_forecast"?await getDashboard():null;
+      if(!isCurrent())return false;
+      const data=forecastDataFromBoard(board),selected=subject(),campaigns=(data?.targets||[]).filter(t=>sameForecastModel(t.primary_generation||t.name,selected?.name));
       const period=$("#periodSelect");
       if(state.module==="sales_forecast"&&state.forecastStage!=='steady'&&campaigns.some(t=>t.secondary_generation)){
         const current=linkedForecastData(data)?.target,small=state.forecastStage==='small';
@@ -702,6 +716,7 @@
     }
     $("#periodSelect").disabled=false;$("#grainSelect").title="";
     const board=await getDashboard();
+    if(!isCurrent())return false;
     const grains=Object.keys(board?.views||{});
     $("#grainSelect").innerHTML=Object.entries(DATA.config.grain_labels).map(([id,label])=>`<button data-grain="${id}" class="${state.grain===id?"active":""}" ${grains.includes(id)?"":"disabled"}>${label}</button>`).join("");
     const view=board?.views?.[state.grain];
@@ -1980,7 +1995,7 @@
         });
         applySystemSuggestion();
       }
-      const get=id=>Number(root.querySelector(`[data-forecast-input="${id}"]`)?.value||0),rate=id=>window.ForecastMath.observedRate(window.ForecastMath.weightedObserved([{value:root.querySelector(`[data-forecast-input="${id}"]`)?.value,weight:1}])/100),target=targetState(),stageInfo=absoluteStage(target),small=get('small'),baseConversion=rate('conversion'),baseShare=rate('direct'),lockRate=rate('lock'),refs=chosen(),actual=actualForTarget(target),today=todayIso();
+      const get=id=>Number(root.querySelector(`[data-forecast-input="${id}"]`)?.value||0),rate=id=>window.ForecastMath.observedRate(window.ForecastMath.weightedObserved([{value:root.querySelector(`[data-forecast-input="${id}"]`)?.value,weight:1}])/100),target=targetState(),stageInfo=absoluteStage(target),smallCount=window.ForecastMath.launchSmallInput(smallInput?.value),small=smallCount.value,baseConversion=rate('conversion'),baseShare=rate('direct'),lockRate=rate('lock'),refs=chosen(),actual=actualForTarget(target),today=todayIso();
       const lockInput=root.querySelector('[data-forecast-input="lock"]'),lockHint=lockInput?.closest('.forecast-common-lock')?.querySelector('em');
       root._forecastDailyEvidence.targetFactor=index=>bridgeSettings(root,'launch',0).factors[calendarType(target.launchDate,index).type]||1;
       if(actual){target.selectedSource=actual.selected_source||'missing';target.selectedSourceLabel=actual.selected_source_label||'数据缺失';target.fieldSources=actual.field_sources||{};target.missingFields=actual.missing_fields||[];target.dataMissing=!!actual.data_missing;target.sourceLatestDate=actual.source_latest_date||''}
@@ -2025,6 +2040,7 @@
       const d1Parts=(refs.daily||[]).map((item,slot)=>{const orders=adaptedDailyOrders(item,target.days),sum=orders.reduce((a,b)=>a+b,0);return {value:sum>0?orders[0]/sum:NaN,weight:slotWeight(slot,'daily')}}).filter(row=>Number.isFinite(row.value)&&row.weight>0),d1Weight=d1Parts.reduce((sum,row)=>sum+row.weight,0),d1Ratio=d1Weight?d1Parts.reduce((sum,row)=>sum+row.value*row.weight,0)/d1Weight:0;
       const directD1=resolvedFixed.find(row=>row.index===0)?.gross??(partial?.index===0?partialGross:null)??d1Input.value;
       const endedComplete=stageInfo.key==='ended'&&!rawDataError&&historyComplete;
+      if(smallInput){const smallError=target.hasSmall!==false&&!endedComplete?smallCount.error:'';smallInput.setAttribute('aria-invalid',String(!!smallError));smallInput.setCustomValidity(smallError);}
       if(lockInput)lockInput.setAttribute('aria-invalid',String(!endedComplete&&!Number.isFinite(lockRate)));
       if(lockHint)lockHint.textContent=endedComplete?'首销已结束，展示真实锁单，不受预测参数影响':Number.isFinite(lockRate)?'用于两种方法的首销期锁单测算':'大定到锁单率需为0%～100%；锁单预测留空，大定预测保留';
       const parameterResult=window.ForecastMath.launchParameterTerminal({rawDataError,endedComplete,componentsReady,hasSmall,small,baseConversion,baseShare,directD1,d1Ratio,actualSmall,actualDirect,actualGross,anchorSmall,anchorDirect});
@@ -2063,6 +2079,8 @@
       setScenarioValues('progress',scenarios.progress,lockRate,progressAvailable&&!scenarios.progress.bridgeError);setScenarioValues('parameter',scenarios.parameter,lockRate,parameterAvailable&&!scenarios.parameter.bridgeError);
       const completionInputErrors=endedComplete?[]:[hasSmall&&progressOverride.small&&smallCompletionInput?.value.trim()&&!Number.isFinite(smallCompletion)?'小转大人工完成率必须大于0%且不超过100%':'',progressOverride.direct&&directCompletionInput?.value.trim()&&!Number.isFinite(directCompletion)?'直接大定人工完成率必须大于0%且不超过100%':''].filter(Boolean);
       const progressReasons=[...uniqueBlockingErrors,...completionInputErrors],parameterReasons=[...uniqueBlockingErrors];
+      if(progressResult.quantityError)progressReasons.push(progressResult.quantityError);
+      if(parameterResult.quantityError)parameterReasons.push(parameterResult.quantityError);
       if(d1InputError)parameterReasons.push(d1InputError);
       if(!endedComplete){
         progressReasons.push(...componentIssues);parameterReasons.push(...componentIssues);
@@ -2072,6 +2090,7 @@
         else if(!(anchorSmall+anchorDirect>0))progressReasons.push('已发生数量为0，尚无有效实际进度用于推算终局');
         if(hasSmall){
           if(!(small>0))parameterReasons.push(smallOngoing?`有效小订预测总量尚未取得${smallResult?.error?'：'+smallResult.error:''}`:'最终总小订未取得，方法二缺少数量输入');
+          if(smallCount.error)parameterReasons.push(smallCount.error);
           if(!(baseConversion>0&&baseConversion<=1))parameterReasons.push('小订转化率缺失或不在(0%,100%]内');
           if(!(baseShare>=0&&baseShare<1))parameterReasons.push('直接大定占比缺失或不在[0%,100%)内；不能用缺失比例当0计算');
         }else{
