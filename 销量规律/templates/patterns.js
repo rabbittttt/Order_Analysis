@@ -128,6 +128,17 @@ state.metric = defaultMetric.key;
 function scopeEntries(metric) {
   return entries.filter(x => safeArray(x.metrics).includes(metric) || optionRows(metric).some(r => String(r.model) === String(x.model)));
 }
+function scopedOptionRows(metric) {
+  return optionRows(metric).filter(r => {
+    const model = String(r.model || "");
+    if (state.model !== "__ALL__" && model !== state.model) return false;
+    if (state.model === "__ALL__" && state.category !== "__ALL__" && categoryOf(model) !== state.category) return false;
+    return true;
+  });
+}
+function scopedStages(metric) {
+  return unique(scopedOptionRows(metric).map(r => String(r.stage || "")).filter(Boolean)).sort((a,b)=>a.localeCompare(b,"zh-CN"));
+}
 function matchingRows(baseRows, metric, useDate) {
   const from = state.start, to = state.end;
   return baseRows.filter(r => {
@@ -177,13 +188,7 @@ function updateFilters(resetDate) {
   if (!modelOptions.some(o=>o.value===state.model)) state.model="__ALL__";
   setOptions($("modelFilter"),modelOptions,state.model);
 
-  let candidates = optionRows(state.metric).filter(r => {
-    const model = String(r.model || "");
-    if (state.model !== "__ALL__" && model !== state.model) return false;
-    if (state.model === "__ALL__" && state.category !== "__ALL__" && categoryOf(model) !== state.category) return false;
-    return true;
-  });
-  const stages = unique(candidates.map(r=>String(r.stage || "")).filter(Boolean)).sort((a,b)=>a.localeCompare(b,"zh-CN"));
+  const stages = scopedStages(state.metric);
   const stagePref = stages.includes(state.stage) ? state.stage : stages.includes("平销") ? "平销" : stages.includes("首销") ? "首销" : stages[0] || "";
   state.stage = stagePref;
   setOptions($("stageFilter"),stages.map(x=>({value:x,label:x})),stagePref);
@@ -618,7 +623,8 @@ function renderPatternTabs(){
     const lif=lifecycleRows(metric);const lt=el("div","table-wrap","",c);makeTable(lt,["车型","首销批次","D1 / D3–D7 日均","首2天占首7天","有效批次数"],lif.map(r=>[r.model,r.cycle,fmtPct(r.d1_ratio),fmtPct(r.first2_share),fmtInt(lif.length)]),"该阶段没有完整生命周期样本。");
   }else if(state.pattern==="launch"){
     intro.textContent="取自‘小订首销平销by天’；小订/首销等组合标签按指标拆分，净大定与锁单使用首销部分（含起止当日）。按首销开始日对齐：第1周为D1–D7，第2周为D8–D14，第3周为D15–D21。净大定、锁单分别比较本周与前周；前后两个窗口均须完整落在所选日期内。";
-    const launch=resultBase("launch_pacing",metric).filter(r=>dateOnly(r.previous_start)>=state.start&&dateOnly(r.end)<=state.end);
+    const launchStageAvailable=scopedStages(metric).includes("首销");
+    const allLaunch=resultBase("launch_pacing",metric),launch=allLaunch.filter(r=>dateOnly(r.previous_start)>=state.start&&dateOnly(r.end)<=state.end);
     const valid=launch.filter(r=>r.status==="有效"&&num(r.ratio)!==null);
     const patterns=unique(launch.map(r=>r.pattern));
     const stats=patterns.map(pattern=>({pattern,...summary(valid.filter(r=>r.pattern===pattern),"ratio")}));
@@ -629,15 +635,28 @@ function renderPatternTabs(){
       {label:"适用阶段",value:"首销",foot:"尚未做跨批次留出验证"}
     ]);
     const c=card(container,"上市后销量延续或回落","典型比例按车型等权中位数计算；P25/P75为历史批次波动，不是预测区间。只有确认可比的上市批次，才适合用于新车型情景参考。");
+    if(state.stage!=="首销"){
+      const reason=launchStageAvailable?"当前销售阶段为“"+state.stage+"”，首销周节奏只使用“首销”阶段；日期范围不会自动调整。":"当前筛选范围没有“首销”阶段数据；请切换车型或分类，或点击“重置”恢复完整范围。";
+      const note=el("div","pattern-intro",reason,c);
+      if(launchStageAvailable){const button=el("button","button button-quiet","切换到首销阶段",note);button.type="button";button.addEventListener("click",()=>setPatternStage("首销"));}
+    }else if(allLaunch.length&&!launch.length){
+      const note=el("div","pattern-intro","当前日期范围排除了所有首销周比较记录；日期范围不会自动调整。",c);
+      const button=el("button","button button-quiet","恢复当前口径日期",note);button.type="button";button.addEventListener("click",restorePatternDates);
+    }
     const chart=el("div","pattern-chart","",c);
     drawBars(chart,stats.filter(r=>r.typical!==null),"pattern","typical",fmtPct,"vertical");
     const t=el("div","table-wrap","",c);
-    makeTable(t,["比较","P25","典型比例","P75","车型数","不同起始日期","有效记录数"],stats.map(r=>[r.pattern,fmtPct(r.p25),fmtPct(r.typical),fmtPct(r.p75),fmtInt(r.models),fmtInt(r.periods),fmtInt(r.samples)]),"当前范围暂无可比首销周；请选择首销阶段，并覆盖至少两个相邻首销周。");
+    const launchEmptyText=state.stage!=="首销"?(launchStageAvailable?"当前阶段不是首销，请点击“切换到首销阶段”。":"当前车型或分类没有首销阶段数据，请调整车型或分类。"):
+      !allLaunch.length?"当前车型或分类尚无首销周比较记录；至少需要两个相邻首销周，首销日期及每日数据也须可用。":
+      !launch.length?"当前日期范围排除了所有首销周比较记录；请扩大日期范围或点击“恢复当前口径日期”。":
+      "当前日期范围内的首销周记录均不可比（缺日、负值或前期为零）；具体原因见下方逐车型证据。";
+    makeTable(t,["比较","P25","典型比例","P75","车型数","不同起始日期","有效记录数"],stats.map(r=>[r.pattern,fmtPct(r.p25),fmtPct(r.typical),fmtPct(r.p75),fmtInt(r.models),fmtInt(r.periods),fmtInt(r.samples)]),launchEmptyText);
     const detail=card(container,"逐车型首销周证据","前期和本期均为7日观测合计；缺失保持未知，不补零，原始观测合计可查，只有完整且非负窗口计算倍率。");
     const dt=el("div","table-wrap","",detail);
-    makeTable(dt,["车型","比较","前期日期","本期日期","前期观测量","本期观测量","本期/前期","前期天数","本期天数","状态","来源"],launch.map(r=>[r.model,r.pattern,dateOnly(r.previous_start)+"～"+dateOnly(r.previous_end),dateOnly(r.start)+"～"+dateOnly(r.end),fmtNum(r.previous),fmtNum(r.current),fmtPct(r.ratio),fmtInt(r.previous_observed)+"/7",fmtInt(r.current_observed)+"/7",r.status,r.source]),"该阶段和日期窗没有首销周证据。");
+    makeTable(dt,["车型","比较","前期日期","本期日期","前期观测量","本期观测量","本期/前期","前期天数","本期天数","状态","来源"],launch.map(r=>[r.model,r.pattern,dateOnly(r.previous_start)+"～"+dateOnly(r.previous_end),dateOnly(r.start)+"～"+dateOnly(r.end),fmtNum(r.previous),fmtNum(r.current),fmtPct(r.ratio),fmtInt(r.previous_observed)+"/7",fmtInt(r.current_observed)+"/7",r.status,r.source]),launchEmptyText);
   }else if(state.pattern==="holiday"){
     intro.textContent="节假日只提供历史解释：与同星期节前/节后对照计算，不视为可直接外推的预测系数。当前日期窗需覆盖节前7日至节后7日；主分析限定平销阶段。";
+    const holidayStageAvailable=scopedStages(metric).includes("平销");
     const hs=holidayPhaseRows(metric),scopeRows=holidayScopeRows(metric),selectedModels=holidayScopeModels(metric);
     miniKpis($("patternKpis"),[
       {label:"范围有效事件",value:fmtInt(scopeRows.filter(r=>r.status==="有效").length),foot:"当前筛选范围："+holidayScopeLabel()},
@@ -654,7 +673,12 @@ function renderPatternTabs(){
     const scopeTable=el("div","table-wrap","",scopeCard);
      makeTable(scopeTable,["节日","年份","范围","节前指数","节中指数","节后指数","有效车型","所选车型","状态"],scopeRows.map(r=>[r.holiday,r.year,r.scope,fmtPct(r.before),fmtPct(r.during),fmtPct(r.after),fmtInt(r.valid_models),fmtInt(r.selected_models),r.status]),"当前日期窗没有可展示的节假日范围汇总；需覆盖节日前后各7日。若提示旧网页缺少逐日基准，请重新运行分析脚本。");
     const c=card(container,"节前、节中、节后日均指数（逐车型）","100% 为匹配星期的控制日水平；以下明细用于核对范围汇总，不代表全部车型加权结果。");
-    if(state.stage!=="平销")el("div","pattern-intro","节假日对照仅基于平销数据。当前筛选阶段为 "+state.stage+"，不会用其他阶段填补。",c);
+    if(state.stage!=="平销"){
+      const reason=holidayStageAvailable?"节假日对照仅基于“平销”阶段；当前为“"+state.stage+"”，不会跨阶段填补。":"当前筛选范围没有“平销”阶段数据；请切换车型或分类，或点击“重置”恢复完整范围。";
+      const note=el("div","pattern-intro",reason,scopeCard);
+      if(holidayStageAvailable){const button=el("button","button button-quiet","切换到平销阶段",note);button.type="button";button.addEventListener("click",()=>setPatternStage("平销"));}
+      scopeCard.insertBefore(note,scopeChart);
+    }
     const chart=el("div","pattern-chart","",c);
     const pRows=[];
     [["before","节前"],["during","节中"],["after","节后"]].forEach(([phase,label])=>groupedStats(hs,phase,r=>r.holiday,r=>r.period).forEach(x=>pRows.push({label:x.key+label,value:x.median,n:x.periods})));
@@ -1043,6 +1067,7 @@ function saveRoute(push){
 }
 function restoreRoute(){
   const hash=location.hash.slice(1),params=new URLSearchParams(hash);
+  const routeHasStage=params.has("stage");
   routeKeys.forEach(k=>{if(params.has(k))state[k]=k==="compare"?params.get(k)==="true":params.get(k);});
   if(!hash.includes("=")&&["overview","patterns","forecast","evidence"].includes(hash))state.page=hash;
   if(!metricByKey.get(state.metric)?.available)state.metric=defaultMetric.key;
@@ -1053,6 +1078,7 @@ function restoreRoute(){
   const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+"T00:00:00Z"))&&new Date(value+"T00:00:00Z").toISOString().slice(0,10)===value;
   if(!validDate(state.start)||!validDate(state.end)){state.start="";state.end="";}
   updateFilters(false);
+  if(!routeHasStage&&state.page==="patterns")syncPatternStage(state.pattern);
   $("trendGrain").value=state.grain;$("compareMetrics").checked=state.compare;$("forecastGrain").value=state.forecastGrain;
   document.querySelectorAll("[data-evidence]").forEach(b=>{const on=b.dataset.evidence===state.evidence;b.classList.toggle("is-active",on);b.setAttribute("aria-pressed",String(on));});
   clearDateError();refresh();updatePage(state.page,false);
@@ -1072,6 +1098,27 @@ function applyDates(){
   }
   state.start=from.value;state.end=to.value;refresh();
 }
+function syncPatternStage(pattern){
+  const target=pattern==="launch"?"首销":pattern==="holiday"?"平销":"";
+  if(!target||!scopedStages(state.metric).includes(target))return false;
+  state.stage=target;
+  const select=$("stageFilter");if(select)select.value=target;
+  return true;
+}
+function setPatternStage(stage){
+  if(!scopedStages(state.metric).includes(stage))return false;
+  state.stage=stage;$("stageFilter").value=stage;refresh();return true;
+}
+function restorePatternDates(){
+  const bounds=metricBounds.get(state.metric)||["",""];
+  if(!bounds[0]||!bounds[1])return false;
+  state.start=bounds[0];state.end=bounds[1];$("dateStart").value=state.start;$("dateEnd").value=state.end;clearDateError();refresh();return true;
+}
+function activatePattern(pattern){
+  const previousStage=state.stage;
+  state.pattern=pattern;syncPatternStage(pattern);refresh(false);showUpdate($("patternPanels"));
+  if(state.stage!==previousStage)announce("已切换到“"+state.stage+"”阶段，保留当前车型和日期范围。");
+}
 function bindTabs(container,selector,activate){
   const buttons=[...container.querySelectorAll(selector)];
   container.addEventListener("keydown",event=>{
@@ -1083,7 +1130,7 @@ function bindTabs(container,selector,activate){
   });
 }
 bindTabs(document.querySelector(".main-nav"),"[data-panel]",b=>updatePage(b.dataset.panel));
-bindTabs(document.querySelector(".subnav"),"[data-pattern]",b=>{state.pattern=b.dataset.pattern;renderPatterns();showUpdate($("patternPanels"));saveRoute(false);});
+bindTabs(document.querySelector(".subnav"),"[data-pattern]",b=>activatePattern(b.dataset.pattern));
 window.addEventListener("popstate",restoreRoute);window.addEventListener("hashchange",restoreRoute);
 document.querySelector(".skip-link").addEventListener("click",e=>{e.preventDefault();$("mainContent").focus();});
 document.querySelector(".brand").addEventListener("click",e=>{e.preventDefault();updatePage("overview");});
@@ -1092,17 +1139,17 @@ document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=
 document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click",()=>{
   if(b.disabled||state.metric===b.dataset.metric)return;
   state.metric=b.dataset.metric;state.category="__ALL__";state.model="__ALL__";state.stage="";
-  clearDateError();updateFilters(true);refresh();
+  clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();
 }));
 $("categoryFilter").addEventListener("change",e=>{state.category=e.target.value;state.model="__ALL__";updateFilters(false);refresh();});
 $("modelFilter").addEventListener("change",e=>{state.model=e.target.value;updateFilters(false);refresh();});
 $("stageFilter").addEventListener("change",e=>{state.stage=e.target.value;refresh();});
 $("dateStart").addEventListener("change",applyDates);
 $("dateEnd").addEventListener("change",applyDates);
-$("resetFilters").addEventListener("click",()=>{state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.compare=false;$("trendGrain").value="月";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);refresh();announce("已恢复默认口径、车型和日期范围。");});
+$("resetFilters").addEventListener("click",()=>{state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.compare=false;$("trendGrain").value="月";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();announce("已恢复默认口径、车型和日期范围。");});
 $("trendGrain").addEventListener("change",e=>{state.grain=e.target.value;refresh();});
 $("compareMetrics").addEventListener("change",e=>{state.compare=e.target.checked;refresh();});
-document.querySelectorAll("[data-pattern]").forEach(b=>b.addEventListener("click",()=>{state.pattern=b.dataset.pattern;renderPatterns();showUpdate($("patternPanels"));saveRoute(false);}));
+document.querySelectorAll("[data-pattern]").forEach(b=>b.addEventListener("click",()=>activatePattern(b.dataset.pattern)));
 $("forecastModel").addEventListener("change",e=>{state.forecastModel=e.target.value;state.profileKey="";renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});
 $("forecastGrain").addEventListener("change",e=>{state.forecastGrain=e.target.value;state.profileKey="";renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});
 $("forecastProfile").addEventListener("change",e=>{state.profileKey=e.target.value;renderForecast();showUpdate($("forecastKpis"));saveRoute(false);});

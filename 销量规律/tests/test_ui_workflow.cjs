@@ -55,6 +55,40 @@ async function capture(page, filename) {
         const img=new Image();img.onload=()=>resolve(img.naturalWidth>0);img.onerror=()=>resolve(false);img.src=href;
       }),icon));
     });
+    await check("默认阶段直接进入首销周节奏并保持路由范围", async () => {
+      await reset();assert.equal(await page.locator("#stageFilter").inputValue(),"平销");
+      const fullDates=[await page.locator("#dateStart").inputValue(),await page.locator("#dateEnd").inputValue()];
+      await page.locator("#nav-patterns").click();await page.locator("#pattern-launch").click();
+      assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+      assert.equal(await page.evaluate(()=>new URLSearchParams(location.hash.slice(1)).get("stage")),"首销");
+      assert.deepEqual([await page.locator("#dateStart").inputValue(),await page.locator("#dateEnd").inputValue()],fullDates);
+      const expected=await page.evaluate(()=>{const from=document.getElementById("dateStart").value,to=document.getElementById("dateEnd").value;return window.PATTERNS_DATA.results.launch_pacing.filter(r=>r.metric==="留存大定"&&r.stage==="首销"&&r.previous_start>=from&&r.end<=to);});
+      assert.ok(expected.length>0);assert.equal(Number(await page.locator("#patternKpis .kpi-card .kpi-value").first().innerText()),expected.filter(r=>r.status==="有效"&&Number.isFinite(r.ratio)).length);assert.equal(await page.locator("#patternPanels .pattern-card").last().locator("tbody tr").count(),expected.length);
+      await capture(page,"sales-launch-default-entry-fixed.png");
+      await page.locator('[data-metric="交车锁单"]').click();assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+      const lockCount=await page.evaluate(()=>window.PATTERNS_DATA.results.launch_pacing.filter(r=>r.metric==="交车锁单"&&r.status==="有效").length);
+      assert.equal(Number(await page.locator("#patternKpis .kpi-value").first().innerText()),lockCount);
+      await page.locator("#resetFilters").click();assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+      await page.locator("#pattern-holiday").click();assert.equal(await page.locator("#stageFilter").inputValue(),"平销");assert.equal(await page.evaluate(()=>new URLSearchParams(location.hash.slice(1)).get("stage")),"平销");
+      await page.locator("#pattern-launch").click();assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+      await page.locator("#stageFilter").selectOption("平销");assert.match(await page.locator("#patternPanels").innerText(),/切换到首销阶段/);await page.getByRole("button",{name:"切换到首销阶段"}).click();assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+      const category=await page.evaluate(model=>window.PATTERNS_DATA.grouping.entries.find(r=>r.model===model).category,expected[0].model);
+      await page.locator("#categoryFilter").selectOption(category);await page.locator("#modelFilter").selectOption(expected[0].model);
+      const narrowDate=expected[0].start;await page.locator("#dateStart").fill(narrowDate);await page.locator("#dateStart").dispatchEvent("change");await page.locator("#dateEnd").fill(narrowDate);await page.locator("#dateEnd").dispatchEvent("change");
+      await page.locator("#pattern-cycles").click();await page.locator("#pattern-launch").click();
+      assert.equal(await page.locator("#stageFilter").inputValue(),"首销");assert.equal(await page.locator("#dateStart").inputValue(),narrowDate);assert.equal(await page.locator("#dateEnd").inputValue(),narrowDate);
+      assert.match(await page.locator("#patternPanels").innerText(),/当前日期范围排除了所有首销周比较记录/);
+      await page.getByRole("button",{name:"恢复当前口径日期"}).click();
+      assert.deepEqual([await page.locator("#dateStart").inputValue(),await page.locator("#dateEnd").inputValue()],fullDates);
+      assert.equal(await page.locator("#categoryFilter").inputValue(),category);assert.equal(await page.locator("#modelFilter").inputValue(),expected[0].model);
+      assert.equal(await page.locator("#patternPanels .pattern-card").last().locator("tbody tr").count(),expected.filter(r=>r.model===expected[0].model).length);
+      const oldRoute=new URLSearchParams({page:"patterns",pattern:"launch",stage:"平销"});await page.goto(url+"#"+oldRoute.toString());
+      assert.equal(await page.locator("#stageFilter").inputValue(),"平销");await page.getByRole("button",{name:"切换到首销阶段"}).click();await page.reload();
+      assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+      await page.locator("#nav-overview").click();await page.locator('[data-metric="交车锁单"]').click();assert.equal(await page.locator("#stageFilter").inputValue(),"平销");
+      await page.goBack();assert.equal(await page.locator("#pattern-launch").getAttribute("aria-selected"),"true");assert.equal(await page.locator("#stageFilter").inputValue(),"首销");
+      await reset();
+    });
     await check("首销相对周按口径、车型和完整日期窗口筛选", async () => {
       for(const metric of ["留存大定","交车锁单"]){
         await reset();await page.locator('[data-metric="'+metric+'"]').click();
@@ -146,6 +180,8 @@ async function capture(page, filename) {
       await fixture.locator(".profile-detail summary").click();assert.ok((await fixture.locator("#forecastSelection").innerText()).includes("非业务数据"));
       await fixture.setViewportSize({width:390,height:844});assert.ok(await fixture.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
       assert.equal(await fixture.locator("#backtestChart").getAttribute("tabindex"),"0");
+       await fixture.locator("#nav-patterns").click();await fixture.locator("#pattern-launch").click();
+       assert.equal(await fixture.locator("#stageFilter").inputValue(),"平销");assert.match(await fixture.locator("#patternPanels").innerText(),/没有“首销”阶段数据|重置/);
       await fixture.close();await reset();
     });
     await check("节假日范围汇总按日合计实际与基准并联动左侧筛选（测试夹具）", async () => {
@@ -202,8 +238,9 @@ async function capture(page, filename) {
         text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("UI车型A"));assert.ok(text.includes("200%"));row=await scopeRow("UI节日");assert.deepEqual(row.slice(3,8),["200%","200%","200%","1","1"]);
       await fixture.locator("#modelFilter").selectOption("UI车型B");await fixture.locator('[data-pattern="holiday"]').click();
        text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("UI车型B"));assert.ok(text.includes("100%"));
-       await fixture.locator("#modelFilter").selectOption("__ALL__");await fixture.locator("#stageFilter").selectOption("首销");await fixture.locator('[data-pattern="holiday"]').click();
+       await fixture.locator("#modelFilter").selectOption("__ALL__");await fixture.locator('[data-pattern="holiday"]').click();await fixture.locator("#stageFilter").selectOption("首销");
        text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("0/2"));assert.ok(text.includes("无历史对照"));
+       await fixture.getByRole("button",{name:"切换到平销阶段"}).click();assert.equal(await fixture.locator("#stageFilter").inputValue(),"平销");
        await fixture.locator("#stageFilter").selectOption("平销");await fixture.locator("#dateStart").fill("2024-01-02");await fixture.locator("#dateStart").dispatchEvent("change");await fixture.locator('[data-pattern="holiday"]').click();
        text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(!text.includes("UI节日"));assert.ok(text.includes("UI零值节日"));
        await fixture.locator("#dateStart").fill("2024-01-01");await fixture.locator("#dateStart").dispatchEvent("change");
