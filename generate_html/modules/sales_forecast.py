@@ -627,19 +627,20 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 number = _optional_number(raw_value)
                 if raw_value in (None, ""):
                     daily.append(None)
-                elif number is None or not math.isfinite(number):
+                elif isinstance(raw_value, bool) or number is None or not math.isfinite(number):
+                    daily.append(None)
                     invalid_daily.append(f"D{day_index}({header_date.isoformat()})缺失或非数字")
                 elif number < 0:
+                    daily.append(None)
                     invalid_daily.append(f"D{day_index}({header_date.isoformat()})为负数{number:g}")
                 else:
                     daily.append(int(round(number)))
             if invalid_daily:
                 LOGGER.warning(
                     "[销量预测字段校验] 传播名=%s | Sheet=%s | 行=%d | 小订by天异常=%s | "
-                    "处理=整条真实逐日记录不参与预测，不把缺失或负数改写为0",
+                    "处理=异常单元格保留未知，其他有效日量保留；缺值按既有来源优先级补缺，不改写为0",
                     label, sheet.title, row_number, "；".join(invalid_daily),
                 )
-                continue
             total_columns = [
                 index for index, value in enumerate(current_header)
                 if str(value or "").strip() == "合计"

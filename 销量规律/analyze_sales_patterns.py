@@ -443,6 +443,14 @@ def read_panel(path):
     try:
         if UNIFIED_DAILY_SHEET in getattr(wb, 'sheetnames', ()):
             return read_unified_panel(wb, audit)
+        # Legacy exports are historical evidence too: use the same date fence
+        # as the unified reader before duplicate checks or forecast training.
+        cutoff = date.today()
+        if '说明与来源' in getattr(wb, 'sheetnames', ()):
+            _, notes = _workbook_records(wb, '说明与来源')
+            for _, note in notes:
+                if note.get('项目') == '数据判定日期' and dt(note.get('内容')):
+                    cutoff = min(cutoff, dt(note['内容']))
         for name,small in [('小订及退订逐日',True),('当前订单逐日',False)]:
             it=wb[name].iter_rows(values_only=True); head=next(it)
             required={'日期','订单分析代际名'}|({'小订数量','真实逐日'} if small else {'订单阶段'})
@@ -464,9 +472,22 @@ def read_panel(path):
                 r=dict(zip(head,vs)); audit[name+'原始行']+=1
                 d=dt(r.get('日期')); model=r.get('订单分析代际名')
                 if not d or not model: audit['无效日期或车型']+=1; continue
+                if d > cutoff:
+                    audit['未来或超过数据判定日期排除'] += 1
+                    continue
+                if '日期状态' in head:
+                    if str(r.get('日期状态') or '').strip() != '已结束日':
+                        audit['未结束或未知日期状态排除'] += 1
+                        continue
+                    if d == cutoff:
+                        audit['数据判定当日未完整排除'] += 1
+                        continue
+                stage='小订阶段' if small else str(r.get('订单阶段') or '').strip()
+                if not small and stage not in ('首销', '平销'):
+                    audit['阶段不明确排除'] += 1
+                    continue
                 match=re.fullmatch(r'D(\d+)',str(r.get('生命周期') or ''),re.I)
                 life=int(match[1]) if match else None
-                stage='小订阶段' if small else str(r.get('订单阶段') or '未知阶段')
                 anchor=dt(r.get('小订开始')) if small else None
                 if not anchor and life and life>0: anchor=d-timedelta(days=life-1)
                 cycle=str(anchor) if anchor and stage!='平销' else stage
@@ -476,7 +497,7 @@ def read_panel(path):
                     if isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v): audit[metric+'非数值']+=1; continue
                     if small and str(r.get('真实逐日')).lower() not in ('true','1','是'): audit['非真实小订排除']+=1; continue
                     src=str(r.get(scol) or '')
-                    if not src or any(s in src for s in ('预测','合成','模拟','缺失')): audit[metric+'来源排除']+=1; continue
+                    if not src or any(s in src for s in ('预测','合成','模拟','缺失','累计','快照','参考曲线','未更新')): audit[metric+'来源排除']+=1; continue
                     key=(str(model),d,metric); signature=(v,stage,src,cycle)
                     if key in seen:
                         if seen[key]!=signature: raise ValueError('重复键冲突'+str(key))

@@ -42,7 +42,8 @@ function run(input){
  const context={sameModel:(a,b)=>a===b,targetState:()=>target,findActual:()=>actual,findStageActual:()=>actual,todayIso:()=>today,
   calendarType,factors:()=>({workday:1,weekend:1,holiday:1}),
   planBridge:(_stage,args)=>math.anchoredAllocate({...args,factors:args.dates.map(()=>1),weights:math.defaultBridgeWeights(args.dates.length)})};
- ctx.bindSmallOrderForecast(root,{small_order_history:[reference]},context);
+ const current=input.fallback?{model:'current',daily_actual:input.fallback_actual!==false,dates:input.fallback.map(row=>row.date),daily_orders:input.fallback.map(row=>row.orders)}:null;
+ ctx.bindSmallOrderForecast(root,{small_order_history:[reference,...current?[current]:[]]},context);
  return {total:root._smallForecastResult.total,stage:root._smallForecastResult.stage,error:root._smallForecastResult.error,
   actual:node('[data-small-kpi="actual"]').textContent,d1:node('[data-small-kpi="d1"]').textContent,
   rows:root._smallForecastResult.rows.map(row=>({date:row.date,orders:row.orders,actual:row.actual,observed:row.observed})),
