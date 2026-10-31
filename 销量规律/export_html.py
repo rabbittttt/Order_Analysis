@@ -93,6 +93,7 @@ def build_web_data(payload, panel):
                 metrics=metrics, grouping=grouping,
                 series=[{key: r.get(key) for key in SERIES_FIELDS} for r in focused],
                 results=filtered, rules=rules, findings=findings, monthly_profiles=monthly_profiles,
+                source_insights=payload.get("source_insights", {}),
                 forecast=payload.get("forecast", {"profiles": [], "backtests": [], "notes": []}))
 
 
@@ -124,6 +125,9 @@ def _packed(data):
     clone["rules"] = pack_records(data["rules"])
     clone["findings"] = pack_records(data.get("findings", []))
     clone["monthly_profiles"] = pack_records(data.get("monthly_profiles", []))
+    clone["source_insights"] = dict(data.get("source_insights", {}))
+    for key in ("inventory", "early_launch", "curves", "hourly"):
+        clone["source_insights"][key] = pack_records(clone["source_insights"].get(key, []))
     clone["results"] = {key: pack_records(rows) for key, rows in data["results"].items()}
     clone["forecast"] = dict(data["forecast"])
     for key in ("profiles", "backtests"):
@@ -143,6 +147,8 @@ DECODER = r"""
   const data = JSON.parse(document.getElementById('patterns-data').textContent);
   data.series = unpack(data.series); data.rules = unpack(data.rules);
   data.findings = unpack(data.findings); data.monthly_profiles = unpack(data.monthly_profiles);
+  data.source_insights = data.source_insights || {};
+  for (const key of ['inventory','early_launch','curves','hourly']) data.source_insights[key] = unpack(data.source_insights[key] || []);
   for (const key of Object.keys(data.results)) data.results[key] = unpack(data.results[key]);
   for (const key of ['profiles', 'backtests']) data.forecast[key] = unpack(data.forecast[key]);
   window.PATTERNS_DATA = data;

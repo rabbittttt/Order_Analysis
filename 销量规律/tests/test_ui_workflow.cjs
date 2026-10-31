@@ -387,6 +387,10 @@ async function capture(page, filename) {
       await page.locator('[data-pattern="week"]').focus(); await page.keyboard.press("ArrowRight");
       assert.equal(await page.locator('[data-pattern="launch"]').getAttribute("aria-selected"), "true");
       await page.keyboard.press("ArrowRight");
+      assert.equal(await page.locator('[data-pattern="structure"]').getAttribute("aria-selected"), "true");
+      await page.keyboard.press("ArrowRight");
+      assert.equal(await page.locator('[data-pattern="hourly"]').getAttribute("aria-selected"), "true");
+      await page.keyboard.press("ArrowRight");
       assert.equal(await page.locator('[data-pattern="holiday"]').getAttribute("aria-selected"), "true");
       await page.locator("#categoryFilter").selectOption("__ALL__");
       await page.locator("#modelFilter").selectOption("__ALL__");
@@ -438,7 +442,7 @@ async function capture(page, filename) {
       await reset();assert.equal(await page.locator('a[href$=".xlsx"]').count(),0);
       assert.ok(await page.locator("#overviewRuleCard").isVisible());
       await page.locator("#allRules").click();assert.equal(await page.locator("#libraryControls").isVisible(),true);
-      const datasetKeys=await page.locator("#libraryTable option").evaluateAll(xs=>xs.map(x=>x.value));assert.equal(datasetKeys.length,19);
+      const datasetKeys=await page.locator("#libraryTable option").evaluateAll(xs=>xs.map(x=>x.value));assert.ok(datasetKeys.length>=20);assert.ok(datasetKeys.includes("monthProgress"));
       assert.match(await page.locator("#libraryControls").innerText(),/独立筛选/);
       for(const key of datasetKeys){
         await page.locator("#libraryTable").selectOption(key);
@@ -462,6 +466,30 @@ async function capture(page, filename) {
       await page.locator("#libraryTable").selectOption("months");await page.setViewportSize({width:390,height:844});await page.waitForTimeout(200);
       assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await capture(page,"sales-full-library-mobile.png");
       await page.setViewportSize({width:1440,height:1000});await reset();
+    });
+    await check("新增源表结构、退订与分时保持原口径和真实零值（隔离夹具）", async () => {
+      const fixture=await context.newPage();
+      await fixture.addInitScript(()=>{let value;Object.defineProperty(window,"PATTERNS_DATA",{configurable:true,get:()=>value,set:incoming=>{
+        const models=["UI源车型A","UI源车型B"],early_launch=models.map((model,i)=>({model,metric:"大定",feature:"D1+D2占最终大定",value:i?0.4:0,unit:"比例",status:"通过",source:"UI首销指标",numerator:i?40:0,denominator:100}));
+        const curves=models.flatMap(model=>[1,2,3].map(day=>({model,stage:"小订",curve:"累计小订转化率",day,value:(day-1)/10,unit:"比例",source:"UI曲线",status:"有效",denominator_note:"原始累计小订"})));
+        const hourly=[...Array.from({length:24},(_,hour)=>({model:models[0],metric:"交车锁单",stage:"首销",date:"2025-01-01",hour,value:1,share:1/24,total:24,status:"有效",source:"UI分时"})),...Array.from({length:23},(_,hour)=>({model:models[1],metric:"大定",stage:"首销",date:"2025-01-01",hour,value:1,share:null,total:null,status:"小时不完整",source:"UI分时"}))];
+        value={...incoming,source_insights:{inventory:[{sheet:"UI源表",rows:2,fields:["车型","指标"],kind:"测试",note:"非业务数据"}],early_launch,curves,hourly,notes:[]}};
+      }});});
+      await fixture.goto(url);await fixture.locator("#sourceResearchMap .research-entry").first().click();
+      assert.equal(await fixture.locator("#pattern-structure").getAttribute("aria-selected"),"true");
+      assert.match(await fixture.locator("#patternPanels").innerText(),/D1\+D2占最终大定/);
+      assert.match(await fixture.locator("#patternPanels").innerText(),/0%/);
+      await fixture.locator("#pattern-hourly").click();
+      await fixture.getByLabel("分时源指标",{exact:true}).selectOption("交车锁单");
+      assert.equal(await fixture.locator("#patternPanels .pattern-card").first().locator("tbody tr").count(),24);
+      assert.ok(await fixture.locator("#patternPanels .pattern-card").first().locator("svg rect").evaluateAll(xs=>Math.max(...xs.map(x=>Number(x.getAttribute("height"))))>150),"hour shares must use a readable percent scale");
+      assert.match(await fixture.locator("#patternIntro").innerText(),/不替代净大定或锁单/);
+      await fixture.getByLabel("分时源指标",{exact:true}).selectOption("大定");
+      assert.match(await fixture.locator("#patternPanels").innerText(),/没有完整有效的24小时记录/);
+      await fixture.reload();assert.equal(await fixture.locator("#pattern-hourly").getAttribute("aria-selected"),"true");
+      assert.equal(await fixture.getByLabel("分时源指标",{exact:true}).inputValue(),"大定");
+      await fixture.setViewportSize({width:390,height:844});await fixture.waitForTimeout(200);assert.ok(await fixture.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+      await capture(fixture,"sales-source-hourly-mobile-fixture.png");await fixture.close();await reset();
     });
     await check("快速连续切换最终状态正确，减少动效后无动画", async () => {
       await page.evaluate(() => ["patterns", "forecast", "evidence", "overview"].forEach(key => document.getElementById("nav-" + key).click()));

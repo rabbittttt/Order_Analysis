@@ -743,6 +743,35 @@ def lock_lag_analysis(panel):
                             status='仅相关性，非转化率或逐单锁单时长' if enough else '不足14个共同日期'))
     return results
 
+def month_progress_analysis(panel):
+    """Describe within-month completion without treating missing days as zero."""
+    output=[]
+    fields=('model','metric','stage','cycle','source')
+    for key,records in group(panel,fields).items():
+        months=defaultdict(list)
+        for row in records:
+            months[(row['date'].year,row['date'].month)].append(row)
+        for (year,month),items in sorted(months.items()):
+            first=date(year,month,1); count=calendar.monthrange(year,month)[1]
+            last=date(year,month,count); by_day={r['date']:r['value'] for r in items}
+            duplicate=len(by_day)!=len(items)
+            complete=not duplicate and all(d in by_day for d in span(first,last))
+            negative=any(v<0 for v in by_day.values())
+            total=sum(by_day.values()) if not duplicate else None
+            status=('同日期重复，需核对' if duplicate else '月份不完整' if not complete
+                    else '月份含负值' if negative else '整月为零' if total==0 else '有效')
+            for checkpoint in (7,14,21,count):
+                cutoff=date(year,month,checkpoint)
+                cumulative=sum(v for d,v in by_day.items() if first<=d<=cutoff) if complete and not negative else None
+                share=cumulative/total if status=='有效' else None
+                output.append(dict(zip(fields,key),year=year,month=month,start=first,end=last,
+                    checkpoint=checkpoint,cutoff=cutoff,current=total,cumulative=cumulative,
+                    observed=len(by_day),expected_days=count,share=share,
+                    calendar_share=checkpoint/count,pace=share/(checkpoint/count) if share is not None else None,
+                    status=status))
+    return output
+
+
 def extended_analysis(panel,cal):
     comparisons=period_comparisons(panel,cal)
     model_rows=[]
@@ -751,7 +780,8 @@ def extended_analysis(panel,cal):
                                stages='、'.join(sorted({r['stage'] for r in rs})),
                                metrics='、'.join(sorted({r['metric'] for r in rs}))))
     return dict(period_comparisons=comparisons,period_summary=summarize_comparisons(comparisons),
-                lock_lags=lock_lag_analysis(panel),model_classes=model_rows)
+                lock_lags=lock_lag_analysis(panel),model_classes=model_rows,
+                month_progress=month_progress_analysis(panel))
 
 
 def sha256_file(path):
@@ -812,6 +842,7 @@ def main():
     rules_path=SCRIPT_PATH.with_name('report_rules.py')
     forecast_path=SCRIPT_PATH.with_name('forecast_insights.py')
     launch_path=SCRIPT_PATH.with_name('launch_patterns.py')
+    source_patterns_path=SCRIPT_PATH.with_name('source_patterns.py')
     web_exporter=SCRIPT_PATH.with_name('export_html.py')
     templates=SCRIPT_PATH.with_name('templates')
 
@@ -824,7 +855,7 @@ def main():
     log('分析目的：辅助销量预测；净大定（留存大定）与交车锁单分别研究')
     required=(('输入工作簿',src),('节假日日历',calendar_path),
               ('网页分组辅助模块',exporter),('报告规则配置',config_path),
-              ('规律汇总模块',rules_path),('上市后销量节奏模块',launch_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
+              ('规律汇总模块',rules_path),('上市后销量节奏模块',launch_path),('源表扩展规律模块',source_patterns_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
               *((f'网页模板 {name}',templates/name) for name in ('patterns.html','patterns.css','patterns.js')))
     missing=[f'{label}不存在：{path}' for label,path in required if not path.is_file()]
     if a.calendar is not None and not a.calendar.is_file():
@@ -867,6 +898,11 @@ def main():
     log(f"上市后销量节奏：{len(result['launch_periods'])} 个周期、{len(result['launch_pacing'])} 条相邻比较，净大定与锁单分别计算")
     log(f'周期比较、车型分类和锁单滞后计算完成，用时 {time.perf_counter()-stage:.1f} 秒')
 
+    log('正在读取首销D1/D2、转化退订曲线和分时数据...')
+    stage=time.perf_counter()
+    source_insights=load_component(source_patterns_path,'sales_source_patterns').build_source_insights(src)
+    log('源表扩展规律完成：'+str({k:len(source_insights.get(k,[])) for k in ('inventory','early_launch','curves','hourly')})+f'，用时 {time.perf_counter()-stage:.1f} 秒')
+
     log('正在建立净大定、锁单预测基准并做滚动回测...')
     stage=time.perf_counter()
     forecast=load_component(forecast_path,'sales_forecast_insights').build_forecast_insights(panel,c,log=log)
@@ -879,7 +915,7 @@ def main():
         raise RuntimeError('分析期间源文件发生变化，已停止导出')
     payload=dict(sample=a.sample_data and not a.real_data,source=str(src),sha256=digest,
                  source_sheets=sorted({r['sheet'] for r in panel}),source_mode='字段级来源' if audit.get('字段级来源表已识别') else '来源候选',audit=audit,calendar_years=sorted(c['years']),calendar_sources=c['sources'],
-                 analysis_end=max(r['date'] for r in panel),results=result,forecast=forecast,
+                 analysis_end=max(r['date'] for r in panel),results=result,forecast=forecast,source_insights=source_insights,
                  calendar_events=[dict(year=y,holiday=n,start=a,end=b) for y,n,a,b in c['events']])
     log('正在准备离线交互网页...')
     web=load_component(web_exporter,'sales_html_exporter')

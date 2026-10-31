@@ -782,5 +782,29 @@ class WebpageLaunchTests(unittest.TestCase):
                 self.assertIn('请手动打开',log.call_args.args[0])
 
 
+class MonthProgressTests(unittest.TestCase):
+    def test_completion_separates_metrics_and_month_lengths(self):
+        panel=records(date(2024,2,1),date(2024,2,29),lambda d:10)
+        lock=[dict(r,metric='交车锁单',value=20 if r['date'].day>7 else 0) for r in panel]
+        output=m.month_progress_analysis(panel+lock)
+        deposit=next(r for r in output if r['metric']=='大定' and r['checkpoint']==7)
+        locked=next(r for r in output if r['metric']=='交车锁单' and r['checkpoint']==7)
+        self.assertAlmostEqual(deposit['share'],7/29)
+        self.assertAlmostEqual(deposit['pace'],1)
+        self.assertEqual(locked['share'],0)
+        self.assertEqual(locked['pace'],0)
+        self.assertEqual({r['checkpoint'] for r in output},{7,14,21,29})
+
+    def test_incomplete_negative_zero_and_duplicate_are_not_progress_factors(self):
+        base=records(date(2025,1,1),date(2025,1,31))
+        cases=[(base[:-1],'月份不完整'),([dict(r,value=-1 if r['date'].day==3 else 100) for r in base],'月份含负值'),
+               ([dict(r,value=0) for r in base],'整月为零'),(base+[base[0]],'同日期重复，需核对')]
+        for panel,status in cases:
+            with self.subTest(status=status):
+                rows=m.month_progress_analysis(panel)
+                self.assertTrue(all(r['share'] is None and r['pace'] is None for r in rows))
+                self.assertEqual({r['status'] for r in rows},{status})
+
+
 if __name__=='__main__': unittest.main()
 
