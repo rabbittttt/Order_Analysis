@@ -69,6 +69,16 @@ CURVE_SHEETS = (
     "大定累计完成度",
 )
 
+# These four sheets describe the small-order window itself.  Other curves
+# whose names mention 小订 (for example 累计小订转化率) describe conversion
+# after launch and must use the 首销 anchor.
+SMALL_ORDER_CURVE_SHEETS = frozenset({
+    "小订当日数量",
+    "小订期退订当日数量",
+    "小订累计完成度",
+    "小订期累计退订率",
+})
+
 _D_HEADER = re.compile(r"^\s*D\s*(\d+)\s*$", re.IGNORECASE)
 _DATE_WORDS = ("日期", "日期", "时间", "时间")
 _MODEL_WORDS = ("代际名", "车型", "模型", "车型名称", "车型代际")
@@ -515,7 +525,7 @@ def _early_features(rows: list[dict[str, Any]], headers: list[str],
                 "numerator_field": numerator_field,
                 "denominator": denominator,
                 "denominator_field": denominator_field,
-                "note": "由源表D1/D2数量构成计算；不重算净大定或锁单。",
+                "note": "由源表D1/D2数量构成计算；不重算留存大定或锁单。",
             })
     return result
 
@@ -536,9 +546,16 @@ def _curve_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
         if not model:
             continue
         meta = _lookup_metadata(model, meta_maps)
-        stage = "小订" if "小订" in sheet and "首销" not in sheet else "首销"
-        if "小订阶段" in row and _text(row.get("小订阶段")):
-            stage = "小订" if "小订" in _text(row.get("小订阶段")) or stage == "小订" else stage
+        stage = "小订" if sheet in SMALL_ORDER_CURVE_SHEETS else "首销"
+        # A populated source stage field is more specific than a sheet-name
+        # fallback.  Only accept the two known stage labels; do not treat an
+        # unrelated text value as evidence for a phase.
+        explicit_stage = _text(row.get("小订阶段")) if "小订阶段" in row else ""
+        if explicit_stage:
+            if "小订" in explicit_stage:
+                stage = "小订"
+            elif "首销" in explicit_stage or "平销" in explicit_stage:
+                stage = "首销"
         anchor_date, anchor_type = _anchor(meta, stage)
         dimensions = _meta_dimensions(meta)
         denominator, denominator_field = _ratio_denominator(meta, sheet)
@@ -581,7 +598,7 @@ def _curve_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
                 "anchor_date": anchor_date,
                 "anchor_type": anchor_type,
                 "status": status,
-                "note": ("原始累计快照，不求和" if cumulative else "原始D日值；结构曲线独立于净大定/锁单"),
+                "note": ("原始累计快照，不求和" if cumulative else "原始D日值；结构曲线独立于留存大定/锁单"),
                 "raw": {key: _json_value(value) for key, value in row.items()
                         if key in ("代际名", "二级代际名", "小订阶段", header)},
             })
@@ -715,7 +732,7 @@ def _hourly_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
                 ] if len(values) > 1 else []),
                 "status": row_status,
                 "group_status": group_status,
-                "note": "源表无净大定分时字段；按原始小时指标独立计算，不互相替代。",
+                "note": "源表无留存大定分时字段；按原始小时指标独立计算，不互相替代。",
                 "source": sheet,
                 "source_sheet": sheet,
                 "anchor_date": anchor_date,
@@ -779,7 +796,8 @@ def build_source_insights(path: str | Path) -> dict[str, Any]:
     empty["notes"].extend(_note_lines(note_rows))
     empty["notes"].append("源表外部来源列仅作为追溯文本，不打开其指向的文件。")
     empty["notes"].append("累计曲线按D日原始快照输出，不求和、不重算留存大定或锁单。")
-    empty["notes"].append("by时无净大定分时字段；小时指标按原字段分别展示，不用大定替代净大定，也不用锁单替代大定。")
+    empty["notes"].append("小订曲线仅小订当日数量、小订期退订当日数量、小订累计完成度和小订期累计退订率；累计小订转化率按首销锚点处理。")
+    empty["notes"].append("by时无留存大定分时字段；小时指标按原字段分别展示，不用大定替代留存大定，也不用锁单替代大定。")
     if source_cutoff:
         empty["notes"].append(f"数据判定日期：{source_cutoff.isoformat()}；之后日期标记为未来数据，不参与完整训练样本。")
 

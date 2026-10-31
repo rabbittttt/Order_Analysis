@@ -16,6 +16,8 @@ const events = meta.calendar_events || [];
 const sourceInsights = data.source_insights || {};
 const PAGE_SIZE = 100;
 const cache = new Map();
+const metricDateWindows = new Map();
+const expandedEvidenceTitles = new Set();
 const numberFmt = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 1});
 const integerFmt = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 0});
 const pctFmt = new Intl.NumberFormat("zh-CN", {style:"percent", maximumFractionDigits:1});
@@ -55,7 +57,7 @@ const quantile = (values, p) => {
 };
 const unique = values => [...new Set(values.filter(v => v !== undefined && v !== null && String(v) !== ""))];
 const safeArray = v => Array.isArray(v) ? v.map(String) : v == null ? [] : String(v).split(/[、,，;；]/).map(x => x.trim()).filter(Boolean);
-const metricName = key => (metricByKey.get(key) || {}).label || (key === "交车锁单" ? "锁单" : "净大定");
+const metricName = key => ({小订数量:"小订",留存大定:"留存大定",交车锁单:"锁单"}[key] || (metricByKey.get(key) || {}).label || key);
 const metricSource = key => (metricByKey.get(key) || {}).source_label || key;
 const categoryOf = model => {
   const x = entryByModel.get(String(model));
@@ -140,14 +142,16 @@ function scopedOptionRows(metric) {
   });
 }
 function scopedStages(metric) {
+  if(metric==="小订数量")return optionRows(metric).length?["小订阶段"]:[];
   return unique(scopedOptionRows(metric).map(r => String(r.stage || "")).filter(Boolean)).sort((a,b)=>a.localeCompare(b,"zh-CN"));
 }
 function launchStageOptions() {
   const stages=scopedStages(state.metric);
-  return state.page==="patterns"&&state.pattern==="launch"&&stages.includes("首销")&&stages.includes("平销")?stages.concat("首销及平销"):stages;
+  return ((state.page==="patterns"&&state.pattern==="launch")||state.page==="evidence")&&stages.includes("首销")&&stages.includes("平销")?stages.concat("首销及平销"):stages;
 }
 function stageMatches(row,kind) {
-  const requested=String(state.stage||""),joint=requested==="首销及平销"&&state.page==="patterns"&&state.pattern==="launch";
+  if(state.metric==="小订数量")return ["小订","小订阶段","小订期"].includes(row.stage);
+  const requested=String(state.stage||""),joint=requested==="首销及平销";
   if(kind==="launch_periods"){
     const stage=String(row.stage||"");
     return joint?["首销","平销","跨阶段"].includes(stage):stage===requested;
@@ -214,7 +218,7 @@ function updateFilters(resetDate) {
   const stages = scopedStages(state.metric),stageOptions=launchStageOptions();
   const stagePref = stageOptions.includes(state.stage) ? state.stage : stages.includes("平销") ? "平销" : stages.includes("首销") ? "首销" : stages[0] || "";
   state.stage = stagePref;
-  setOptions($("stageFilter"),stageOptions.map(x=>({value:x,label:x})),stagePref);
+  setOptions($("stageFilter"),stageOptions.map(x=>({value:x,label:x==="小订阶段"?"小订期":x})),stagePref);
 
   const bounds = metricBounds.get(state.metric) || ["",""];
   if (resetDate || !state.start || !state.end) {
@@ -395,6 +399,8 @@ function chartTrend(series,grain){
   return pts;
 }
 function renderTrend(){
+  if(state.metric==="小订数量"){state.compare=false;$("compareMetrics").checked=false;}
+  $("compareMetrics").disabled=state.metric==="小订数量";
   const primary=currentSeries(state.metric),other=state.compare?currentSeries(state.metric==="留存大定"?"交车锁单":"留存大定"):[];
   const grid=$("trendCharts");clear(grid);
   grid.classList.toggle("is-comparison",state.compare);
@@ -428,16 +434,6 @@ function groupedStats(rowsIn,field,keyFn,periodFn){
     if(ma&&mb)return Number(ma[1])-Number(mb[1]);
     return String(a.key).localeCompare(String(b.key),"zh-CN");
   });
-}
-function renderRatio(){
-  const rowsC=comparisons(state.grain,state.metric),stats=summary(rowsC,"daily_ratio");
-  $("ratioSubtitle").textContent=state.grain+"周期日均倍率；只保留上期和本期完整落在所选日期窗内的有效比较。";
-  const box=$("ratioSummary");clear(box);
-  [["P25",stats.p25,"周期中较低的一侧"],["中位数",stats.typical,"车型等权后典型值"],["P75",stats.p75,"周期中较高的一侧"]].forEach(x=>{
-    const item=el("div","ratio-item",null,box);el("span","",x[0],item);el("strong","",fmtPct(x[1]),item);el("small","",x[2],item);
-  });
-  $("ratioDescription").textContent=stats.samples?stats.periods+" 个完整周期、"+stats.models+" 个车型、"+stats.samples+" 条车型周期记录。日均倍率便于比较不同长度周期；样本分布不能当作预测置信区间。":
-    "没有满足口径与完整窗口要求的周期比较。可扩大日期范围，或检查该车型阶段是否覆盖完整的相邻周期。";
 }
 function drawBars(container,items,labelKey,valueKey,formatValue,kind,options={}){
   clear(container);
@@ -699,17 +695,69 @@ function launchComparisonStats(rows){
   const stats=[...groups.entries()].map(([label,items])=>{const daily=summary(items.map(r=>({model:r.model,cycle:r.cycle,value:r.dailyValue})),"value"),total=summary(items.map(r=>({model:r.model,cycle:r.cycle,value:r.totalValue})),"value");return {label,periodNo:Number(items[0].period_no),dailyTypical:daily.typical,dailyP25:daily.p25,dailyP75:daily.p75,totalTypical:total.typical,models:daily.models,n:daily.samples};}).sort((a,b)=>a.periodNo-b.periodNo);
   return {valid,stats};
 }
+const researchDomains={calendar:["months","week","holiday","cycles"],lifecycle:["launch","structure","hourly"],orders:["lags"]};
+function patternDomain(pattern){return Object.keys(researchDomains).find(k=>researchDomains[k].includes(pattern))||"calendar";}
+function patternAvailable(pattern){
+  if(state.metric==="小订数量")return !["launch","holiday","lags"].includes(pattern);
+  return !(pattern==="structure"&&state.metric==="交车锁单");
+}
+function renderResearchNavigation(){
+  if(!patternAvailable(state.pattern))state.pattern=state.metric==="小订数量"?"structure":"lags";
+  const domain=patternDomain(state.pattern);
+  document.querySelectorAll("[data-domain]").forEach(b=>{
+    const selected=b.dataset.domain===domain;
+    b.classList.toggle("is-active",selected);b.setAttribute("aria-selected",String(selected));b.tabIndex=selected?0:-1;
+    b.disabled=!researchDomains[b.dataset.domain].some(patternAvailable);
+  });
+  document.querySelectorAll("[data-pattern]").forEach(b=>{
+    b.hidden=patternDomain(b.dataset.pattern)!==domain;b.disabled=!patternAvailable(b.dataset.pattern);
+    if(b.dataset.pattern==="structure")b.textContent=state.metric==="小订数量"?"小订进度与退订":"转化与订单结构";
+  });
+  const context=$("patternContext");if(context){
+    clear(context);
+    const scope=el("span","","以下按当前口径、车型、阶段和日期筛选；累计曲线不与逐日销量相加。",context);
+    scope.className="research-scope";
+    const evidence=el("button","button button-quiet","核对本专题证据",context);evidence.type="button";
+    evidence.addEventListener("click",()=>openLibrary(({months:"monthProgress",week:"weekly",holiday:"holidays",cycles:"comparisons",launch:"launchPeriods",structure:"sourceCurves",hourly:"sourceHourly",lags:"lags"})[state.pattern]));
+    const validate=el("button","button button-quiet","验证预测价值 →",context);validate.type="button";validate.addEventListener("click",()=>updatePage("forecast"));
+  }
+}
+function lagRows(){
+  if(state.metric==="小订数量")return [];
+  return (result.lock_lags||[]).filter(r=>r.metric==="留存大定"&&stageMatches(r)&&modelInScope(r)&&recordInWindow(r));
+}
+function renderLagResearch(container){
+  $("patternIntro").textContent="留存大定与锁单按同车型、阶段和批次配对，比较0—3天滞后。相关性只提供时序线索，不能解释为逐单转化率或锁单预测倍率。";
+  const records=lagRows(),valid=records.filter(r=>num(r.level_corr)!==null);
+  miniKpis($("patternKpis"),[{label:"覆盖车型",value:fmtInt(unique(valid.map(r=>r.model)).length),foot:"当前完整日期窗口"},{label:"配对序列",value:fmtInt(unique(valid.map(r=>[r.model,r.cycle,r.deposit_source,r.lock_source].join("|"))).length),foot:"来源和批次分别保留"},{label:"研究滞后",value:"0—3天",foot:"不同滞后使用共同日期"},{label:"结论边界",value:"时序线索",foot:"尚非预测有效证明"}]);
+  const c=card(container,"锁单通常滞后留存大定几天？","先车型内汇总，再对车型取中位数；共同趋势可能同时抬高水平相关，需结合日变化相关核对。");
+  const stats=[0,1,2,3].map(lag=>{const list=valid.filter(r=>Number(r.lag)===lag);return {lag,level:summary(list,"level_corr"),change:summary(list,"change_corr")};});
+  const table=el("div","table-wrap","",c);makeTable(table,["滞后天数","水平相关中位数","日变化相关中位数","车型数","序列记录数"],stats.map(r=>[r.lag+"天",fmtNum(r.level.typical),fmtNum(r.change.typical),fmtInt(r.level.models),fmtInt(r.level.samples)]),"没有完整落在当前日期窗的配对序列。");
+  if(!records.length)el("p","note-line","请检查日期窗是否覆盖整段配对序列。缺少任一口径时，不生成锁单关系。",c);
+}
 function renderPatternTabs(){
+  renderResearchNavigation();
   document.querySelectorAll("[data-pattern]").forEach(b=>{b.classList.toggle("is-active",b.dataset.pattern===state.pattern);b.setAttribute("aria-selected",b.dataset.pattern===state.pattern?"true":"false");b.tabIndex=b.dataset.pattern===state.pattern?0:-1;});
   $("patternPanels").setAttribute("aria-labelledby","pattern-"+state.pattern);
   const container=$("patternPanels");clear(container);
   const launchControl=$("launchControls");if(launchControl)launchControl.hidden=state.pattern!=="launch";
+  const trend=$("cycleTrend");if(trend){trend.hidden=state.pattern!=="cycles";if(!trend.hidden)renderTrend();}
   const metric=state.metric;
   const intro=$("patternIntro");
+  if(state.pattern==="lags"){
+    renderLagResearch(container);return;
+  }
   if(state.pattern==="months"){
-    intro.textContent="先看相邻月怎么变化，再看每月第7、14、21天通常完成了多少。完整年度才用于判断12个月季节性；净大定、锁单及首销、平销分别计算。";
+    intro.textContent="先看相邻月怎么变化，再看每月第7、14、21天通常完成了多少。完整年度才用于判断12个月季节性；留存大定、锁单及首销、平销分别计算。";
     const annual=monthSeasonRows(metric),mcomp=comparisons("月",metric),monthStats=groupedStats(mcomp,"daily_ratio",r=>Number(dateOnly(r.start).slice(5,7))+"月"),me=monthEndRows(metric),life=lifecycleRows(metric);
     const progress=resultBase("month_progress",metric).filter(r=>dateOnly(r.start)>=state.start&&dateOnly(r.end)<=state.end&&r.status==="有效");
+    if(!mcomp.length&&!progress.length&&!me.length&&!annual.some(r=>r.n)){
+      miniKpis($("patternKpis"),[{label:"当前观测车型",value:fmtInt(unique(currentSeries(metric).map(r=>r.model)).length),foot:"按当前口径与阶段"},{label:"完整月比较",value:"0",foot:"不以零散日推断月份规律"}]);
+      emptyBox(container,"当前范围不足以判断月份规律",metric==="小订数量"?"小订期通常不足一个完整自然月。建议先研究小订D天进度和周内节奏；有完整月数据后，本专题自动提供1—12月比较。":"尚无完整相邻月、整月进度或完整年度样本。当前零散观测仍可在周期走势与数据证据中查看；内网完整历史进入后自动扩展。");
+      const actions=el("div","library-actions","",container);
+      for(const [pattern,label] of (metric==="小订数量"?[["structure","查看小订进度"],["week","研究周内节奏"]]:[["cycles","查看当前周期走势"],["launch","研究上市后节奏"]])){const button=el("button","button button-quiet",label,actions);button.type="button";button.addEventListener("click",()=>activatePattern(pattern));}
+      return;
+    }
     miniKpis($("patternKpis"),[
       {label:"相邻完整月比较",value:fmtInt(mcomp.length),foot:"车型周期记录"},
       {label:"月内进度样本",value:fmtInt(progress.filter(r=>r.checkpoint===7).length),foot:"完整、非负且总量大于0的车型月"},
@@ -719,7 +767,7 @@ function renderPatternTabs(){
     const dual=el("div","pattern-dual","",container);
     let c=card(dual,"相邻月：本月是上月的多少？","按日均排除月份天数影响；前后两个完整自然月都须落在当前日期范围内。");
     let chart=el("div","pattern-chart","",c);drawBars(chart,monthStats.filter(x=>x.median!==null),"key","median",fmtPct,"vertical");
-    let monthTable=el("div","table-wrap","",c);makeTable(monthTable,["当前月份","P25","日均倍率中位数","P75","车型周期记录数","车型数"],monthStats.map(x=>[x.key,fmtPct(x.p25),fmtPct(x.median),fmtPct(x.p75),fmtInt(x.n),fmtInt(unique(mcomp.filter(r=>(Number(dateOnly(r.start).slice(5,7))+"月")===x.key).map(r=>r.model)).length)]),"日期窗内没有完整的相邻自然月比较。");
+    let monthTable=el("div","table-wrap","",c);makeTable(monthTable,["当前月份","P25","日均倍率中位数","P75","车型周期记录数","车型数"],Array.from({length:12},(_,i)=>{const x=monthStats.find(r=>r.key===(i+1)+"月");return x?[x.key,fmtPct(x.p25),fmtPct(x.median),fmtPct(x.p75),fmtInt(x.n),fmtInt(x.models)]:[(i+1)+"月","—","—","—","0","0"];}),"日期窗内没有完整的相邻自然月比较。");
     c=card(dual,"月内累计：到第几天完成了多少？","累计量 / 整月量，先车型内再车型等权取中位数。只看完整历史月，不用当前未完结月拟合。");
     const progressStats=[7,14,21].map(day=>{const samples=progress.filter(r=>r.checkpoint===day),s=summary(samples,"share"),pace=summary(samples,"pace");return {day,s,pace};});
     chart=el("div","pattern-chart bar-list","",c);drawBars(chart,progressStats.map(r=>({label:"第"+r.day+"天",value:r.s.typical})).filter(r=>r.value!==null),"label","value",fmtPct,"horizontal");
@@ -746,16 +794,12 @@ function renderPatternTabs(){
     let c=card(dual,"周一至周日指数","整周日均 = 100；中位数按车型/完整周样本计算。");
     let chart=el("div","pattern-chart","",c);drawBars(chart,w.weekday.filter(x=>x.value!==null),"label","value",v=>fmtNum(v),"vertical");
     const tbl=el("div","table-wrap","",c);makeTable(tbl,["星期","P25 指数","中位指数","P75 指数","车型周记录数"],w.weekday.map(x=>[x.label,fmtNum(x.p25),fmtNum(x.value),fmtNum(x.p75),fmtInt(x.n)]),"所选日期窗没有完整周。");
-    c=card(dual,"月内末7天变化","末7天日均 / 前段日均，按月展示。");
-    const mStats=groupedStats(ends,"ratio",r=>String(r.month)+"月");
-    chart=el("div","pattern-chart","",c);drawBars(chart,mStats.filter(x=>x.median!==null),"key","median",fmtPct,"vertical");
-    const endTbl=el("div","table-wrap","",c);makeTable(endTbl,["月份","P25","倍率中位数","P75","车型月记录数"],mStats.map(x=>[x.key,fmtPct(x.p25),fmtPct(x.median),fmtPct(x.p75),fmtInt(x.n)]),"暂无完整月份。");
-    c=card(container,"首销生命周期补充","生命周期规律按完整首7日批次计算，不并入平销。");
-    const lif=lifecycleRows(metric);const lt=el("div","table-wrap","",c);makeTable(lt,["车型","首销批次","D1 / D3–D7 日均","首2天占首7天","有效批次数"],lif.map(r=>[r.model,r.cycle,fmtPct(r.d1_ratio),fmtPct(r.first2_share),fmtInt(lif.length)]),"该阶段没有完整生命周期样本。");
+    c=card(dual,"周末与工作日差异稳定吗？","每个完整普通周的周末日均 / 工作日日均；按车型等权描述历史分布。");
+    const endTbl=el("div","table-wrap","",c);makeTable(endTbl,["P25","典型倍率","P75","车型数","完整周数"],[[fmtPct(wkSummary.p25),fmtPct(wkSummary.typical),fmtPct(wkSummary.p75),fmtInt(wkSummary.models),fmtInt(wkSummary.samples)]],"暂无完整周。");
   }else if(state.pattern==="launch"){
     const control=$("launchControls");if(control){control.hidden=false;$("launchGrain").value=state.launchGrain;}
     const stageLabel=state.stage==="首销及平销"?"首销及平销":state.stage||"当前阶段",canJoint=scopedStages(metric).includes("首销")&&scopedStages(metric).includes("平销");
-    intro.textContent="上市后销量节奏取自首销开始后的实际周/月期间：周按首销日D1起每7天，月按首销日逐月对齐（月末日期截到当月末，不是自然月）。联合阶段展示首销、平销及跨阶段记录，单选阶段只保留对应完整期间。日均销量按完整、非负期间计算，净大定与锁单严格分开。当前粒度："+state.launchGrain+"；当前阶段："+stageLabel+"。";
+    intro.textContent="上市后销量节奏取自首销开始后的实际周/月期间：周按首销日D1起每7天，月按首销日逐月对齐（月末日期截到当月末，不是自然月）。联合阶段展示首销、平销及跨阶段记录，单选阶段只保留对应完整期间。日均销量按完整、非负期间计算，留存大定与锁单严格分开。当前粒度："+state.launchGrain+"；当前阶段："+stageLabel+"。";
     const periods=launchPeriodRows(metric),periodStats=launchPeriodStats(periods),comparisons=launchComparisonRows(metric),comparisonStats=launchComparisonStats(comparisons),validComparisons=comparisonStats.valid;
     const allPeriodRows=launchRows("launch_periods",metric),allComparisonRows=launchRows("launch_pacing",metric);
     const periodModels=unique(periods.map(r=>String(r.model||""))).length,comparisonModels=unique(validComparisons.map(r=>String(r.model||""))).length;
@@ -813,7 +857,7 @@ function renderPatternTabs(){
     methodSummary.setAttribute("aria-controls","holiday-method-body");
     const methodBody=el("div","holiday-method-body","",method);methodBody.id="holiday-method-body";
     [
-      "计算对象：净大定（源字段“留存大定”）与锁单分开；单车型在同口径、平销阶段、批次和来源内计算。",
+      "计算对象：留存大定（源字段“留存大定”）与锁单分开；单车型在同口径、平销阶段、批次和来源内计算。",
       "分段：节前为节日开始前7天，节中为节日起止日（含首尾），节后为结束后7天。",
       "同星期基准：从节日开始前第8—35天、节日结束后第8—35天，选取与目标日相同星期的普通日，取其销量的算术平均。排除节假日、调休工作日及任一节日前后7天，普通周末可入选。同星期至少4个有效对照日，且节日前后两侧都有；基准必须大于0。",
       "公式：每日指数＝当日销量÷同星期基准×100%；阶段指数＝该段每日指数的算术平均。0销量保留为有效值；100%持平，120%表示高20%，不是同比或环比。",
@@ -829,6 +873,10 @@ function renderPatternTabs(){
     drawBars(scopeChart,scopeBars.filter(x=>num(x.value)!==null),"label","value",fmtPct,"horizontal");
     const scopeTable=el("div","table-wrap","",scopeCard);
      makeTable(scopeTable,["节日","年份","范围","节前指数","节中指数","节后指数","有效车型","所选车型","状态"],scopeRows.map(r=>[r.holiday,r.year,r.scope,fmtPct(r.before),fmtPct(r.during),fmtPct(r.after),fmtInt(r.valid_models),fmtInt(r.selected_models),r.status]),"当前日期窗没有可展示的节假日范围汇总；需覆盖节日前后各7日。若提示旧网页缺少逐日基准，请重新运行分析脚本。");
+    if(!scopeRows.length&&!hs.length){
+      clear(scopeChart);el("p","note-line","本范围尚无满足节前、节中、节后及同星期双侧对照要求的事件。保留上方计算说明；完整历史进入后自动展示，缺少对照时不生成指数。",scopeCard);
+      return;
+    }
     const c=card(container,"节前、节中、节后日均指数（逐车型）","条形为车型典型水平（中位数）；下方表按年份/车型保留明细，第三表保留原始批次/来源。");
     if(state.stage!=="平销"){
       const reason=holidayStageAvailable?"节假日对照仅基于“平销”阶段；当前为“"+state.stage+"”，不会跨阶段填补。":"当前筛选范围没有“平销”阶段数据；请切换车型或分类，或点击“重置”恢复完整范围。";
@@ -852,10 +900,10 @@ function renderPatternTabs(){
   }else{
     intro.textContent="周期变化率以当前周期与紧邻前一完整周期比较。百分比中位数按车型等权；P25/P75描述历史周期波动，不能直接解释为预测区间。";
     const kinds=["日","周","月","年"];
-    const summaries=kinds.map(k=>({kind:k,rows:comparisons(k,metric),stats:summary(comparisons(k,metric),"daily_ratio")}));
+    const summaries=kinds.map(k=>({kind:k,rows:comparisons(k,metric),stats:summary(comparisons(k,metric),"daily_ratio"),total:summary(comparisons(k,metric),"ratio")}));
     miniKpis($("patternKpis"),summaries.map(x=>({label:x.kind+"周期典型日均倍率",value:fmtPct(x.stats.typical),foot:fmtInt(x.stats.periods)+"个周期 · "+fmtInt(x.stats.models)+"车型"})));
     const c=card(container,"按比较类型查看 P25 / 中位数 / P75","完整窗口条件：前一期与本期都须全部处于当前筛选日期内；倍率按日均标准化。");
-    const table=el("div","table-wrap","",c);makeTable(table,["比较周期","P25","车型等权中位数","P75","车型数","完整日历周期","车型周期记录"],summaries.map(x=>[x.kind,fmtPct(x.stats.p25),fmtPct(x.stats.typical),fmtPct(x.stats.p75),fmtInt(x.stats.models),fmtInt(x.stats.periods),fmtInt(x.stats.samples)]),"没有符合日期范围要求的相邻周期。");
+    const table=el("div","table-wrap","",c);makeTable(table,["比较周期","总量比中位数","日均比 P25","日均比中位数","日均比 P75","车型数","完整日历周期","车型周期记录"],summaries.map(x=>[x.kind,fmtPct(x.total.typical),fmtPct(x.stats.p25),fmtPct(x.stats.typical),fmtPct(x.stats.p75),fmtInt(x.stats.models),fmtInt(x.stats.periods),fmtInt(x.stats.samples)]),"没有符合日期范围要求的相邻周期。");
     const trans=groupedStats(comparisons(state.grain,metric),"daily_ratio",r=>r.transition||"前期→本期");
     const c2=card(container,"当前周期的变化分布","当前趋势周期："+state.grain+"；显示实际样本可辨识的转换类别。");
     const bars=el("div","pattern-chart","",c2);drawBars(bars,trans.filter(x=>x.median!==null),"key","median",fmtPct,"vertical");
@@ -876,10 +924,29 @@ function sourceSelect(parent,label,values,key,preferred){
 function batchSamples(records){return records.map(r=>({...r,period:String(r.model)+"|"+String(r.cycle||r.anchor_date||r.date||r.source||"源表快照")}));}
 function validSourceValue(row){return num(row.value)!==null&&row.value>=0&&/^(有效|通过)/.test(row.status||"");}
 function sourceValue(value,unit){return /比例|率|占比|倍|ratio|percent/i.test(unit||"")?fmtPct(value):fmtNum(value);}
+function renderPresaleResearch(container,curves){
+  const eligible=curves.filter(r=>r.stage==="小订"&&/^小订/.test(r.curve||""));
+  const available=unique(eligible.map(r=>r.curve));
+  const valid=eligible.filter(validSourceValue),daily=currentSeries(state.metric);
+  miniKpis($("patternKpis"),[{label:"小订观测车型",value:fmtInt(unique(daily.map(r=>r.model)).length),foot:"小订期逐日记录"},{label:"小订曲线",value:fmtInt(available.length),foot:"原始数量与累计比例分开"},{label:"有效曲线车型",value:fmtInt(unique(valid.map(r=>r.model)).length),foot:"当前日期范围"},{label:"用途",value:"进度参照",foot:"不自动当作转大定比例"}]);
+  const c=card(container,"小订期走到第几天，通常完成了多少？","按各车型原始小订起始日对齐。选择数量、累计完成度或退订率，分别核对原始分母；D天覆盖可能不同。");
+  const controls=el("div","source-controls","",c);sourceSelect(controls,"小订研究曲线",available,"sourceCurve","小订累计完成度");
+  const selected=eligible.filter(r=>r.curve===state.sourceCurve),unit=selected[0]?.unit||"比例";
+  const stats=groupedStats(batchSamples(selected.filter(validSourceValue)),"value",r=>Number(r.day),r=>r.period).sort((a,b)=>Number(a.key)-Number(b.key));
+  const chart=el("div","pattern-chart bar-list","",c);chart.style.maxHeight="400px";
+  drawBars(chart,stats.map(r=>({label:"D"+r.key+" · "+r.models+"车型",value:r.median})),"label","value",v=>sourceValue(v,unit),"horizontal");
+  const table=el("div","table-wrap","",c);makeTable(table,["小订第N天","典型水平","P25","P75","车型数","记录数"],stats.map(r=>["D"+r.key,sourceValue(r.median,unit),sourceValue(r.p25,unit),sourceValue(r.p75,unit),fmtInt(r.models),fmtInt(r.n)]),"当前筛选没有可定位到小订期日期的有效曲线。请核对源表阶段起止日与日期范围。");
+  const method=el("details","profile-detail","",c);el("summary","","分母与完整性如何判断",method);
+  unique(selected.map(r=>[r.denominator_note,r.note,r.status].filter(Boolean).join("；"))).slice(0,8).forEach(text=>el("p","",text,method));
+  if(!stats.length){const action=el("button","button button-quiet","核对小订逐日记录",c);action.type="button";action.addEventListener("click",()=>{state.evidence="daily";updatePage("evidence");});}
+}
 function renderSourcePatterns(container,kind){
   const curves=sourceScoped(sourceInsights.curves),early=sourceScoped(sourceInsights.early_launch),hourly=sourceScoped(sourceInsights.hourly);
-  $("patternIntro").textContent="源表辅助研究：按左侧车型分类与车型筛选；阶段、D日和日期使用各源表自己的定义，不随左侧日期或净大定/锁单口径重算。这里的累计快照、比例及分时样本不与逐日销量相加，也不替代净大定或锁单。";
+  $("patternIntro").textContent=state.metric==="小订数量"?"研究小订期的累计进度、退订和分时节奏。各车型按原表阶段起点对齐D天，当前日期范围内的有效观测参与；累计值不跨日求和。":"订单结构是辅助研究，保留源表“大定、小转大、直接大定”的名称与分母，不替代留存大定。当前车型、阶段和日期共同限定样本。";
   if(kind==="structure"){
+    if(state.metric==="小订数量"){
+      renderPresaleResearch(container,curves);return;
+    }
     miniKpis($("patternKpis"),[
       {label:"D1/D2覆盖车型",value:fmtInt(unique(early.map(r=>r.model)).length),foot:"源表已提供的首销指标"},
       {label:"转化与退订曲线",value:fmtInt(unique(curves.map(r=>r.curve)).length),foot:"分别保留原始分母与累计定义"},
@@ -909,8 +976,13 @@ function renderSourcePatterns(container,kind){
     const action=el("button","button button-quiet","查看逐车型原值与分母",curveCard);action.type="button";action.addEventListener("click",()=>openLibrary("sourceCurves"));
   }else{
     const c=card(container,"分时节奏：哪些时段订单更集中？","每个完整车型日的24小时数量之和作为分母。先车型内、再车型等权取中位数；不完整、重复冲突、负值或总量为0时不算份额。");
-    const controls=el("div","source-controls","",c);const stages=unique(hourly.map(r=>r.stage));sourceSelect(controls,"分时数据阶段",stages,"sourceHourStage","首销");
-    const staged=hourly.filter(r=>r.stage===state.sourceHourStage),available=unique(staged.map(r=>r.metric));sourceSelect(controls,"分时源指标",available,"sourceHourMetric",state.metric);
+    const staged=hourly,available=unique(staged.map(r=>r.metric));
+    state.sourceHourStage=state.stage;state.sourceHourMetric=state.metric;
+    if(!available.includes(state.metric)){
+      miniKpis($("patternKpis"),[{label:"当前口径",value:metricName(state.metric),foot:state.stage},{label:"有效车型日",value:"0",foot:"没有相同口径的分时源值"}]);
+      emptyBox(c,"源表未提供当前口径的分时数据","当前选择为"+metricName(state.metric)+" · "+state.stage+"。不会使用大定、小转大等指标替代。可在数据证据中核对源表覆盖。");
+      const button=el("button","button button-quiet","查看源表内容地图",c);button.type="button";button.addEventListener("click",()=>openLibrary("sourceInventory"));return;
+    }
     const selected=staged.filter(r=>r.metric===state.sourceHourMetric),valid=selected.filter(r=>num(r.share)!==null);
     const days=unique(valid.map(r=>r.model+"|"+r.date+"|"+r.source));
     miniKpis($("patternKpis"),[
@@ -919,7 +991,7 @@ function renderSourcePatterns(container,kind){
       {label:"覆盖车型",value:fmtInt(unique(valid.map(r=>r.model)).length),foot:"不能外推到全部车型和平销期"},
       {label:"当前主口径",value:metricName(state.metric),foot:available.includes(state.metric)?"可切换对应源指标":"源表未提供该口径分时，当前为辅助指标"}
     ]);
-    el("p","pattern-intro",available.includes(state.metric)?"主口径与分时源指标仍分别标示，请核对当前选择。":"源表没有“"+metricName(state.metric)+"”的分时值。下方展示明确标注的辅助指标，不据此生成该口径的小时销量。",c);
+    el("p","pattern-intro",available.includes(state.metric)?"仅展示当前口径和阶段的完整24小时样本。":"源表没有“"+metricName(state.metric)+"”的分时值。下方展示明确标注的辅助指标，不据此生成该口径的小时销量。",c);
     const stats=groupedStats(valid.map(r=>({...r,start:r.date})),"share",r=>Number(r.hour),r=>r.date).sort((a,b)=>Number(a.key)-Number(b.key));
     const chart=el("div","pattern-chart","",c);drawBars(chart,stats.map(r=>({label:r.key+"时",value:r.median})),"label","value",fmtPct,"vertical",{width:Math.max(760,chart.clientWidth),height:260,minimum:0.01,axes:true,singleColor:true});
     const table=el("div","table-wrap","",c);makeTable(table,["小时","典型份额","车型日P25","车型日P75","车型数","有效车型日"],stats.map(r=>[r.key+"时",fmtPct(r.median),fmtPct(r.p25),fmtPct(r.p75),fmtInt(r.models),fmtInt(r.n)]),"当前源指标没有完整有效的24小时记录。");
@@ -931,45 +1003,6 @@ function renderSourcePatterns(container,kind){
   }
 }
 
-function renderSignals(){
-  const c=$("overviewSignals");clear(c);
-  const kinds=comparisons(state.grain,state.metric),s=summary(kinds,"daily_ratio");
-  let cardEl=el("article","signal-card",null,c);
-  el("div","signal-card-title",state.grain+"日均变化倍率",cardEl);
-  el("strong","signal-value",fmtPct(s.typical),cardEl);
-  el("div","signal-detail","P25 "+fmtPct(s.p25)+" · P75 "+fmtPct(s.p75)+" · "+s.periods+"完整周期",cardEl);
-  const months=monthSeasonRows(state.metric).filter(x=>x.median!==null).sort((a,b)=>b.median-a.median);
-  cardEl=el("article","signal-card",null,c);el("div","signal-card-title","全年月份季节性",cardEl);
-  el("strong","signal-value",months.length?months[0].month+" · "+fmtNum(months[0].median):"暂无",cardEl);
-  el("div","signal-detail",months.length?"相对完整年度月均为100；样本 "+months[0].n:"缺少覆盖完整自然年的平销样本",cardEl);
-  const wk=weeklyStats(state.metric),wkSummary=summary(wk.valid.map(r=>({...r,start:r.week})),"ratio");
-  cardEl=el("article","signal-card",null,c);el("div","signal-card-title","周末 / 工作日日均",cardEl);
-  el("strong","signal-value",fmtPct(wkSummary.typical),cardEl);
-  el("div","signal-detail","来自每个完整周结果中的周末日均/工作日均ratio；"+wkSummary.samples+"条车型周记录、"+wkSummary.periods+"周",cardEl);
-  $("overviewInsight").textContent=wkSummary.typical!==null?metricName(state.metric)+" · "+state.stage+"：周末日均约为工作日的"+fmtPct(wkSummary.typical)+"（"+wkSummary.models+"车型 / "+wkSummary.periods+"个完整周）":"当前范围缺少合格的完整周样本，可调整范围后查看规律。";
-  const life=lifecycleRows(state.metric),lifeSummary=summary(life.map(r=>({...r,start:r.cycle})),"first2_share");
-  cardEl=el("article","signal-card",null,c);el("div","signal-card-title","首销首2天占比",cardEl);
-  el("strong","signal-value",fmtPct(lifeSummary.typical),cardEl);
-  el("div","signal-detail","完整D1–D7车型批次记录 "+lifeSummary.samples+" 条；当前阶段 "+state.stage,cardEl);
-  const end=monthEndRows(state.metric),endSummary=summary(end,"ratio");
-  cardEl=el("article","signal-card",null,c);el("div","signal-card-title","月末7天 / 月内前段",cardEl);
-  el("strong","signal-value",fmtPct(endSummary.typical),cardEl);
-  el("div","signal-detail","完整自然月车型周期记录 "+endSummary.samples+" 条；覆盖 "+endSummary.periods+" 个自然月",cardEl);
-  const h=holidayScopeRows(state.metric),holidaySummary=summary(h,"during");
-  cardEl=el("article","signal-card",null,c);el("div","signal-card-title","节中 / 平常星期对照",cardEl);
-  el("strong","signal-value",fmtPct(holidaySummary.typical),cardEl);
-  el("div","signal-detail",state.stage==="平销"?"当前筛选范围有效节日事件 "+holidaySummary.samples+" 条；覆盖 "+holidaySummary.periods+"个事件":"仅平销有节日样本；当前为"+state.stage,cardEl);
-}
-function renderModelCompare(){
-  const container=$("modelCompare");clear(container);
-  const s=currentSeries(state.metric);
-  const agg=new Map();
-  for(const r of s){const k=state.category==="__ALL__"&&state.model==="__ALL__"?categoryOf(r.model):String(r.model);
-    agg.set(k,(agg.get(k)||0)+(num(r.value)||0));}
-  const arr=[...agg].map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value).slice(0,12);
-  $("groupCompareTitle").textContent=state.category==="__ALL__"&&state.model==="__ALL__"?"车型分类观测对比":"所选车型观测量";
-  drawBars(container,arr,"label","value",fmtNum,"horizontal");
-}
 function renderCoverage(){
   const c=$("overviewCoverage");clear(c);
   const s=currentSeries(state.metric),dates=unique(s.map(r=>dateOnly(r.date))),models=unique(s.map(r=>r.model)),sources=unique(s.map(r=>r.source)),cycles=unique(s.map(r=>r.cycle));
@@ -983,8 +1016,10 @@ function renderCoverage(){
     ["分类依据",(data.grouping&&data.grouping.reason)||"来自源工作簿车型属性"]
   ];
   facts.forEach(x=>{const span=el("span","coverage-item",null,c);el("strong","",x[0]+"：",span);el("span","",x[1],span);});
-  const notes=(meta.notes||[]).slice(0,3);
-  notes.forEach(n=>{const span=el("span","coverage-item",null,c);el("strong","","方法提示：",span);el("span","",n,span);});
+  const groups=new Map();for(const row of s){const name=categoryOf(row.model);if(!groups.has(name))groups.set(name,new Set());groups.get(name).add(row.model);}
+  const groupBox=el("div","coverage-groups","",c);el("strong","","车型分类与覆盖",groupBox);
+  [...groups].sort((a,b)=>b[1].size-a[1].size).forEach(([name,models])=>{const button=el("button","coverage-group",name+" · "+models.size+"车型",groupBox);button.type="button";button.addEventListener("click",()=>{state.category=name;state.model="__ALL__";updateFilters(false);refresh();});});
+  const details=el("details","profile-detail","",c);el("summary","","数据与分析边界",details);(meta.notes||[]).forEach(n=>el("p","",n,details));
 }
 function renderKpis(){
   const c=$("overviewKpis");clear(c);
@@ -1000,39 +1035,67 @@ function renderRangeNotice(){
   const s=currentSeries(state.metric),models=unique(s.map(r=>r.model)),dts=unique(s.map(r=>dateOnly(r.date)));
   const node=$("rangeNotice");
   node.classList.toggle("is-warning",!s.length);
-  node.textContent=metricName(state.metric)+"（源："+metricSource(state.metric)+"） · "+state.stage+" · "+(state.category==="__ALL__"?"全部分类":state.category)+" · "+(state.model==="__ALL__"?"全部车型":state.model)+" · "+state.start+" 至 "+state.end+" · "+models.length+"车型 / "+s.length+"条日观测"+(!s.length?"；该范围没有可用观测。":"");
+  node.textContent=metricName(state.metric)+"（源："+metricSource(state.metric)+"） · "+(state.stage==="小订阶段"?"小订期":state.stage)+" · "+(state.category==="__ALL__"?"全部分类":state.category)+" · "+(state.model==="__ALL__"?"全部车型":state.model)+" · "+state.start+" 至 "+state.end+" · "+models.length+"车型 / "+s.length+"条日观测"+(!s.length?"；该范围没有可用观测。":"");
 }
 function renderOverview(){
-  renderRuleFindings();renderSourceMap();renderRangeNotice();renderKpis();renderTrend();renderRatio();renderModelCompare();renderSignals();renderCoverage();
+  renderRuleFindings();renderSourceMap();renderRangeNotice();renderKpis();renderCoverage();
 }
 
+function modelInScope(r){
+  return (state.model==="__ALL__"||String(r.model)===state.model)&&(state.category==="__ALL__"||categoryOf(r.model)===state.category);
+}
+function recordInWindow(r){
+  const day=dateOnly(r.date||r.anchor_date);
+  if(day)return /^\d{4}-\d{2}-\d{2}$/.test(day)&&day>=state.start&&day<=state.end;
+  const from=dateOnly(r.previous_start||r.observed_start||r.target_start||r.start||r.week);
+  let to=dateOnly(r.observed_end||r.target_end||r.end);
+  if(!to&&r.week)to=isoAdd(dateOnly(r.week),6);
+  if(!from&&r.year){
+    const start=r.month?String(r.year)+"-"+String(r.month).padStart(2,"0")+"-01":String(r.year)+"-01-01";
+    const end=r.month?isoAdd(start,monthDays(r.year,r.month)-1):String(r.year)+"-12-31";
+    return start>=state.start&&end<=state.end;
+  }
+  return Boolean(from&&to&&from>=state.start&&to<=state.end);
+}
 function sourceScoped(records){
-  return (records||[]).filter(r=>(state.model==="__ALL__"||String(r.model)===state.model)&&(state.category==="__ALL__"||categoryOf(r.model)===state.category));
+  return (records||[]).filter(r=>modelInScope(r)&&stageMatches(r)&&recordInWindow(r));
 }
 function renderSourceMap(){
   const container=$("sourceResearchMap");if(!container)return;clear(container);
-  el("strong","","按问题找规律",container);
-  el("p","card-subtitle","已读取 "+(sourceInsights.inventory||[]).length+" 个源表；先选研究问题，再看图与证据。首销结构、退订和分时保留各自源表口径。",container);
+  el("strong","","下一步研究什么？",container);
+  el("p","card-subtitle",metricName(state.metric)+" · "+state.stage+"；选择业务问题进入对应专题，筛选范围会保留。",container);
   const grid=el("div","research-grid","",container);
-  const early=sourceScoped(sourceInsights.early_launch),hourly=sourceScoped(sourceInsights.hourly);
-  const options=[
-    ["structure","首销前两天能看出什么？",unique(early.map(r=>r.model)).length+"车型 · 首销爆发、订单路径与退订"],
-    ["hourly","一天里什么时段更集中？",unique(hourly.map(r=>r.model)).length+"车型 · 完整分时样本"],
-    ["months","每个月、月内进度怎么变？","相邻月日均、D7/D14/D21进度、年度季节性"],
-    ["launch","上市后销量怎么变化？","首销到平销 · 同批次周/月对比"]
+  const options=state.metric==="小订数量"?[
+    ["structure","小订进度和退订怎么变？","按小订D天对齐，比较累计完成度与退订"],
+    ["hourly","小订集中在哪些小时？","当前小订期完整24小时样本"],
+    ["week","一周中哪些天更高？","完整周、周末与工作日日均比较"],
+    ["cycles","本周期是上周期的多少？","总量与日均分开，缺日不补零"]
+  ]:[
+    ["months","月份和月内进度怎么变？","1—12月、月末与累计进度"],
+    ["holiday","节前、节中、节后有什么变化？","按筛选范围汇总，同星期作为对照"],
+    ["launch","首销到平销如何变化？","按上市D天对齐，比较相邻周/月"],
+    ["lags","留存大定到锁单滞后多久？","同车型、阶段与批次的0—3天相关"]
   ];
   for(const [pattern,title,detail] of options){const button=el("button","research-entry","",grid);button.type="button";el("strong","",title,button);el("span","",detail,button);button.addEventListener("click",()=>{updatePage("patterns");activatePattern(pattern);});}
 }
 
 function renderRuleFindings(){
   const c=$("ruleFindings");clear(c);
-  const category=state.category==="__ALL__"?"全部车型":state.category;
-  $("ruleScopeNote").textContent="本次全量历史："+metricName(state.metric)+" · "+category+" · "+state.stage+"。以下结论按完整分析期计算，不随左侧日期或单车型重算；P25/P75是历史波动，验证同向仍需预测回测。";
-  const matching=rules.filter(r=>r.metric===state.metric&&r.category===category&&r.stage===state.stage&&num(r.typical)!==null);
-  const lookup=new Map((data.findings||[]).map(r=>[[r.category,r.metric,r.stage,r.pattern].join("|"),r]));
-  const candidates=matching.map(r=>({...r,...(lookup.get([r.category,r.metric,r.stage,r.pattern].join("|"))||{})})).sort((a,b)=>Number(Boolean(b.cross_year_candidate))-Number(Boolean(a.cross_year_candidate))||(b.periods||0)-(a.periods||0)).slice(0,3);
+  $("ruleScopeNote").textContent="随当前全部筛选重新统计。比例为车型等权中位数；历史重复与预测有效性分别判断。";
+  const candidates=scopedFindings();
   const table=el("div","table-wrap","",c);
-  makeTable(table,["当前历史线索","典型比例","样本依据","验证情况"],candidates.map(r=>[r.pattern,fmtPct(r.typical),r.models+"车型 / "+r.periods+"周期 / "+r.years+"年",r.evidence_level||r.validation_status]),"当前口径和阶段尚无合格规律样本；完整资料保留其他指标与不足原因。");
+  makeTable(table,["研究问题","典型比例","历史波动 P25—P75","样本覆盖","判断"],candidates.map(r=>[r.title,fmtPct(r.stats.typical),fmtPct(r.stats.p25)+"—"+fmtPct(r.stats.p75),r.stats.models+"车型 / "+r.stats.samples+"记录 / "+r.years+"年",r.stats.models>=3&&r.years>=2?"跨车型跨年线索；待预测验证":"局部历史线索；待扩充验证"]),"当前范围还没有满足完整性要求的规律样本。可先研究阶段进度或核对数据覆盖。");
+  const trs=table.querySelectorAll("tbody tr");candidates.forEach((r,i)=>{const td=trs[i]?.cells[0];if(!td)return;td.replaceChildren();const button=el("button","text-button",r.title,td);button.type="button";button.addEventListener("click",()=>{updatePage("patterns");activatePattern(r.pattern);});});
+  const note=el("p","note-line",meta.sample?"当前为样例数据，结果用于验证研究流程。":"跨车型同向仍需检查车型构成、年份和批次；以上不是已验证预测系数。",c);
+}
+function scopedFindings(){
+  const items=[
+    {pattern:"week",title:"周末日均是工作日的多少？",records:weeklyStats(state.metric).valid.map(r=>({...r,start:r.week})),field:"ratio"},
+    {pattern:"months",title:"月末7天日均是前段的多少？",records:monthEndRows(state.metric),field:"ratio"},
+    {pattern:"cycles",title:"本月日均是上月的多少？",records:comparisons("月",state.metric),field:"daily_ratio"}
+  ];
+  if(state.metric==="小订数量")items.unshift({pattern:"structure",title:"小订首日完成了全期的多少？",records:batchSamples(sourceScoped(sourceInsights.curves).filter(r=>r.curve==="小订累计完成度"&&Number(r.day)===1&&validSourceValue(r))),field:"value"});
+  return items.map(r=>({...r,stats:summary(r.records,r.field),years:unique(r.records.map(x=>dateOnly(x.date||x.start||x.anchor_date).slice(0,4))).filter(Boolean).length})).filter(r=>r.stats.typical!==null).slice(0,4);
 }
 
 function libraryDefinitions(){
@@ -1043,16 +1106,16 @@ function libraryDefinitions(){
   const def=(key,title,records,columns,note)=>({key,title,records,columns,note});
   const launchFields=[["period_no","上市第N期"],["grain","上市粒度"],["start","开始"],["end","结束"],["observed_start","观测开始"],["observed_end","观测结束"],["current","本期观测量","num"],["daily_avg","日均量","num"],["observed","观测天数"],["expected_days","应有天数"],["status","状态"]];
   return [
-    def("rules","规律汇总与跨年验证",rules,ruleColumns,"全量历史的车型等权中位数；不是销量加权总量比。验证同向仅是历史重复，不能直接视为预测有效。"),
-    def("months","全年月份与月份证据",data.monthly_profiles||[],[["category","车型组"],["metric","指标"],["stage","阶段"],["month","月份"],["daymean","单车型日均中位数","num"],["models","完整月车型数"],["complete","完整车型月数"],["pairmodels","相邻月车型数"],["pairs","相邻月比较对数"],["periods","不同年月数"],["years","年份数"],["ratio","总量占上月","pct"],["daily","日均占上月","pct"],["above","上升占比","pct"],["yearly","分年日均比"],["conclusion","证据判断"]],"每组、指标和阶段均保留1—12月；1月比较上年12月。不同月份车型构成可能不同，不以月度绝对量直接判定淡旺季。"),
+    def("rules","规律汇总与跨年验证",rules,ruleColumns,"随当前筛选重算的车型等权中位数；历史分布与预测验证分开判断。"),
+    def("months","各月变化证据",data.monthly_profiles||[],[["category","车型组"],["metric","指标"],["stage","阶段"],["month","月份"],["daymean","单车型日均中位数","num"],["models","完整月车型数"],["complete","完整车型月数"],["pairmodels","相邻月车型数"],["pairs","相邻月比较对数"],["periods","不同年月数"],["years","年份数"],["ratio","总量占上月","pct"],["daily","日均占上月","pct"],["above","上升占比","pct"],["yearly","分年日均比"],["conclusion","证据判断"]],"每组、指标和阶段均保留1—12月；1月比较上年12月。不同月份车型构成可能不同，不以月度绝对量直接判定淡旺季。"),
     def("deposits","下订周期规律",raw("period_summary").filter(r=>r.role!=="锁单"),periodColumns,"包含小订、大定、留存大定、小转大等本次实际存在的指标，分别统计，不相加。"),
     def("monthProgress","月内累计进度",raw("month_progress"),[...base,["year","年份"],["month","月份"],["checkpoint","截至第N天"],["current","整月观测量","num"],["cumulative","累计观测量","num"],["share","累计占整月","pct"],["calendar_share","日历进度","pct"],["pace","相对日历进度","pct"],["observed","观测天数"],["expected_days","自然月天数"],["start","月初"],["end","月末"],["status","状态"]],"整月完整、非负且总量大于0才计算累计占比。日历标准化只调整天数，不控制星期、节日或促销。"),
     def("locks","锁单周期规律",raw("period_summary").filter(r=>r.role==="锁单"),periodColumns,"按真实锁单日期独立统计，不将锁单统一提前3天。"),
     def("models","车型属性与分组",entries,[["model","车型"],["category","车型组"],["brand","品牌"],["segment","产品档位"],["energy","能源类型"],["stages","销售阶段"],["metrics","可用指标"]],(data.grouping||{}).reason||"仅取同一工作簿的原始车型属性。缺失与映射冲突保留。"),
-    def("coverage","数据覆盖与方法",raw("coverage"),[["metric","指标"],["stage","阶段"],["models","车型数"],["observations","车型日数"],["dates","不同日期数"],["start","开始日期"],["end","结束日期"]],"这是本次输入全量的覆盖，不是当前左侧日期窗口的覆盖。方法和日历来源见下方展开说明。"),
+    def("coverage","数据覆盖与方法",raw("coverage"),[["metric","指标"],["stage","阶段"],["models","车型数"],["observations","车型日数"],["dates","不同日期数"],["start","开始日期"],["end","结束日期"]],"随当前全局筛选统计覆盖。方法和日历来源见下方展开说明。"),
     def("audit","输入数据审计",Object.entries(meta.audit||{}).map(([check,count])=>({check,count})),[["check","检查项"],["count","记录数"]],"源表读取、来源择一、阶段判定、未结束或未来数据排除等检查计数；计数可能属于不同处理阶段，不可简单相加。"),
     def("sourceInventory","源工作簿内容地图",sourceInsights.inventory||[],[["sheet","工作表"],["rows","记录数"],["fields","原始字段"],["kind","数据类型"],["note","使用方式与边界"]],"只读取同一个汇总工作簿；来源列中的外部文件不打开。周汇总不和逐日数据重复叠加。"),
-    def("sourceEarly","首销D1/D2指标",sourceInsights.early_launch||[],[["model","车型"],["metric","指标"],["feature","特征"],["value","原值","source"],["unit","单位"],["numerator","分子"],["denominator","分母"],["status","口径状态"],["source","来源"],["note","说明"]],"首销早期指标按源表定义，使用其明示的最终规模或分母；不是净大定或锁单转化率。"),
+    def("sourceEarly","首销D1/D2指标",sourceInsights.early_launch||[],[["model","车型"],["metric","指标"],["feature","特征"],["value","原值","source"],["unit","单位"],["numerator","分子"],["denominator","分母"],["status","口径状态"],["source","来源"],["note","说明"]],"首销早期指标按源表定义，使用其明示的最终规模或分母；不是留存大定或锁单转化率。"),
     def("sourceCurves","转化与退订D曲线",sourceInsights.curves||[],[["model","车型"],["stage","源表阶段"],["curve","曲线"],["day","D日"],["value","原值","source"],["unit","单位"],["denominator_note","分母定义"],["status","状态"],["source","来源"],["note","说明"]],"每个D日直接读取原始曲线值；累计值不能跨D日求和，不能重复扣减留存大定。"),
     def("sourceHourly","分时数量与份额",sourceInsights.hourly||[],[["model","车型"],["metric","指标"],["stage","源表阶段"],["date","日期"],["hour","小时"],["value","小时量","num"],["share","占当日份额","pct"],["total","当日合计","num"],["status","状态"],["source","来源"]],"只有完整、非负、无重复冲突且合计大于0的24小时样本才计算份额。"),
     def("periodCoverage","周期有效性检查",raw("period_coverage"),[["role","环节"],["metric","指标"],["stage","阶段"],["kind","周期"],["total","全部比较数"],["valid","有效数"],["current_incomplete","本期不完整"],["previous_incomplete","前期不完整"],["negative","含负值"],["previous_zero","前期为零"]],"保留不可比原因，缺失和不可比不补成0%倍率。"),
@@ -1073,12 +1136,41 @@ const libraryTables=libraryDefinitions();
 const fieldValue=(r,key)=>key.split(".").reduce((v,k)=>v==null?null:v[k],r);
 function currentLibrary(){return libraryTables.find(t=>t.key===state.libraryTable)||libraryTables[0];}
 function libraryColumns(table){
-  if(table.columns.length)return table.columns;
+  if(table.columns.length)return ["sourceEarly","sourceCurves","sourceHourly"].includes(table.key)?table.columns.concat([["date_scope_note","日期归属说明"]]):table.columns;
   const labels={model:"车型",metric:"指标",stage:"阶段",cycle:"批次",source:"来源",grain:"预测周期",status:"状态",train_count:"训练样本数",backtest_count:"回测样本数",method:"方法",tail_note:"尾期说明",actual:"实际值",prediction:"预测值",baseline:"基准值",wape:"WAPE",baseline_wape:"基准WAPE",bias:"偏差",target_start:"目标开始",target_end:"目标结束",cutoff:"截至日期"};
   return unique(table.records.flatMap(r=>Object.keys(r))).map(k=>[k,labels[k]||k,/wape|bias/.test(k)?"pct":undefined]);
 }
 function libraryRows(){
-  return currentLibrary().records.filter(r=>(state.libraryMetric==="__ALL__"||r.metric===state.libraryMetric)&&(state.libraryStage==="__ALL__"||String(r.stage||r.stages||"").split(/[,、]/).includes(state.libraryStage))&&(state.libraryCategory==="__ALL__"||(r.category||categoryOf(r.model))===state.libraryCategory));
+  const table=currentLibrary();
+  if(table.key==="rules")return scopedFindings().map(r=>({category:state.model!=="__ALL__"?state.model:state.category,metric:state.metric,stage:state.stage,pattern:r.title,typical:r.stats.typical,p25:r.stats.p25,p75:r.stats.p75,models:r.stats.models,samples:r.stats.samples,periods:r.stats.periods,years:r.years,conclusion:"当前范围描述",validation_status:"待预测验证",detail_sheet:r.pattern}));
+  if(table.key==="coverage"){
+    const series=currentSeries(state.metric),dates=series.map(r=>r.date).sort();
+    return [{metric:state.metric,stage:state.stage,models:unique(series.map(r=>r.model)).length,observations:series.length,dates:unique(dates).length,start:dates[0],end:dates[dates.length-1]}];
+  }
+  if(["audit","sourceInventory"].includes(table.key))return table.records;
+  if(table.key==="months")return Array.from({length:12},(_,i)=>{
+    const list=comparisons("月",state.metric).filter(r=>Number(dateOnly(r.start).slice(5,7))===i+1),s=summary(list,"daily_ratio"),total=summary(list,"ratio");
+    return {category:state.model!=="__ALL__"?state.model:state.category,metric:state.metric,stage:state.stage,month:i+1,models:s.models,pairmodels:s.models,pairs:s.samples,periods:s.periods,years:unique(list.map(r=>dateOnly(r.start).slice(0,4))).length,ratio:total.typical,daily:s.typical,conclusion:s.samples?"当前范围完整相邻月":"样本不足"};
+  });
+  if(table.key==="lags")return lagRows();
+  if(table.key==="locks"&&state.metric!=="交车锁单")return [];
+  if(table.key==="deposits"&&state.metric==="交车锁单")return [];
+  if(["deposits","locks","periodCoverage"].includes(table.key)){
+    const list=(result.period_comparisons||[]).filter(r=>inScope(r,state.metric)&&recordInWindow(r)),groups=new Map();
+    for(const row of list){const key=[row.kind,row.transition||""].join("|");if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
+    return [...groups.values()].map(rs=>{const valid=rs.filter(r=>r.status==="有效"),s=summary(valid,"daily_ratio"),t=summary(valid,"ratio");return {metric:state.metric,stage:state.stage,role:metricName(state.metric),kind:rs[0].kind,transition:rs[0].transition,category:state.category,models:s.models,pairs:s.samples,periods:s.periods,ratio:t.typical,daily_ratio:s.typical,p25:s.p25,p75:s.p75,total:rs.length,valid:valid.length,current_incomplete:rs.filter(r=>r.status==="本期不完整").length,previous_incomplete:rs.filter(r=>r.status==="前期缺失或不完整").length,negative:rs.filter(r=>/负/.test(r.status||"")).length,previous_zero:rs.filter(r=>r.status==="前期为零").length,status:s.samples?"当前范围重算":"样本不足"};});
+  }
+  return table.records.filter(r=>{
+    if(r.model&&!modelInScope(r))return false;
+    if(!r.model&&r.category&&r.category!==(state.category==="__ALL__"?"全部车型":state.category))return false;
+    if(table.key==="models")return safeArray(r.metrics).includes(state.metric)&&safeArray(r.stages).includes(state.stage);
+    const auxiliary=["sourceEarly","sourceCurves","sourceHourly"].includes(table.key);
+    if(!auxiliary&&r.metric&&r.metric!==state.metric)return false;
+    if((["launchPeriods","launchPacing"].includes(table.key)||r.stage)&&!stageMatches(r,table.key==="launchPeriods"?"launch_periods":table.key==="launchPacing"?"launch_pacing":undefined))return false;
+    if(auxiliary&&state.libraryMetric!=="__ALL__"&&r.metric!==state.libraryMetric)return false;
+    if(auxiliary&&!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly(r.date||r.anchor_date)))return true;
+    return recordInWindow(r);
+  }).map(r=>["sourceEarly","sourceCurves","sourceHourly"].includes(table.key)?{...r,date_scope_note:!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly(r.date||r.anchor_date))?"日期未知，仅保留核对，不参与当前日期窗统计":"按原始日期或阶段起始日定位"}:r);
 }
 function renderLibraryControls(){
   $("libraryControls").hidden=state.evidence!=="library";
@@ -1089,7 +1181,9 @@ function renderLibraryControls(){
   for(const [field,id,key,label] of [["metric","libraryMetric","libraryMetric","全部指标"],["stage","libraryStage","libraryStage","全部阶段"],["category","libraryCategory","libraryCategory","全部分类"]]){
     const values=field==="category"?unique(table.records.map(r=>r.category||(r.model?categoryOf(r.model):null))).sort():choices(field);
     setOptions($(id),[{value:"__ALL__",label},...values.map(v=>({value:v,label:v}))],state[key]);state[key]=$(id).value;
+    $(id).closest("label").hidden=field!=="metric"||!["sourceEarly","sourceCurves","sourceHourly"].includes(table.key);
   }
+  const scope=document.querySelector(".library-scope");if(scope)scope.textContent=["audit","sourceInventory"].includes(table.key)?"此表说明整份输入文件的结构与读取情况，没有口径或日期维度。":"随全局车型、阶段和日期范围筛选；周期记录须完整落窗。"+(["sourceEarly","sourceCurves","sourceHourly"].includes(table.key)?"辅助源表保留原指标名称，可在此选择源指标，不代表当前主口径。日期未知的记录单列状态保留核对，不参与图表。":"主指标为“"+metricName(state.metric)+"”。");
   const method=$("libraryMethods");clear(method);
   if(["coverage","audit","periodCoverage","models"].includes(table.key)){
     const detail=el("details","","",method);el("summary","","查看数据来源、方法与日历",detail);
@@ -1099,12 +1193,21 @@ function renderLibraryControls(){
   }
 }
 function openLibrary(key="rules"){
-  state.evidence="library";state.libraryTable=key;state.libraryMetric="__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.search="";state.pageNo=0;$("evidenceSearch").value="";
+  state.evidence="library";state.libraryTable=key;state.libraryMetric=key==="sourceHourly"?state.metric:"__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.search="";state.pageNo=0;$("evidenceSearch").value="";
   document.querySelectorAll("[data-evidence]").forEach(b=>{const on=b.dataset.evidence==="library";b.classList.toggle("is-active",on);b.setAttribute("aria-pressed",String(on));});
   updatePage("evidence");
 }
 function renderPatterns(){
   renderPatternTabs();
+  $("patternPanels").querySelectorAll(".pattern-card").forEach(node=>{
+    const title=node.querySelector("h3,h2")?.textContent||"";
+    if(/逐车型|原始对照明细/.test(title)){
+      const detail=el("details","research-detail",""),summary=el("summary","",title,detail);
+      node.parentNode.insertBefore(detail,node);detail.appendChild(node);
+      detail.open=expandedEvidenceTitles.has(title);
+      detail.addEventListener("toggle",()=>{if(detail.open)expandedEvidenceTitles.add(title);else expandedEvidenceTitles.delete(title);});
+    }
+  });
   document.querySelectorAll(".pattern-chart").forEach(node=>{
     node.tabIndex=0;node.setAttribute("role","region");node.setAttribute("aria-label","规律图表，可横向滚动查看全部内容");
     if(node.classList.contains("bar-list")){
@@ -1227,7 +1330,7 @@ function renderForecast() {
   const empty=$("forecastEmpty");empty.hidden=true;
   if(profile){
     const cutoff=dateOnly(profile.cutoff||profile.as_of||profile.last_observation);
-    const latestOutside=Boolean(cutoff&&state.end&&cutoff>state.end);
+    const latestOutside=Boolean(cutoff&&((state.end&&cutoff>state.end)||(state.start&&cutoff<state.start)));
     const target=latestOutside?"超出当前历史范围":profile.target_start&&profile.target_end?dateOnly(profile.target_start)+"～"+dateOnly(profile.target_end):"暂无完整目标期";
     [
       ["目标周期",target],
@@ -1289,10 +1392,7 @@ function updateTrial(){
 function evidenceRows(){
   if(state.evidence==="library")return libraryRows();
   if(state.evidence==="daily")return currentSeries(state.metric);
-  return (result.lock_lags||[]).filter(r=>r.metric==="留存大定"&&r.stage===state.stage&&
-    (state.model==="__ALL__"||String(r.model)===state.model)&&
-    (state.model!=="__ALL__"&&state.category!=="__ALL__"?true:state.category==="__ALL__"||categoryOf(r.model)===state.category)&&
-    dateOnly(r.start)>=state.start&&dateOnly(r.end)<=state.end);
+  return lagRows();
 }
 function searchEvidence(list){
   const q=state.search.trim().toLocaleLowerCase();if(!q)return list;
@@ -1304,10 +1404,10 @@ function renderEvidence(){
   const pages=Math.max(1,Math.ceil(list.length/PAGE_SIZE));
   state.pageNo=Math.min(state.pageNo,pages-1);
   const wrap=$("evidenceTableWrap"),offset=state.pageNo*PAGE_SIZE,page=list.slice(offset,offset+PAGE_SIZE);
-  $("evidenceMeta").textContent=state.evidence==="daily"?"净大定和锁单分别显示当前口径；表内保留原始阶段、批次、来源和负值。筛选命中 "+fmtInt(list.length)+" 条记录。":"净大定→交车锁单的0–3日共同日期相关性；不代表逐单转化率，也不作为锁单数量预测系数。筛选命中 "+fmtInt(list.length)+" 条记录。";
+  $("evidenceMeta").textContent=state.evidence==="daily"?"按小订、留存大定或锁单中的当前口径展示；表内保留原始阶段、批次、来源和负值。筛选命中 "+fmtInt(list.length)+" 条记录。":"留存大定→交车锁单的0–3日共同日期相关性；不代表逐单转化率，也不作为锁单数量预测系数。筛选命中 "+fmtInt(list.length)+" 条记录。";
   if(state.evidence==="library"){
     const table=currentLibrary(),columns=libraryColumns(table);
-    $("evidenceMeta").textContent=table.title+" · 全量快照独立筛选命中 "+fmtInt(list.length)+" 条。"+table.note;
+    $("evidenceMeta").textContent=table.title+" · 当前范围命中 "+fmtInt(list.length)+" 条。"+table.note;
     makeTable(wrap,columns.map(c=>c[1]),page.map(r=>columns.map(([key,label,format])=>{
       const value=fieldValue(r,key),text=format==="source"?sourceValue(value,r.unit):format==="pct"?fmtPct(value):format==="num"?fmtNum(value):format==="corr"?(num(value)===null?"—":value.toFixed(3)):value==null?"—":Array.isArray(value)?value.join("、"):typeof value==="object"?JSON.stringify(value):String(value);
       return {text,cls:typeof value==="number"?"number"+(value<0?" negative":""):""};
@@ -1319,7 +1419,7 @@ function renderEvidence(){
   }else{
     makeTable(wrap,["车型","分类","阶段","大定来源","锁单来源","滞后日","共同日期数","日期范围","水平相关","日变化相关","说明"],
       page.map(r=>[{text:r.model},{text:categoryOf(r.model)},{text:r.stage},{text:r.deposit_source},{text:r.lock_source},{text:fmtInt(r.lag),cls:"number"},{text:fmtInt(r.pairs),cls:"number"},{text:dateOnly(r.start)+"～"+dateOnly(r.end)},{text:fmtNum(r.level_corr),cls:"number"},{text:fmtNum(r.change_corr),cls:"number"},{text:r.status}]),
-      "当前选择没有满足完整日期范围的净大定与锁单配对样本。");
+      "当前选择没有满足完整日期范围的留存大定与锁单配对样本。");
   }
   $("exportCsv").disabled=!list.length;
   $("exportCsv").title=list.length?"导出所有搜索命中的记录，不限当前页":"没有匹配记录可导出";
@@ -1341,27 +1441,27 @@ function exportCsv(){
     headers=["日期","车型","车型分类","指标源口径","阶段","观测值","批次周期","来源","生命周期"];
     items=list.map(r=>[dateOnly(r.date),r.model,categoryOf(r.model),metricSource(r.metric),r.stage,r.value,r.cycle,r.source,r.life==null?"":"D"+r.life]);
   }else{
-    headers=["车型","车型分类","阶段","净大定来源","锁单来源","滞后日","共同日期数","开始日期","结束日期","水平相关","日变化相关","状态"];
+    headers=["车型","车型分类","阶段","留存大定来源","锁单来源","滞后日","共同日期数","开始日期","结束日期","水平相关","日变化相关","状态"];
     items=list.map(r=>[r.model,categoryOf(r.model),r.stage,r.deposit_source,r.lock_source,r.lag,r.pairs,dateOnly(r.start),dateOnly(r.end),r.level_corr,r.change_corr,r.status]);
   }
   const content="\uFEFF"+[headers,...items].map(row=>row.map(csvEscape).join(",")).join("\r\n");
   const blob=new Blob([content],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=el("a");
-  a.href=url;a.download=state.evidence==="library"?"销量规律_"+currentLibrary().title+".csv":"销量规律_"+(state.evidence==="daily"?metricName(state.metric):"净大定锁单")+"_"+state.stage+"_"+(state.evidence==="daily"?"逐日明细":"净大定锁单相关")+".csv";a.click();
+  a.href=url;a.download=state.evidence==="library"?"销量规律_"+currentLibrary().title+".csv":"销量规律_"+(state.evidence==="daily"?metricName(state.metric):"留存大定锁单")+"_"+state.stage+"_"+(state.evidence==="daily"?"逐日明细":"留存大定锁单相关")+".csv";a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
   announce("已生成 "+fmtInt(list.length)+" 条记录的 CSV，下载已交给浏览器。");
 }
 function updatePage(page,save=true){
   if(!["overview","patterns","forecast","evidence"].includes(page))page="overview";
   const previousPage=state.page,previousStage=state.stage;
-  if(page!=="patterns"&&state.stage==="首销及平销")normalizeStageOutsideLaunch();
+  if(!["patterns","evidence"].includes(page)&&state.stage==="首销及平销")normalizeStageOutsideLaunch();
   state.page=page;
-  if(page==="patterns"&&state.pattern==="launch"&&previousPage!=="patterns"&&save)syncPatternStage("launch");
+  if(page==="patterns"&&previousPage!=="patterns"&&save)syncPatternStage(state.pattern);
   if(previousPage!==page||previousStage!==state.stage){cache.clear();updateFilters(false);renderRangeNotice();}
   const info={
-    overview:["销量规律概览","先确认口径与样本范围，再查看可用于预测的历史信号。"],
-    patterns:["规律探索","用同口径、同阶段或上市后联合阶段的完整周期，检验规律是否稳定。"],
-    forecast:["预测试算与回测","先看同车型留出回测，再用单一倍率构造可复核情景。"],
-    evidence:["证据明细","从汇总指标追溯到每日观测和净大定→锁单共同日期相关性。"]
+    overview:["研究首页","查看当前范围的发现与覆盖，选择下一步研究问题。"],
+    patterns:["规律研究","日历、阶段进度与订单关系，各有独立研究范围和证据。"],
+    forecast:["预测验证","比较同车型历史回测与简单基准，判断规律的预测价值。"],
+    evidence:["数据证据","按当前范围核对原始观测、统计依据和完整性。"]
   }[page];
   $("pageTitle").textContent=info[0];$("pageDescription").textContent=info[1];
   document.querySelectorAll("[data-panel]").forEach(b=>{const on=b.dataset.panel===page;b.classList.toggle("is-active",on);b.setAttribute("aria-selected",on?"true":"false");b.tabIndex=on?0:-1;});
@@ -1416,7 +1516,8 @@ function restoreRoute(){
   routeKeys.forEach(k=>{if(params.has(k))state[k]=k==="compare"?params.get(k)==="true":params.get(k);});
   if(!hash.includes("=")&&["overview","patterns","forecast","evidence"].includes(hash))state.page=hash;
   if(!metricByKey.get(state.metric)?.available)state.metric=defaultMetric.key;
-  if(!["months","week","launch","holiday","cycles","structure","hourly"].includes(state.pattern))state.pattern="months";
+  if(!["months","week","launch","holiday","cycles","structure","hourly","lags"].includes(state.pattern))state.pattern="months";
+  if(!patternAvailable(state.pattern))state.pattern=state.metric==="小订数量"?"structure":"lags";
   if(!["daily","lags","library"].includes(state.evidence))state.evidence="daily";
   if(!["日","周","月","年"].includes(state.grain))state.grain="月";
   if(!["周","月"].includes(state.launchGrain))state.launchGrain="周";
@@ -1445,7 +1546,13 @@ function applyDates(){
   state.start=from.value;state.end=to.value;refresh();
 }
 function syncPatternStage(pattern){
-  const stages=scopedStages(state.metric),target=pattern==="launch"?(stages.includes("首销")&&stages.includes("平销")?"首销及平销":stages.includes("首销")?"首销":stages.includes("平销")?"平销":""):pattern==="holiday"?"平销":"";
+  if(state.metric==="小订数量"){state.stage="小订阶段";return true;}
+  const stages=scopedStages(state.metric);
+  let target=pattern==="launch"?(stages.includes("首销")&&stages.includes("平销")?"首销及平销":stages.includes("首销")?"首销":stages.includes("平销")?"平销":""):pattern==="holiday"?"平销":pattern==="structure"?"首销":"";
+  if(pattern==="hourly"){
+    const sourceStages=unique((sourceInsights.hourly||[]).filter(r=>r.metric===state.metric&&modelInScope(r)).map(r=>r.stage));
+    if(sourceStages.length&&!sourceStages.includes(state.stage))target=sourceStages.find(s=>stages.includes(s))||"";
+  }
   if(!target||!stages.includes(target)&&target!=="首销及平销")return false;
   state.stage=target;
   const select=$("stageFilter");if(select)select.value=target;
@@ -1466,14 +1573,15 @@ function restorePatternDates(){
   state.start=bounds[0];state.end=bounds[1];$("dateStart").value=state.start;$("dateEnd").value=state.end;clearDateError();refresh();return true;
 }
 function activatePattern(pattern){
+  if(!patternAvailable(pattern))return;
   const previousStage=state.stage;
   if(state.pattern==="launch"&&pattern!=="launch"&&state.stage==="首销及平销")normalizeStageOutsideLaunch();
   state.pattern=pattern;syncPatternStage(pattern);updateFilters(false);refresh(false);showUpdate($("patternPanels"));
   if(state.stage!==previousStage)announce("已切换到“"+state.stage+"”阶段，保留当前车型和日期范围。");
 }
 function bindTabs(container,selector,activate){
-  const buttons=[...container.querySelectorAll(selector)];
   container.addEventListener("keydown",event=>{
+    const buttons=[...container.querySelectorAll(selector)].filter(b=>!b.hidden&&!b.disabled);
     if(!["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End"].includes(event.key))return;
     const index=buttons.indexOf(event.target);if(index<0)return;
     event.preventDefault();
@@ -1483,6 +1591,12 @@ function bindTabs(container,selector,activate){
 }
 bindTabs(document.querySelector(".main-nav"),"[data-panel]",b=>updatePage(b.dataset.panel));
 bindTabs(document.querySelector(".subnav"),"[data-pattern]",b=>activatePattern(b.dataset.pattern));
+function activateDomain(domain){
+  const patterns=researchDomains[domain]||[];
+  activatePattern(patterns.find(p=>patternAvailable(p)&&p===state.pattern)||patterns.find(patternAvailable));
+}
+bindTabs(document.querySelector(".subnav-domain"),"[data-domain]",b=>activateDomain(b.dataset.domain));
+document.querySelectorAll("[data-domain]").forEach(b=>b.addEventListener("click",()=>activateDomain(b.dataset.domain)));
 window.addEventListener("popstate",restoreRoute);window.addEventListener("hashchange",restoreRoute);
 document.querySelector(".skip-link").addEventListener("click",e=>{e.preventDefault();$("mainContent").focus();});
 document.querySelector(".brand").addEventListener("click",e=>{e.preventDefault();updatePage("overview");});
@@ -1490,16 +1604,24 @@ document.querySelectorAll("[data-panel]").forEach(b=>b.addEventListener("click",
 document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>{updatePage(b.dataset.go);$("pageTitle").focus({preventScroll:true});window.scrollTo({top:0});}));
 document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click",()=>{
   if(b.disabled||state.metric===b.dataset.metric)return;
-  state.metric=b.dataset.metric;state.category="__ALL__";state.model="__ALL__";state.stage="";
+  metricDateWindows.set(state.metric,{start:state.start,end:state.end});
+  state.metric=b.dataset.metric;
+  const saved=metricDateWindows.get(state.metric);if(saved){state.start=saved.start;state.end=saved.end;}
+  if(!patternAvailable(state.pattern))state.pattern=state.metric==="小订数量"?"structure":"lags";
   if(state.pattern==="hourly")state.sourceHourMetric=state.metric;
-  clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();
+  clearDateError();updateFilters(false);if(state.page==="patterns")syncPatternStage(state.pattern);
+  if(!currentSeries(state.metric).length&&scopedOptionRows(state.metric).some(r=>stageMatches(r))){
+    const bounds=metricBounds.get(state.metric)||["",""];state.start=bounds[0];state.end=bounds[1];updateFilters(false);
+    announce("当前日期没有该口径记录，已恢复此口径的有效日期范围。");
+  }
+  refresh();
 }));
 $("categoryFilter").addEventListener("change",e=>{state.category=e.target.value;state.model="__ALL__";updateFilters(false);refresh();});
 $("modelFilter").addEventListener("change",e=>{state.model=e.target.value;updateFilters(false);refresh();});
 $("stageFilter").addEventListener("change",e=>{state.stage=e.target.value;refresh();});
 $("dateStart").addEventListener("change",applyDates);
 $("dateEnd").addEventListener("change",applyDates);
-$("resetFilters").addEventListener("click",()=>{state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.launchGrain="周";state.compare=false;$("trendGrain").value="月";$("launchGrain").value="周";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();announce("已恢复默认口径、车型和日期范围。");});
+$("resetFilters").addEventListener("click",()=>{metricDateWindows.clear();state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.launchGrain="周";state.compare=false;$("trendGrain").value="月";$("launchGrain").value="周";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();announce("已恢复默认口径、车型和日期范围。");});
 $("trendGrain").addEventListener("change",e=>{state.grain=e.target.value;refresh();});
 $("compareMetrics").addEventListener("change",e=>{state.compare=e.target.checked;refresh();});
 $("launchGrain").addEventListener("change",e=>{state.launchGrain=e.target.value;refresh();});
@@ -1519,7 +1641,7 @@ $("prevPage").addEventListener("click",()=>{state.pageNo=Math.max(0,state.pageNo
 $("nextPage").addEventListener("click",()=>{state.pageNo+=1;renderEvidence();showUpdate($("evidenceTableWrap"));});
 $("exportCsv").addEventListener("click",exportCsv);
 $("openLibrary").addEventListener("click",()=>openLibrary());
-$("allRules").addEventListener("click",()=>openLibrary("rules"));
+$("allRules").addEventListener("click",()=>updatePage("patterns"));
 $("openMethods").addEventListener("click",()=>openLibrary("coverage"));
 for(const key of ["libraryTable","libraryMetric","libraryCategory","libraryStage"])$(key).addEventListener("change",e=>{
   state[key]=e.target.value;state.pageNo=0;

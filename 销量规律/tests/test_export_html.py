@@ -34,12 +34,18 @@ class HtmlExportTests(unittest.TestCase):
                   previous_start=date(2024,12,1),previous_end=date(2024,12,31),current=310,previous=300,
                   current_days=31,current_observed=31,previous_days=31,previous_observed=31,status='有效',
                   ratio=310/300,daily_ratio=1.0,current_negative_days=0,previous_negative_days=0)
-        results['period_comparisons']=[dict(base,metric='小订数量',kind='月',role='大定'),dict(base,metric='留存大定',kind='月',role='大定')]
+        results['period_comparisons']=[dict(base,metric='小订数量',kind='月',role='小订'),
+                                       dict(base,metric='留存大定',kind='月',role='大定'),
+                                       dict(base,metric='交车锁单',kind='月',role='锁单')]
         results['coverage']=[dict(metric='小订数量',stage='平销',start=date(2025,1,1),end=date(2025,1,31))]
-        panel=[dict(model='车型A',metric='留存大定',stage='平销',cycle='批次A',source='来源A',date=date(2025,1,1),value=10,life=None)]
+        panel=[dict(model='车型A',metric='小订数量',stage='小订阶段',cycle='批次A',source='来源A',date=date(2025,1,1),value=10,life=1),
+               dict(model='车型A',metric='留存大定',stage='平销',cycle='批次A',source='来源A',date=date(2025,1,1),value=10,life=None),
+               dict(model='车型A',metric='交车锁单',stage='平销',cycle='批次A',source='来源A',date=date(2025,1,1),value=10,life=None)]
         result=e.build_web_data(dict(results=results,source='input.xlsx',sha256='abc',sample=True,audit={'负值':2},
                                      source_sheets=['逐日表'],source_mode='字段级来源'),panel)
         self.assertIn('小订数量',result['meta']['available_metrics'])
+        self.assertEqual({row['metric'] for row in result['series']}, {'小订数量','留存大定','交车锁单'})
+        self.assertEqual({m['label'] for m in result['metrics']}, {'小订','留存大定','锁单'})
         self.assertIn('小订数量',{row['metric'] for row in result['results']['period_comparisons']})
         self.assertEqual(result['meta']['audit'],{'负值':2})
         self.assertEqual(result['meta']['source_sheets'],['逐日表'])

@@ -1,4 +1,4 @@
-"""Leakage-safe, explainable forecast aids for retained large orders and delivery locks."""
+"""Leakage-safe, explainable forecast aids for small orders, retained deposits and locks."""
 from __future__ import annotations
 
 from bisect import bisect_left
@@ -8,7 +8,7 @@ from math import isfinite
 from statistics import median
 from typing import Any, Iterable, Mapping, Sequence
 
-TARGET_METRICS = {"留存大定", "交车锁单"}
+TARGET_METRICS = {"小订数量", "留存大定", "交车锁单"}
 GRAINS = ("day", "week", "month")
 MAX_BACKTEST_WINDOWS = {"day": 56, "week": 26, "month": 24}
 MAX_TRAIN_PERIODS = {"day": 366, "week": 156, "month": 60}
@@ -215,7 +215,8 @@ def _previous_period_has_negative(daily: Mapping[date, float], target_start: dat
 
 
 def _latest_target(
-    grain: str, as_of: date, last_observation: date, daily: Mapping[date, float]
+    grain: str, as_of: date, last_observation: date, daily: Mapping[date, float],
+    *, metric: str | None = None, small_end: date | None = None,
 ) -> tuple[date | None, date | None, float | None, str, dict[str, Any] | None]:
     if grain == "day":
         target_start, previous_start = as_of + timedelta(days=1), as_of
@@ -236,6 +237,8 @@ def _latest_target(
                 f"本序列已观察 {len(observed)}/{elapsed} 个已过日期。"
                 f"当前累计仅为已观察值合计，缺日未补零；暂无下一完整{label}预测。"
             )
+            if metric == "小订数量" and small_end is None:
+                note += " 小订未来目标期需确认仍处于小订期；缺少小订结束日期，未生成估计。"
             return None, None, None, note, {
                 "start": current_start, "end": current_end,
                 "observed_through": last_observation, "observed_days": len(observed),
@@ -245,6 +248,16 @@ def _latest_target(
         target_start, previous_start = _next_start(current_start, grain), current_start
 
     target_end = _period_end(target_start, grain)
+    if metric == "小订数量":
+        if small_end is None:
+            return None, None, None, (
+                "小订未来目标期需确认仍处于小订期；缺少小订结束日期，未生成估计。"
+            ), None
+        if target_end > small_end:
+            return None, None, None, (
+                f"小订未来目标期 {target_start.isoformat()} 至 {target_end.isoformat()} "
+                f"超出已确认的小订结束日 {small_end.isoformat()}，未生成估计。"
+            ), None
     previous_days = _period_days(previous_start, grain)
     expected = [previous_start + timedelta(days=i) for i in range(previous_days)]
     if not all(day in daily for day in expected):
@@ -264,7 +277,7 @@ def _latest_target(
     baseline = total / previous_days * _period_days(target_start, grain)
     note = f"本序列最后观测日为 {last_observation.isoformat()}；目标期 {target_start.isoformat()} 至 {target_end.isoformat()}。"
     if last_observation < as_of:
-        note += f"该序列最后观测早于双口径全局日期 {as_of.isoformat()}；需留意数据滞后。"
+        note += f"该序列最后观测早于三口径全局日期 {as_of.isoformat()}；需留意数据滞后。"
     return target_start, target_end, baseline, note, None
 
 
@@ -278,10 +291,21 @@ def build_forecast_insights(
     """
     del calendar
     grouped: dict[tuple[str, str, str, str, str], dict[date, float]] = defaultdict(lambda: defaultdict(float))
+    small_end_by_series: dict[tuple[str, str, str, str, str], set[date]] = defaultdict(set)
     observed_dates: list[date] = []
     skipped_bad = 0
+    skipped_small_stage = 0
     for row in panel:
-        if not isinstance(row, Mapping) or str(row.get("metric") or "") not in TARGET_METRICS:
+        if not isinstance(row, Mapping):
+            continue
+        metric = str(row.get("metric") or "")
+        if metric not in TARGET_METRICS:
+            continue
+        # The forecast input is independently validated rather than trusting
+        # only the daily reader.  Small-order observations outside the source
+        # small-order phase are never silently reclassified or pooled.
+        if metric == "小订数量" and str(row.get("stage") or "").strip() != "小订阶段":
+            skipped_small_stage += 1
             continue
         day = _as_date(row.get("date"))
         try:
@@ -292,21 +316,34 @@ def build_forecast_insights(
         if day is None or not isfinite(value):
             skipped_bad += 1
             continue
-        grouped[_series_key(row)][day] += value
+        key = _series_key(row)
+        grouped[key][day] += value
+        if metric == "小订数量":
+            small_end = _as_date(
+                row.get("small_end") or row.get("小订结束") or row.get("small_order_end")
+            )
+            if small_end is not None:
+                small_end_by_series[key].add(small_end)
         observed_dates.append(day)
 
     as_of = max(observed_dates) if observed_dates else None
     if as_of is None:
+        empty_notes = [
+            "未找到源指标严格等于“小订数量”“留存大定”或“交车锁单”的有效日期数值行。",
+            "没有用普通大定或其他锁单指标替代缺失口径。",
+            "小订预测只接受 stage=小订阶段；其他阶段的小订记录已排除。",
+        ]
+        if skipped_small_stage:
+            empty_notes.append(f"跳过 {skipped_small_stage} 条小订记录：阶段不是小订阶段。")
+        if skipped_bad:
+            empty_notes.append(f"跳过 {skipped_bad} 条目标指标记录：日期或数值无效。")
         return {
             "as_of": None, "profiles": [], "backtests": [],
             "method": {
-                "objective": "以历史规律辅助销量预测，并分别评估留存大定与交车锁单。",
+                "objective": "以历史规律辅助销量预测，并分别评估小订、留存大定与交车锁单。",
                 "calendar_used_for_factors": False,
             },
-            "notes": [
-                "未找到源指标严格等于“留存大定”或“交车锁单”的有效日期数值行。",
-                "没有用普通大定或其他锁单指标替代缺失口径。",
-            ],
+            "notes": empty_notes,
         }
 
     profiles: list[dict[str, Any]] = []
@@ -314,6 +351,8 @@ def build_forecast_insights(
     for key, daily in sorted(grouped.items(), key=lambda item: item[0]):
         model, metric, stage, cycle, source = key
         last_observation = max(daily)
+        small_end_values = small_end_by_series.get(key, set())
+        small_end = next(iter(small_end_values)) if len(small_end_values) == 1 else None
         for grain in GRAINS:
             grain_label={"day":"日","week":"周","month":"月"}[grain]
             periods = _complete_periods(daily, grain)
@@ -370,7 +409,8 @@ def build_forecast_insights(
             summary = _summary_metrics(this_series_tests)
 
             target_start, target_end, baseline, tail_note, current_to_date = _latest_target(
-                grain, as_of, last_observation, daily
+                grain, as_of, last_observation, daily,
+                metric=metric, small_end=small_end,
             )
             factor = p25 = p75 = None
             train_samples = 0
@@ -432,8 +472,8 @@ def build_forecast_insights(
             })
 
     notes = [
-        "只纳入源指标“留存大定”和“交车锁单”；严格按model/metric/stage/cycle/source分序列，不以普通大定或另一锁单口径替代缺失。",
-        "日、周、月使用完整自然周期；任一日期缺失时该自然周期不完整，缺日不补零。",
+        "只纳入源指标“小订数量”“留存大定”和“交车锁单”；严格按model/metric/stage/cycle/source分序列。小订数量只来自小订阶段，不以普通大定或另一锁单口径替代缺失。",
+        "三种口径分别建立日、周、月预测辅助序列；小订仅在小订阶段建模。每种粒度使用完整自然周期；任一日期缺失时该自然周期不完整，缺日不补零。",
         "基准=紧邻上一完整周期日均×目标周期天数。规则倍率只使用目标期之前的完整样本，按最近有限窗口滚动回测。",
         "WAPE=sum(abs(估计-实际))/sum(abs(实际))；bias=sum(估计-实际)/sum(abs(实际))；improvement=(baseline_wape-wape)/baseline_wape。均为比例，正improvement表示相对改善；分母为零时为空并注明evaluation_status。",
         "P25/P75是有效历史倍率的经验分位范围，不是预测置信区间。倍率训练排除含负值周期及非正分母；负值实际仍留在周期合计与回测实际中。",
@@ -443,14 +483,16 @@ def build_forecast_insights(
     ]
     if skipped_bad:
         notes.append(f"跳过 {skipped_bad} 条目标指标记录：日期或数值无效。")
+    if skipped_small_stage:
+        notes.append(f"跳过 {skipped_small_stage} 条小订记录：阶段不是小订阶段。")
     if log:
-        log(f"预测辅助规律完成：序列{len(grouped)}组，profiles={len(profiles)}，backtests={len(backtests)}，as_of={as_of.isoformat()}")
+        log(f"预测辅助规律完成：三口径（小订、留存大定、锁单）×日/周/月；序列{len(grouped)}组，profiles={len(profiles)}，backtests={len(backtests)}，as_of={as_of.isoformat()}，跳过小订阶段外记录{skipped_small_stage}条")
     return {
         "as_of": as_of, "profiles": profiles, "backtests": backtests,
         "method": {
             "objective": "以可解释历史规律辅助销量预测，并以严格滚动回测比较最近周期基准。",
-            "metrics": ["留存大定", "交车锁单"], "grains": list(GRAINS),
-            "as_of_scope": "两个目标指标的全局最大观测日期",
+            "metrics": ["小订数量", "留存大定", "交车锁单"], "grains": list(GRAINS),
+            "as_of_scope": "三个目标指标中有效观测日期的全局最大日期",
             "calendar_used_for_factors": False,
             "factor_interval": "P25/P75是历史倍率经验范围，不是预测置信区间",
             "improvement_definition": "(baseline_wape-wape)/baseline_wape；正值表示相对改善",

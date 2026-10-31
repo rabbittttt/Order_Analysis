@@ -151,6 +151,7 @@ class SalesPatternTests(unittest.TestCase):
             t=(d-start).days
             return 100+(t*t*17+t*13)%89
         a=records(start,start+timedelta(days=59),value)
+        for r in a: r['metric']='留存大定'
         b=records(start,start+timedelta(days=59),lambda d:value(d-timedelta(days=2)))
         for r in b: r['metric']='交车锁单'
         lags=m.lock_lag_analysis(a+b)
@@ -201,6 +202,8 @@ class SalesPatternTests(unittest.TestCase):
     def test_negative_lock_and_deposit_values_use_common_nonnegative_dates(self):
         start=date(2026,1,1)
         deposits=records(start,start+timedelta(days=39))
+        for row in deposits:
+            row['metric']='留存大定'
         locks=records(start,start+timedelta(days=39))
         deposits[10]['value']=-5
         locks[20]['value']=-3
@@ -210,6 +213,14 @@ class SalesPatternTests(unittest.TestCase):
         self.assertEqual(len(rows),4)
         self.assertEqual({row['pairs'] for row in rows},{32})
         self.assertEqual({row['change_pairs'] for row in rows},{29})
+
+    def test_gross_deposit_never_drives_lock_lag_pairing(self):
+        start=date(2026,1,1)
+        gross=records(start,start+timedelta(days=20))
+        locks=records(start,start+timedelta(days=20))
+        for row in locks:
+            row['metric']='交车锁单'
+        self.assertEqual(m.lock_lag_analysis(gross+locks), [])
 
     def test_period_calendar_ranges_are_scanned_once_across_models(self):
         start,end=date(2025,7,1),date(2025,9,30)

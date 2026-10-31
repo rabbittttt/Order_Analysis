@@ -15,18 +15,22 @@ SPEC.loader.exec_module(forecast)
 
 def make_rows(start: date, end: date, metric: str = "留存大定", model: str = "M1",
               stage: str = "上市期", cycle: str = "常规", source: str = "src",
-              missing: set[date] | None = None, value_fn=None) -> list[dict]:
+              missing: set[date] | None = None, value_fn=None,
+              small_end: date | None = None) -> list[dict]:
     missing = missing or set()
     rows = []
     current = start
     while current <= end:
         if current not in missing:
             value = value_fn(current) if value_fn else 100 + current.weekday() * 4 + current.month
-            rows.append({
+            row = {
                 "model": model, "metric": metric, "stage": stage, "cycle": cycle,
                 "source": source, "date": current, "value": value,
                 "life": "上市", "brand": "B", "segment": "S", "energy": "E",
-            })
+            }
+            if small_end is not None:
+                row["small_end"] = small_end
+            rows.append(row)
         current += timedelta(days=1)
     return rows
 
@@ -36,19 +40,42 @@ class ForecastInsightsTests(unittest.TestCase):
         self.start = date(2022, 1, 1)
         self.end = date(2024, 12, 31)
 
-    def test_two_metrics_and_all_series_dimensions_are_isolated(self):
+    def test_three_metrics_and_all_series_dimensions_are_isolated(self):
         rows = make_rows(self.start, self.end, metric="留存大定")
         rows += make_rows(self.start, self.end, metric="交车锁单", value_fn=lambda d: 2 * (100 + d.weekday() * 4 + d.month))
+        rows += make_rows(self.start, self.end, metric="小订数量", stage="小订阶段",
+                          value_fn=lambda d: 0.5 * (100 + d.weekday() * 4 + d.month),
+                          small_end=date(2025, 12, 31))
         rows += make_rows(self.start, self.end, stage="预热期", cycle="批次2", source="src2",
                            value_fn=lambda d: 3 * (100 + d.weekday() * 4 + d.month))
         rows += make_rows(date(2025, 1, 1), date(2025, 1, 1), metric="大定")
         result = forecast.build_forecast_insights(rows)
         self.assertEqual(result["as_of"], self.end)
         keys = {(p["model"], p["metric"], p["stage"], p["cycle"], p["source"]) for p in result["profiles"]}
-        self.assertEqual(len(keys), 3)
-        self.assertEqual({key[1] for key in keys}, {"留存大定", "交车锁单"})
+        self.assertEqual(len(keys), 4)
+        self.assertEqual({key[1] for key in keys}, {"小订数量", "留存大定", "交车锁单"})
         self.assertIn(("M1", "留存大定", "预热期", "批次2", "src2"), keys)
-        self.assertTrue(all(bt["metric"] in {"留存大定", "交车锁单"} for bt in result["backtests"]))
+        self.assertTrue(all(bt["metric"] in {"小订数量", "留存大定", "交车锁单"} for bt in result["backtests"]))
+        self.assertEqual(result["method"]["metrics"], ["小订数量", "留存大定", "交车锁单"])
+
+    def test_small_orders_outside_small_stage_are_skipped(self):
+        invalid = make_rows(self.start, self.end, metric="小订数量", stage="平销")
+        valid = make_rows(self.start, self.end, metric="留存大定")
+        result = forecast.build_forecast_insights(invalid + valid)
+        self.assertFalse(any(p["metric"] == "小订数量" for p in result["profiles"]))
+        self.assertTrue(any("阶段不是小订阶段" in note for note in result["notes"]))
+        self.assertEqual(result["method"]["as_of_scope"], "三个目标指标中有效观测日期的全局最大日期")
+
+    def test_small_order_future_target_must_stay_inside_confirmed_small_period(self):
+        rows = make_rows(self.start, self.end, metric="小订数量", stage="小订阶段",
+                         small_end=date(2024, 12, 31))
+        result = forecast.build_forecast_insights(rows)
+        profiles = [p for p in result["profiles"] if p["metric"] == "小订数量"]
+        self.assertTrue(profiles)
+        self.assertTrue(all(p["target_start"] is None and p["target_end"] is None
+                            and p["baseline"] is None and p["estimate"] is None
+                            for p in profiles))
+        self.assertTrue(any("超出已确认的小订结束日" in p["tail_note"] for p in profiles))
 
     def test_backtest_prediction_does_not_use_target_or_later_values(self):
         target = date(2024, 11, 15)

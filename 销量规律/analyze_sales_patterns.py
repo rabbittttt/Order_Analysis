@@ -155,6 +155,11 @@ def _derived_stage_tags(row, day, small_info, order_info, columns):
 
     order_fields = set(_ORDER_STAGE_FIELDS)
     order_fields.update(metric for metric in columns if metric != '小订数量')
+    # In the legacy unified layout the canonical key may resolve to an alias
+    # such as 净大定.  Check both the canonical metric and the actual header so
+    # an order value is still enough to derive 首销前/首销/平销.
+    order_fields.update(column for metric, column in columns.items()
+                        if metric != '小订数量' and column)
     has_order_value = any(field in row and row.get(field) is not None for field in order_fields)
     if has_order_value:
         launch_start, launch_end = dt(order_info.get('首销开始')), dt(order_info.get('首销结束'))
@@ -317,6 +322,8 @@ def read_resolved_panel(wb, audit):
             if value<0: audit[metric+'负值不参与倍率'] += 1
             panel.append(dict(model=str(model),date=d,metric=metric,stage=stage,source=source,
                               cycle=cycle,value=float(value),life=life,
+                              small_start=dt(metric_info.get('小订开始')),
+                              small_end=dt(metric_info.get('小订结束')),
                               launch_start=launch_start,launch_end=launch_end,
                               sheet=UNIFIED_DAILY_SHEET,row=rowno))
     audit['字段级来源表已识别'] = 1
@@ -378,26 +385,46 @@ def read_unified_panel(wb, audit):
         if '真实逐日' in head and str(row.get('真实逐日')).lower() not in ('true', '1', '是'):
             audit['非真实逐日排除'] += 1
             continue
-        stage = str(row.get('订单阶段') or '').strip()
-        if not stage:
+        raw_stage = str(row.get('订单阶段') or '').strip()
+        if not raw_stage:
             audit['订单阶段缺失排除'] += 1
             continue
-        match = re.fullmatch(r'D(\d+)', str(row.get('生命周期') or ''), re.I)
-        life = int(match[1]) if match else None
-        model_info = _match_model_phase(info.get(str(model), []), row, d)
-        anchor = d-timedelta(days=life-1) if life and life > 0 else None
-        small_stage = stage in ('小订', '小订阶段')
-        if anchor is None and (small_stage or stage == '首销'):
-            prefix = '小订' if small_stage else '首销'
-            start, end = dt(model_info.get(prefix+'开始')), dt(model_info.get(prefix+'结束'))
-            if start and end and start <= d <= end:
-                anchor, life = start, (d-start).days+1
-        normalized_stage = '小订阶段' if small_stage else stage
-        cycle = str(anchor) if anchor and stage != '平销' else normalized_stage
-        launch_start = dt(model_info.get('首销开始')) or dt(row.get('首销开始'))
-        launch_end = dt(model_info.get('首销结束')) or dt(row.get('首销结束'))
+        records = info.get(str(model), [])
+        # A composite source label such as 小订/首销 contains two independent
+        # facts.  Derive them from the row's own values and each metric's date
+        # window before assigning a stage to the metric.  In particular, a
+        # small-order value can never leak into 首销/平销 rows.
+        small_info = _match_model_phase(records, dict(row, 订单阶段='小订'), d)
+        order_info = _match_model_phase(records, dict(row, 订单阶段='首销'), d)
+        stage_tags = _derived_stage_tags(row, d, small_info, order_info, columns)
+        # Older unified exports did not carry 车型基本信息.  Preserve their
+        # explicit 首销/平销 stage as a compatibility hint when no boundaries
+        # exist at all; the field-level format still uses 阶段未知 until its
+        # missing boundaries are resolved.
+        if not small_info and not order_info and raw_stage in ('首销前', '首销', '平销'):
+            has_order_value = any(
+                row.get(field) is not None
+                for field in (_ORDER_STAGE_FIELDS | {
+                    column for metric, column in columns.items()
+                    if metric != '小订数量' and column
+                })
+            )
+            if has_order_value:
+                # Without phase metadata the raw label is the only safe
+                # small-order hint.  A small value on a plain 首销/平销 row
+                # must not be promoted to 小订期 merely because it is filled.
+                small_tag = (['小订'] if '小订' in raw_stage and
+                             row.get(columns.get('小订数量')) is not None else [])
+                stage_tags = small_tag + [raw_stage]
+        raw_tags = {('小订' if part == '小订阶段' else part)
+                    for part in raw_stage.split('/') if part}
+        if raw_tags != set(stage_tags):
+            audit['阶段标签与日期字段推导不一致'] += 1
+        if not stage_tags:
+            audit['阶段不明确排除'] += 1
+            continue
         source = ' | '.join((kind, filename, source_sheet))
-        normalized_row = dict(row, 来源类型=kind, 来源文件=filename, 订单阶段=stage)
+        normalized_row = dict(row, 来源类型=kind, 来源文件=filename, 订单阶段=raw_stage)
         for metric, column in columns.items():
             value = row.get(column)
             if value is None:
@@ -406,20 +433,49 @@ def read_unified_panel(wb, audit):
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
                 audit[metric+'非数值'] += 1
                 continue
+            if metric == '小订数量':
+                if '小订' not in stage_tags:
+                    audit[metric+'阶段不明确排除'] += 1
+                    continue
+                metric_stage = '小订阶段'
+            else:
+                order_stages = [part for part in stage_tags if part != '小订']
+                if len(order_stages) != 1 or order_stages[0] not in ('首销', '平销'):
+                    audit[metric+'阶段不明确排除'] += 1
+                    continue
+                metric_stage = order_stages[0]
+            metric_info = _match_model_phase(
+                records,
+                dict(row, 订单阶段=('小订' if metric_stage == '小订阶段' else metric_stage)), d)
+            match = re.fullmatch(r'D(\d+)', str(row.get('生命周期') or ''), re.I)
+            life = int(match[1]) if match else None
+            prefix = '小订' if metric_stage == '小订阶段' else '首销'
+            start, end = dt(metric_info.get(prefix+'开始')), dt(metric_info.get(prefix+'结束'))
+            anchor = d-timedelta(days=life-1) if life and life > 0 else None
+            if metric_stage in ('小订阶段', '首销') and start and end and start <= d <= end:
+                anchor, life = start, (d-start).days+1
+            if metric_stage == '平销':
+                life, anchor = None, None
+            cycle = str(anchor) if anchor and metric_stage != '平销' else metric_stage
+            launch_start = dt(order_info.get('首销开始')) or dt(row.get('首销开始'))
+            launch_end = dt(order_info.get('首销结束')) or dt(row.get('首销结束'))
             key = (str(model), d, metric)
             source_key = key + (source,)
-            signature = (value, normalized_stage, cycle)
+            signature = (value, metric_stage, cycle)
             if source_key in seen:
                 if seen[source_key] != signature:
                     raise ValueError('重复键冲突（同来源）：'+str(source_key))
                 audit['相同重复去重'] += 1
                 continue
             seen[source_key] = signature
-            item = dict(model=str(model), date=d, metric=metric, stage=normalized_stage,
+            item = dict(model=str(model), date=d, metric=metric, stage=metric_stage,
                         source=source, cycle=cycle, value=float(value), life=life,
+                        small_start=dt(metric_info.get('小订开始')),
+                        small_end=dt(metric_info.get('小订结束')),
                         launch_start=launch_start, launch_end=launch_end,
                         sheet=UNIFIED_DAILY_SHEET, row=rowno)
-            rank = _daily_source_rank(normalized_row, metric, model_info, cutoff)
+            rank_info = small_info if metric == '小订数量' else order_info
+            rank = _daily_source_rank(normalized_row, metric, rank_info, cutoff)
             candidates[key].append((rank, item))
     panel = []
     for key, choices in sorted(candidates.items()):
@@ -506,6 +562,8 @@ def read_panel(path):
                     if v<0: audit[metric+'负值不参与倍率']+=1
                     panel.append(dict(model=str(model),date=d,metric=metric,stage=stage,source=src,
                                       cycle=cycle,value=float(v),life=life,
+                                      small_start=dt(r.get('小订开始')),
+                                      small_end=dt(r.get('小订结束')),
                                       launch_start=dt(r.get('首销开始')),
                                       launch_end=dt(r.get('首销结束')),
                                       sheet=name,row=rowno))
@@ -711,10 +769,15 @@ def correlation(xs, ys):
     return sum((x-ax)*(y-ay) for x,y in zip(xs,ys))/math.sqrt(xx*yy)
 
 def lock_lag_analysis(panel):
+    """Compare retained deposits with locks at 0--3 days.
+
+    Ordinary ``大定`` is intentionally excluded.  A missing retained-deposit
+    series remains unavailable instead of silently changing the denominator.
+    """
     results=[]
     for key, rs in group(panel, ('model','stage','cycle')).items():
         locks=group([r for r in rs if r['metric']=='交车锁单'],('source',))
-        for metric in ('大定','留存大定'):
+        for metric in ('留存大定',):
             deposits=group([r for r in rs if r['metric']==metric],('source',))
             for (ds,), dr in deposits.items():
                 for (ls,), lr in locks.items():
@@ -852,7 +915,7 @@ def main():
     log('输入文件：'+str(src))
     if src==web_final:
         raise ValueError('输入文件与固定网页输出文件相同，已停止以保护源数据：'+str(src))
-    log('分析目的：辅助销量预测；净大定（留存大定）与交车锁单分别研究')
+    log('分析目的：辅助销量预测；小订、留存大定与交车锁单分别研究')
     required=(('输入工作簿',src),('节假日日历',calendar_path),
               ('网页分组辅助模块',exporter),('报告规则配置',config_path),
               ('规律汇总模块',rules_path),('上市后销量节奏模块',launch_path),('源表扩展规律模块',source_patterns_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
@@ -895,7 +958,7 @@ def main():
     launch_analysis=load_component(launch_path,'sales_launch_patterns').build_launch_analysis(panel)
     result['launch_periods']=launch_analysis['periods']
     result['launch_pacing']=launch_analysis['comparisons']
-    log(f"上市后销量节奏：{len(result['launch_periods'])} 个周期、{len(result['launch_pacing'])} 条相邻比较，净大定与锁单分别计算")
+    log(f"上市后销量节奏：{len(result['launch_periods'])} 个周期、{len(result['launch_pacing'])} 条相邻比较，留存大定与锁单分别计算；小订仅保留小订期")
     log(f'周期比较、车型分类和锁单滞后计算完成，用时 {time.perf_counter()-stage:.1f} 秒')
 
     log('正在读取首销D1/D2、转化退订曲线和分时数据...')
@@ -903,7 +966,7 @@ def main():
     source_insights=load_component(source_patterns_path,'sales_source_patterns').build_source_insights(src)
     log('源表扩展规律完成：'+str({k:len(source_insights.get(k,[])) for k in ('inventory','early_launch','curves','hourly')})+f'，用时 {time.perf_counter()-stage:.1f} 秒')
 
-    log('正在建立净大定、锁单预测基准并做滚动回测...')
+    log('正在建立三口径（日/周/月）预测辅助并做滚动回测：小订（仅小订期）、留存大定、锁单...')
     stage=time.perf_counter()
     forecast=load_component(forecast_path,'sales_forecast_insights').build_forecast_insights(panel,c,log=log)
     for table in ('profiles','backtests'):

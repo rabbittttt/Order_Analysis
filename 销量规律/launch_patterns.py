@@ -1,4 +1,4 @@
-"""上市后销量节奏：首销及其后平销期的净大定与锁单周期比较。
+"""上市后销量节奏：首销及其后平销期的留存大定与锁单周期比较。
 
 The module intentionally works on the already validated daily panel.  It does
 not synthesize missing days. Models, launch batches and metrics stay separate;

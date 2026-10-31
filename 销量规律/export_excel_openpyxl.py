@@ -95,7 +95,7 @@ def _choose_grouping(models, config):
 
 def _selected_metrics(comparisons, config=None):
     available = list(dict.fromkeys(r["metric"] for r in comparisons))
-    available.sort(key=lambda metric: ({"留存大定": 0, "交车锁单": 1}.get(metric, 2), metric))
+    available.sort(key=lambda metric: ({"小订数量": 0, "留存大定": 1, "交车锁单": 2}.get(metric, 3), metric))
     requested = (config or {}).get("mainMetrics", "auto")
     if requested == "auto":
         return available, []
@@ -184,7 +184,7 @@ REPORT_SHEET_ORDER = (
 
 def _headline_findings(rules):
     """Put forecast targets first; describe observed direction without overstating it."""
-    focus = [r for r in rules if r.get("metric") in ("留存大定", "交车锁单")
+    focus = [r for r in rules if r.get("metric") in ("小订数量", "留存大定", "交车锁单")
              and isinstance(r.get("typical"), (int, float)) and math.isfinite(r["typical"])]
     overall = [r for r in focus if r.get("category") == "全部车型"]
     focus = overall or focus
@@ -226,10 +226,12 @@ def _headline_findings(rules):
         if pattern.startswith(("首销第", "上市第")):
             finding += f"；窗口阶段：{r.get('stage', '未提供')}"
         elif r.get("stage") == "首销": finding += "；适用首销批次"
+        if r.get("metric") == "小订数量":
+            finding = "小订期" + finding
         r.update(finding=finding, evidence_level=status)
         result.append(r)
     result.sort(key=lambda r: (not r["cross_year_candidate"], r.get("stage") != "平销",
-                              r.get("metric") != "留存大定", -r.get("years", 0),
+        {"小订数量": 0, "留存大定": 1, "交车锁单": 2}.get(r.get("metric"), 3), -r.get("years", 0),
                               -r.get("periods", 0), r["pattern"], r["category"]))
     return result[:12]
 
@@ -404,7 +406,7 @@ def export_workbook(payload, output_path, log=None):
     overview.merge_cells("A6:H6")
     overview["A6"].alignment = Alignment(vertical="center", wrap_text=True)
     overview.row_dimensions[6].height = 38
-    targets = {"留存大定": "净大定（留存大定）", "交车锁单": "锁单"}
+    targets = {"小订数量": "小订", "留存大定": "净大定（留存大定）", "交车锁单": "锁单"}
     findings_end = b.table(overview, 8,
         ["预测口径", "阶段", "规律", "发现与适用范围", "典型比例", "样本依据", "普适性验证", "明细工作表"],
         [[targets[r["metric"]], r["stage"], r["pattern"], r["finding"], r["typical"],
@@ -677,7 +679,7 @@ def export_workbook(payload, output_path, log=None):
 
     if "forecast" in payload:
         forecast = payload["forecast"]
-        targets = {"留存大定": "净大定（留存大定）", "交车锁单": "锁单"}
+        targets = {"小订数量": "小订", "留存大定": "净大定（留存大定）", "交车锁单": "锁单"}
         forecast_status = {"ok": "可查看回测参考", "insufficient_history": "历史训练样本不足",
                            "insufficient_backtest": "独立回测样本不足", "no_complete_target_period": "当前无完整可预测周期"}
         forecast_rows = []

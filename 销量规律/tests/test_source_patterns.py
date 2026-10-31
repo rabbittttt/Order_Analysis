@@ -76,6 +76,9 @@ def _synthetic_book(path):
     _write_sheet(book, "每日直接大定占比", ["代际名", "二级代际名", "D1", "D2"], [
         ["车型A", None, 0.3, 0.5],
     ])
+    _write_sheet(book, "累计小订转化率", ["代际名", "二级代际名", "D1", "D2"], [
+        ["车型A", None, 0.2, 0.4],
+    ])
     # A complete sequence has an original zero but remains valid because the
     # daily total is positive.  The other groups exercise each quality state.
     _write_sheet(book, "小订by时", ["代际名", "二级代际名", "日期", "小时", "小时小订", "来源文件"], [
@@ -147,7 +150,7 @@ class SourcePatternsTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_inventory_and_early_aliases_preserve_zero_and_source(self):
-        self.assertEqual(len(self.data["inventory"]), 7)
+        self.assertEqual(len(self.data["inventory"]), 8)
         early = [row for row in self.data["early_launch"] if row["model"] == "车型A"]
         self.assertTrue(any(row["feature"] == "D1大定" and row["value"] == 0 for row in early))
         self.assertTrue(any(row["feature"] == "D1占最终大定比例" and row["value"] == 0 for row in early))
@@ -172,6 +175,14 @@ class SourcePatternsTests(unittest.TestCase):
         self.assertIn("不求和", a[("车型A", 2)]["snapshot_note"])
         self.assertEqual(a[("车型B", 1)]["value"], 0.4)
         self.assertNotIn(("车型B", 2), a)
+
+    def test_cumulative_small_order_conversion_uses_launch_anchor(self):
+        rows = [row for row in self.data["curves"]
+                if row["curve"] == "累计小订转化率"]
+        self.assertEqual(rows[0]["stage"], "首销")
+        self.assertEqual(rows[0]["anchor_date"], "2026-10-03")
+        self.assertEqual(rows[0]["date"], "2026-10-03")
+        self.assertEqual(rows[0]["day"], 1)
 
     def test_hourly_quality_states_and_cutoff(self):
         hourly = self.data["hourly"]

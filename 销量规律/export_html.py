@@ -8,7 +8,11 @@ import tempfile
 from datetime import date, datetime
 from pathlib import Path
 
-FOCUS_METRICS = ("留存大定", "交车锁单")
+# The three primary order measures shown by the web app.  Keep the source
+# field names here: presentation labels are supplied separately in ``metrics``.
+# Small orders are a first-class measure, but the reader guarantees that they
+# only carry the ``小订阶段`` stage.
+FOCUS_METRICS = ("小订数量", "留存大定", "交车锁单")
 SERIES_FIELDS = ("model", "metric", "stage", "cycle", "source", "date", "value", "life")
 
 
@@ -29,8 +33,12 @@ def _period_coverage(rows):
     """Match the workbook's period coverage counts for the web audit view."""
     buckets = {}
     for row in rows or []:
-        key = (row.get("role") or ("锁单" if row.get("metric") == "交车锁单" else "大定"),
-               row.get("metric"), row.get("stage"), row.get("kind"))
+        key = (
+            row.get("role") or (
+                "锁单" if row.get("metric") == "交车锁单" else
+                "小订" if row.get("metric") == "小订数量" else "大定"),
+            row.get("metric"), row.get("stage"), row.get("kind"),
+        )
         item = buckets.setdefault(key, {"role": key[0], "metric": key[1], "stage": key[2], "kind": key[3],
                                         "total": 0, "valid": 0, "current_incomplete": 0,
                                         "previous_incomplete": 0, "negative": 0, "previous_zero": 0})
@@ -45,7 +53,7 @@ def _period_coverage(rows):
 
 
 def build_web_data(payload, panel):
-    """Keep the two forecast targets separate; reuse the workbook's grouping."""
+    """Build the web payload with three primary measures kept separate."""
     exporter = _load_sibling("export_excel_openpyxl")
     config = json.loads(Path(__file__).with_name("report_config.json").read_text(encoding="utf-8-sig"))
     results = payload["results"]
@@ -58,8 +66,11 @@ def build_web_data(payload, panel):
     model_map = {r["model"]: r for r in grouping["entries"]}
     report_series = exporter._report_series(results.get("period_comparisons", []), grouping["categories"], model_map, available_metrics)
     monthly_profiles = exporter.build_monthly_profiles(results, report_series, model_map)
-    metrics = [dict(key="留存大定", label="净大定", source_label="留存大定（兼容净大定）", available="留存大定" in present),
-               dict(key="交车锁单", label="锁单", source_label="交车锁单", available="交车锁单" in present)]
+    metrics = [
+        dict(key="小订数量", label="小订", source_label="小订数量（仅小订期）", available="小订数量" in present),
+        dict(key="留存大定", label="留存大定", source_label="留存大定", available="留存大定" in present),
+        dict(key="交车锁单", label="锁单", source_label="交车锁单", available="交车锁单" in present),
+    ]
     filtered = {key: list(rows) if isinstance(rows, list) else rows for key, rows in results.items()}
     filtered["model_classes"] = results.get("model_classes", [])
     filtered["period_coverage"] = _period_coverage(results.get("period_comparisons", []))
@@ -68,9 +79,9 @@ def build_web_data(payload, panel):
     findings = exporter._headline_findings(rules)
     notes = [
         "目标是辅助销量预测：先查规律适用范围，再比较历史回测与简单基准。",
-        "净大定使用原表留存大定，兼容旧字段净大定；锁单使用交车锁单。两个口径不相加，也不以大定替代缺失净大定。",
+        "小订、留存大定、锁单是三个独立口径。小订只进入小订期；留存大定使用原表留存大定（兼容读取旧字段净大定）；锁单使用交车锁单。三种口径不相加，也不互相替代。",
         "车型分类只读取同一工作簿的原始属性。首销、平销及不同来源/批次分别计算。",
-        "观测合计保留真实零值和负值；缺失日期不补零。含负值的周期不进入倍率模型，不能将此子样本外推到全部净大定。",
+        "观测合计保留真实零值和负值；缺失日期不补零。含负值的周期不进入倍率模型，不能将此子样本外推到全部留存大定。",
         "历史节假日比较采用节前后同星期对照，只用于解释历史；包含未来对照的节日倍率不用于滚动预测。",
         "P25/P75表示历史倍率分布，不是预测置信区间；周内、月份、节假日系数可能重叠，不自动连乘。",
         "分类汇总可能随车型覆盖变化。单车型、同阶段、同来源/批次的完整周期更适合预测校准。",
