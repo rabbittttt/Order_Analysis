@@ -32,7 +32,7 @@
       </nav>
       <div class="topbar-meta">
         <span class="offline-badge"><span class="status-dot"></span>本地离线分析</span>
-        <a id="excelTopLink" class="header-excel" href="鸿蒙智行销量规律分析.xlsx" download><svg class="header-excel-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg><span>下载 Excel</span></a><span id="generatedAt" class="generated-at"></span>
+        <button type="button" class="button button-quiet" id="openLibrary">完整分析资料</button><span id="generatedAt" class="generated-at"></span>
       </div>
     </header>
 
@@ -84,6 +84,10 @@
       <div id="rangeNotice" class="range-notice" role="status" aria-live="polite"></div>
 
       <section id="panel-overview" class="page-panel" role="tabpanel" aria-labelledby="nav-overview">
+        <section class="card overview-rules" id="overviewRuleCard">
+          <div class="card-heading"><div><h2>发现的规律与验证情况</h2><p class="card-subtitle" id="ruleScopeNote"></p></div><button type="button" class="text-button" id="allRules">查看完整规律表 →</button></div>
+          <div id="ruleFindings"></div>
+        </section>
         <div class="kpi-grid" id="overviewKpis"></div>
 
         <section class="card trend-card">
@@ -186,6 +190,15 @@
           <div class="evidence-mode" role="group" aria-label="证据类型">
             <button type="button" class="evidence-mode-item is-active" data-evidence="daily" aria-pressed="true">逐日观测</button>
             <button type="button" class="evidence-mode-item" data-evidence="lags" aria-pressed="false">净大定→锁单相关</button>
+            <button type="button" class="evidence-mode-item" data-evidence="library" aria-pressed="false">完整分析资料</button>
+          </div>
+          <div id="libraryControls" class="library-controls" hidden>
+            <p class="library-scope">本次全量分析快照：这里使用下方独立筛选，不随左侧日期或单车型重新计算。逐车型、日期和来源可在表内搜索；回到“逐日观测”查看左侧范围。</p>
+            <label class="compact-select"><span>资料</span><select id="libraryTable" aria-label="分析资料类型"></select></label>
+            <label class="compact-select"><span>指标</span><select id="libraryMetric" aria-label="资料指标"></select></label>
+            <label class="compact-select"><span>分类</span><select id="libraryCategory" aria-label="资料分类"></select></label>
+            <label class="compact-select"><span>阶段</span><select id="libraryStage" aria-label="资料阶段"></select></label>
+            <div id="libraryMethods" class="library-methods"></div>
           </div>
           <div class="table-meta" id="evidenceMeta"></div>
           <div class="table-wrap" id="evidenceTableWrap"></div>
@@ -195,7 +208,7 @@
 
       <footer class="page-footer">
         <span id="footerSource"></span>
-        <a id="excelLink" class="footer-link" href="鸿蒙智行销量规律分析.xlsx" download>打开 Excel 报告</a><button type="button" class="footer-link" data-go="evidence">查看数据覆盖与明细</button>
+        <button type="button" class="footer-link" id="openMethods">数据覆盖与方法</button><button type="button" class="footer-link" data-go="evidence">查看观测明细</button>
       </footer>
     </main>
   </div>

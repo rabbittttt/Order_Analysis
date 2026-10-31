@@ -122,6 +122,52 @@ def _report_series(comparisons, categories, model_map, selected_metrics=None):
             for category in ["全部车型", *categories] for metric, stage in buckets[category]]
 
 
+def build_monthly_profiles(results, series, model_map):
+    """Build the monthly evidence used by both Excel and the offline web report.
+
+    This helper only derives plain dictionaries. It does not create or write a
+    workbook, so the web-only pipeline can expose the same monthly evidence
+    without generating an Excel file.
+    """
+    def pick(rows, category, metric, stage):
+        return [r for r in rows if (category == "全部车型" or model_map.get(r.get("model"), {}).get("category") == category)
+                and r.get("metric") == metric and r.get("stage") == stage]
+
+    month_rows = [r for r in results.get("period_comparisons", []) if r.get("kind") == "月"]
+    monthly_profiles = []
+    for item in series:
+        scoped = pick(month_rows, item["category"], item["metric"], item["stage"])
+        for month in range(1, 13):
+            rows = [r for r in scoped if str(r.get("start", ""))[5:7] == f"{month:02d}"]
+            complete = [dict(r, daymean=r["current"] / r["current_days"]) for r in rows
+                        if r.get("current_observed") == r.get("current_days") and r.get("current_negative_days", 0) == 0
+                        and r.get("current", -1) >= 0 and r.get("current_days", 0) > 0]
+            paired = [r for r in rows if r.get("status") == "有效"]
+            years = sorted({str(r.get("start", ""))[:4] for r in paired})
+            annual = [(year, _within([r for r in paired if str(r.get("start", "")).startswith(year)], "daily_ratio")) for year in years]
+            if not paired:
+                conclusion = "缺少完整相邻月"
+            elif len(years) < 2:
+                conclusion = "单年样本，不能认定季节性"
+            elif all(v is not None and v > 1 for _, v in annual):
+                conclusion = "各年中位数均上升，待控制活动"
+            elif all(v is not None and v < 1 for _, v in annual):
+                conclusion = "各年中位数均下降，待控制活动"
+            else:
+                conclusion = "跨年方向不一致"
+            monthly_profiles.append(dict(
+                **item, month=month, daymean=_within(complete, "daymean"), ratio=_within(paired, "ratio"),
+                daily=_within(paired, "daily_ratio"), models=len({r["model"] for r in complete}),
+                complete=len(complete), pairs=len(paired), pairmodels=len({r["model"] for r in paired}),
+                years=len(years), periods=len({r.get("start") for r in paired}),
+                above=mean([mean([1 if r.get("daily_ratio") is not None and r["daily_ratio"] > 1 else 0 for r in rs])
+                            for _, rs in _groups(paired, ["model"])]) if paired else None,
+                yearly="；".join(f"{year}：{value * 100:.1f}%" for year, value in annual if value is not None),
+                conclusion=conclusion
+            ))
+    return monthly_profiles
+
+
 def _as_date(value):
     if not value:
         return None
@@ -344,35 +390,7 @@ def export_workbook(payload, output_path, log=None):
                 and r.get("metric") == metric and r.get("stage") == stage]
 
     month_rows = [r for r in d["period_comparisons"] if r.get("kind") == "月"]
-    monthly_profiles = []
-    for item in series:
-        scoped = pick(month_rows, item["category"], item["metric"], item["stage"])
-        for month in range(1, 13):
-            rows = [r for r in scoped if int(str(r["start"])[5:7]) == month]
-            complete = [dict(r, daymean=r["current"] / r["current_days"]) for r in rows
-                        if r.get("current_observed") == r.get("current_days") and r.get("current_negative_days", 0) == 0 and r.get("current", -1) >= 0]
-            paired = [r for r in rows if r.get("status") == "有效"]
-            years = sorted({str(r["start"])[:4] for r in paired})
-            annual = [(year, _within([r for r in paired if str(r["start"]).startswith(year)], "daily_ratio")) for year in years]
-            if not paired:
-                conclusion = "缺少完整相邻月"
-            elif len(years) < 2:
-                conclusion = "单年样本，不能认定季节性"
-            elif all(v > 1 for _, v in annual):
-                conclusion = "各年中位数均上升，待控制活动"
-            elif all(v < 1 for _, v in annual):
-                conclusion = "各年中位数均下降，待控制活动"
-            else:
-                conclusion = "跨年方向不一致"
-            monthly_profiles.append(dict(
-                **item, month=month, daymean=_within(complete, "daymean"), ratio=_within(paired, "ratio"),
-                daily=_within(paired, "daily_ratio"), models=len({r["model"] for r in complete}),
-                complete=len(complete), pairs=len(paired), pairmodels=len({r["model"] for r in paired}),
-                years=len(years), periods=len({r["start"] for r in paired}),
-                above=mean([mean([1 if r["daily_ratio"] > 1 else 0 for r in rs]) for _, rs in _groups(paired, ["model"])]) if paired else None,
-                yearly="；".join(f"{year}：{value * 100:.1f}%" for year, value in annual),
-                conclusion=conclusion
-            ))
+    monthly_profiles = build_monthly_profiles(d, series, model_map)
 
     b = ExcelBuilder(payload.get("sample", False), log=log)
     overview = b.sheet("分析总览", [22, 14, 28, 52, 16, 28, 42, 22])

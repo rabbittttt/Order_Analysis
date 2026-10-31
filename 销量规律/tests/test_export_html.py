@@ -26,6 +26,29 @@ def templates(folder):
 
 
 class HtmlExportTests(unittest.TestCase):
+    def test_web_payload_keeps_full_excel_evidence_and_metadata(self):
+        results={name:[] for name in ['weekly','monthly','annual','holidays','lifecycle','period_comparisons',
+                                      'period_summary','lock_lags','coverage','launch_periods','launch_pacing']}
+        results['model_classes']=[dict(model='车型A',brand='品牌A',segment='产品A',energy='纯电',stages='平销',metrics='小订数量、留存大定')]
+        base=dict(model='车型A',stage='平销',cycle='批次A',source='来源A',start=date(2025,1,1),end=date(2025,1,31),
+                  previous_start=date(2024,12,1),previous_end=date(2024,12,31),current=310,previous=300,
+                  current_days=31,current_observed=31,previous_days=31,previous_observed=31,status='有效',
+                  ratio=310/300,daily_ratio=1.0,current_negative_days=0,previous_negative_days=0)
+        results['period_comparisons']=[dict(base,metric='小订数量',kind='月',role='大定'),dict(base,metric='留存大定',kind='月',role='大定')]
+        results['coverage']=[dict(metric='小订数量',stage='平销',start=date(2025,1,1),end=date(2025,1,31))]
+        panel=[dict(model='车型A',metric='留存大定',stage='平销',cycle='批次A',source='来源A',date=date(2025,1,1),value=10,life=None)]
+        result=e.build_web_data(dict(results=results,source='input.xlsx',sha256='abc',sample=True,audit={'负值':2},
+                                     source_sheets=['逐日表'],source_mode='字段级来源'),panel)
+        self.assertIn('小订数量',result['meta']['available_metrics'])
+        self.assertIn('小订数量',{row['metric'] for row in result['results']['period_comparisons']})
+        self.assertEqual(result['meta']['audit'],{'负值':2})
+        self.assertEqual(result['meta']['source_sheets'],['逐日表'])
+        self.assertTrue(result['meta']['sample'])
+        self.assertGreater(len(result['monthly_profiles']),0)
+        self.assertIn('findings',result)
+        self.assertIn('period_coverage',result['results'])
+        self.assertNotIn('excel_name',result['meta'])
+
     def test_data_script_cannot_be_closed_by_source_labels(self):
         payload=data()
         attack='</script><script>throw Error("bad")</script>&__PATTERNS_JS__'
@@ -55,6 +78,20 @@ class HtmlExportTests(unittest.TestCase):
         self.assertEqual(rebuilt,rows)
         self.assertLess(len(json.dumps(packed)),len(json.dumps(rows)))
         self.assertEqual(rows[0]['model'],'车型A')
+
+    def test_packed_full_payload_roundtrips_months_findings_and_results(self):
+        payload=data()
+        payload['findings']=[dict(metric='留存大定',pattern='月度变化',typical=1.23456789,cross_year_candidate=False,index=i) for i in range(40)]
+        payload['monthly_profiles']=[dict(category='全部车型',metric='小订数量',stage='平销',month=i,
+                                          daily=0 if i == 1 else None,yearly='2025：100.0%') for i in range(1,50)]
+        payload['results']={'period_coverage':[dict(metric='小订数量',valid=0,total=1)],
+                            'weekly':[]}
+        packed=e._packed(payload)
+        self.assertEqual(packed['findings']['$table'],1)
+        self.assertEqual(packed['monthly_profiles']['$table'],1)
+        self.assertEqual(packed['monthly_profiles']['rows'][0][packed['monthly_profiles']['columns'].index('daily')],0)
+        self.assertEqual(packed['results']['period_coverage'][0]['valid'],0)
+        self.assertEqual(packed['findings']['rows'][0][packed['findings']['columns'].index('typical')],1.23456789)
 
     def test_unknown_nonfinite_numbers_fail_before_output(self):
         payload=data();payload['series']=[dict(value=float('nan'))]
@@ -91,7 +128,10 @@ class HtmlExportTests(unittest.TestCase):
         result=e.build_web_data(dict(results=results),panel)
         self.assertEqual(result['series'],[])
         self.assertFalse(any(m['available'] for m in result['metrics']))
-        self.assertEqual(result['results']['coverage'],[])
+        self.assertEqual(result['results']['coverage'][0]['metric'],'大定')
+        self.assertEqual(result['series'],[])
         self.assertEqual(result['meta']['date_start'],None)
+        self.assertEqual(result['meta']['analysis_start'],date(2025,1,1))
+        self.assertEqual(result['meta']['analysis_end'],date(2025,1,1))
 
 if __name__=='__main__':unittest.main()

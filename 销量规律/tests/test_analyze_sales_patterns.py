@@ -262,13 +262,13 @@ class SalesPatternTests(unittest.TestCase):
             ):
                 path.parent.mkdir(parents=True,exist_ok=True)
                 path.touch()
-            final=root/'output_file'/'鸿蒙智行销量规律分析.xlsx'
+            final=root/'output_file'/'鸿蒙智行销量规律分析.html'
             final.parent.mkdir(parents=True)
             final.write_bytes(b'preserve source')
             with patch.object(m,'ROOT',root),patch.object(m,'SCRIPT_PATH',script),\
                  patch.object(sys,'argv',['analyze_sales_patterns.py','--input',str(final),
                                           '--out',str(root/'ignored-folder')]):
-                with self.assertRaisesRegex(ValueError,'输入文件与固定输出文件相同'):
+                with self.assertRaisesRegex(ValueError,'输入文件与固定网页输出文件相同'):
                     m.main()
             self.assertEqual(final.read_bytes(),b'preserve source')
             self.assertFalse((root/'ignored-folder').exists())

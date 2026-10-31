@@ -802,7 +802,10 @@ def main():
     ap.add_argument('--real-data',action='store_true',help=argparse.SUPPRESS)
     a=ap.parse_args()
     src=a.input.resolve()
-    final=(ROOT/'output_file'/'鸿蒙智行销量规律分析.xlsx').resolve()
+    # The interactive HTML is the sole generated deliverable.  Keep the
+    # historical workbook path out of this run so existing Excel files are
+    # never overwritten or mistaken for a fresh result.
+    web_final=(ROOT/'output_file'/'鸿蒙智行销量规律分析.html').resolve()
     exporter=SCRIPT_PATH.with_name('export_excel_openpyxl.py')
     calendar_path=SCRIPT_PATH.parent.parent/'generate_html'/'core'/'china_calendar.py'
     config_path=SCRIPT_PATH.with_name('report_config.json')
@@ -810,18 +813,17 @@ def main():
     forecast_path=SCRIPT_PATH.with_name('forecast_insights.py')
     launch_path=SCRIPT_PATH.with_name('launch_patterns.py')
     web_exporter=SCRIPT_PATH.with_name('export_html.py')
-    web_final=final.with_suffix('.html')
     templates=SCRIPT_PATH.with_name('templates')
 
     log('销量规律分析启动')
     if a.out is not None:
-        log('--out参数已弃用，忽略该路径；结果仍写入固定输出文件')
+        log('--out参数已弃用，忽略该路径；网页仍写入固定输出文件')
     log('输入文件：'+str(src))
-    if src==final:
-        raise ValueError('输入文件与固定输出文件相同，已停止以保护源数据：'+str(src))
+    if src==web_final:
+        raise ValueError('输入文件与固定网页输出文件相同，已停止以保护源数据：'+str(src))
     log('分析目的：辅助销量预测；净大定（留存大定）与交车锁单分别研究')
     required=(('输入工作簿',src),('节假日日历',calendar_path),
-              ('Excel导出器',exporter),('报告规则配置',config_path),
+              ('网页分组辅助模块',exporter),('报告规则配置',config_path),
               ('规律汇总模块',rules_path),('上市后销量节奏模块',launch_path),('预测辅助模块',forecast_path),('网页导出器',web_exporter),
               *((f'网页模板 {name}',templates/name) for name in ('patterns.html','patterns.css','patterns.js')))
     missing=[f'{label}不存在：{path}' for label,path in required if not path.is_file()]
@@ -882,18 +884,10 @@ def main():
     log('正在准备离线交互网页...')
     web=load_component(web_exporter,'sales_html_exporter')
     html=web.render_html(web.build_web_data(payload,panel))
-    final.parent.mkdir(parents=True,exist_ok=True)
-    log('分析计算完成，正在生成Excel...')
-    stage=time.perf_counter()
-    module=load_component(exporter,'sales_excel_exporter')
-    module.export_workbook(payload,final,log=log)
-    if not final.is_file():
-        raise RuntimeError('Excel导出命令已结束，但未找到最终文件：'+str(final))
-    log(f'Excel生成完成，用时 {time.perf_counter()-stage:.1f} 秒')
+    web_final.parent.mkdir(parents=True,exist_ok=True)
     log('正在保存离线交互网页...')
     web.export_html(html,web_final,log=log)
     log(f'分析完成，总耗时 {time.perf_counter()-started:.1f} 秒')
-    print('Excel：'+str(final),flush=True)
     print('网页：'+str(web_final),flush=True)
     print('源文件未修改；结果数量：'+str({k:len(v) for k,v in result.items()}),flush=True)
     open_generated_webpage(web_final)

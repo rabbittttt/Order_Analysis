@@ -25,6 +25,25 @@ def _json_default(value):
     raise TypeError(f"网页数据不支持的类型：{type(value).__name__}")
 
 
+def _period_coverage(rows):
+    """Match the workbook's period coverage counts for the web audit view."""
+    buckets = {}
+    for row in rows or []:
+        key = (row.get("role") or ("锁单" if row.get("metric") == "交车锁单" else "大定"),
+               row.get("metric"), row.get("stage"), row.get("kind"))
+        item = buckets.setdefault(key, {"role": key[0], "metric": key[1], "stage": key[2], "kind": key[3],
+                                        "total": 0, "valid": 0, "current_incomplete": 0,
+                                        "previous_incomplete": 0, "negative": 0, "previous_zero": 0})
+        item["total"] += 1
+        status = str(row.get("status", ""))
+        item["valid"] += status == "有效"
+        item["current_incomplete"] += status == "本期不完整"
+        item["previous_incomplete"] += status == "前期缺失或不完整"
+        item["negative"] += "负" in status
+        item["previous_zero"] += status == "前期为零"
+    return list(buckets.values())
+
+
 def build_web_data(payload, panel):
     """Keep the two forecast targets separate; reuse the workbook's grouping."""
     exporter = _load_sibling("export_excel_openpyxl")
@@ -34,13 +53,19 @@ def build_web_data(payload, panel):
     focused = [r for r in panel if r["metric"] in FOCUS_METRICS]
     present = {r["metric"] for r in focused}
     dates = [r["date"] for r in focused]
+    analysis_dates = [r["date"] for r in panel]
+    available_metrics, omitted_metrics = exporter._selected_metrics(results.get("period_comparisons", []), config)
+    model_map = {r["model"]: r for r in grouping["entries"]}
+    report_series = exporter._report_series(results.get("period_comparisons", []), grouping["categories"], model_map, available_metrics)
+    monthly_profiles = exporter.build_monthly_profiles(results, report_series, model_map)
     metrics = [dict(key="留存大定", label="净大定", source_label="留存大定（兼容净大定）", available="留存大定" in present),
                dict(key="交车锁单", label="锁单", source_label="交车锁单", available="交车锁单" in present)]
-    filtered = {key: [r for r in rows if r.get("metric") in FOCUS_METRICS]
-                for key, rows in results.items() if key != "model_classes"}
-    filtered["model_classes"] = results["model_classes"]
+    filtered = {key: list(rows) if isinstance(rows, list) else rows for key, rows in results.items()}
+    filtered["model_classes"] = results.get("model_classes", [])
+    filtered["period_coverage"] = _period_coverage(results.get("period_comparisons", []))
     rules = _load_sibling("report_rules").build_rule_summary(
-        results, {r["model"]: r for r in grouping["entries"]}, grouping["categories"], FOCUS_METRICS)
+        results, model_map, grouping["categories"], available_metrics)
+    findings = exporter._headline_findings(rules)
     notes = [
         "目标是辅助销量预测：先查规律适用范围，再比较历史回测与简单基准。",
         "净大定使用原表留存大定，兼容旧字段净大定；锁单使用交车锁单。两个口径不相加，也不以大定替代缺失净大定。",
@@ -58,11 +83,17 @@ def build_web_data(payload, panel):
     return dict(meta=dict(title="鸿蒙智行 · 销量预测规律研究", generated_at=datetime.now().isoformat(timespec="seconds"),
                          source_name=Path(payload.get("source", "鸿蒙智行销量数据汇总.xlsx")).name,
                          date_start=min(dates) if dates else None, date_end=max(dates) if dates else None,
+                         analysis_start=min(analysis_dates) if analysis_dates else None,
+                         analysis_end=max(analysis_dates) if analysis_dates else None,
                          sha256=payload.get("sha256"), calendar_years=payload.get("calendar_years", []),
-                         calendar_events=payload.get("calendar_events", []), calendar_sources=payload.get("calendar_sources", {}), notes=notes, excel_name="鸿蒙智行销量规律分析.xlsx"),
+                         calendar_events=payload.get("calendar_events", []), calendar_sources=payload.get("calendar_sources", {}), notes=notes,
+                         audit=payload.get("audit", {}), source_sheets=payload.get("source_sheets", []),
+                         source_mode=payload.get("source_mode"), sample=bool(payload.get("sample")),
+                         available_metrics=available_metrics, omitted_metrics=omitted_metrics),
                 metrics=metrics, grouping=grouping,
                 series=[{key: r.get(key) for key in SERIES_FIELDS} for r in focused],
-                results=filtered, rules=rules, forecast=payload.get("forecast", {"profiles": [], "backtests": [], "notes": []}))
+                results=filtered, rules=rules, findings=findings, monthly_profiles=monthly_profiles,
+                forecast=payload.get("forecast", {"profiles": [], "backtests": [], "notes": []}))
 
 
 def pack_records(rows):
@@ -91,6 +122,8 @@ def _packed(data):
     clone = dict(data)
     clone["series"] = pack_records(data["series"])
     clone["rules"] = pack_records(data["rules"])
+    clone["findings"] = pack_records(data.get("findings", []))
+    clone["monthly_profiles"] = pack_records(data.get("monthly_profiles", []))
     clone["results"] = {key: pack_records(rows) for key, rows in data["results"].items()}
     clone["forecast"] = dict(data["forecast"])
     for key in ("profiles", "backtests"):
@@ -109,6 +142,7 @@ DECODER = r"""
   };
   const data = JSON.parse(document.getElementById('patterns-data').textContent);
   data.series = unpack(data.series); data.rules = unpack(data.rules);
+  data.findings = unpack(data.findings); data.monthly_profiles = unpack(data.monthly_profiles);
   for (const key of Object.keys(data.results)) data.results[key] = unpack(data.results[key]);
   for (const key of ['profiles', 'backtests']) data.forecast[key] = unpack(data.forecast[key]);
   window.PATTERNS_DATA = data;

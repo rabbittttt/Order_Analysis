@@ -22,7 +22,8 @@ const state = {
   page:"overview", pattern:"months", evidence:"daily", metric:"",
   category:"__ALL__", model:"__ALL__", stage:"",
   start:"", end:"", grain:"月", launchGrain:"周", compare:false, search:"", pageNo:0,
-  forecastModel:"", forecastGrain:"月", profileKey:""
+  forecastModel:"", forecastGrain:"月", profileKey:"",
+  libraryTable:"rules", libraryMetric:"__ALL__", libraryCategory:"__ALL__", libraryStage:"__ALL__"
 };
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text, parent) => {
@@ -850,6 +851,9 @@ function renderPatternTabs(){
     const bars=el("div","pattern-chart","",c2);drawBars(bars,trans.filter(x=>x.median!==null),"key","median",fmtPct,"vertical");
     const t2=el("div","table-wrap","",c2);makeTable(t2,["周期转换","P25","日均倍率中位数","P75","有效记录数"],trans.map(x=>[x.key,fmtPct(x.p25),fmtPct(x.median),fmtPct(x.p75),fmtInt(x.n)]),"没有足够的完整周期比较。");
   }
+  const shortcuts={months:[["months","逐月数量、跨年方向与样本证据"],["annual","逐车型年度季节性"]],week:[["weekly","完整普通周明细"],["monthly","完整月末明细"]],launch:[["lifecycle","首周生命周期明细"]],holiday:[["holidays","全部指标节假日明细"]],cycles:[["deposits","下订指标分类维度规律"],["locks","锁单分类维度规律"],["comparisons","含不可比状态的周期明细"]]};
+  const actions=el("div","library-actions","",container);
+  for(const [key,label] of shortcuts[state.pattern]||[]){const button=el("button","button button-quiet",label,actions);button.type="button";button.addEventListener("click",()=>openLibrary(key));}
 }
 function renderSignals(){
   const c=$("overviewSignals");clear(c);
@@ -923,7 +927,83 @@ function renderRangeNotice(){
   node.textContent=metricName(state.metric)+"（源："+metricSource(state.metric)+"） · "+state.stage+" · "+(state.category==="__ALL__"?"全部分类":state.category)+" · "+(state.model==="__ALL__"?"全部车型":state.model)+" · "+state.start+" 至 "+state.end+" · "+models.length+"车型 / "+s.length+"条日观测"+(!s.length?"；该范围没有可用观测。":"");
 }
 function renderOverview(){
-  renderRangeNotice();renderKpis();renderTrend();renderRatio();renderModelCompare();renderSignals();renderCoverage();
+  renderRuleFindings();renderRangeNotice();renderKpis();renderTrend();renderRatio();renderModelCompare();renderSignals();renderCoverage();
+}
+
+function renderRuleFindings(){
+  const c=$("ruleFindings");clear(c);
+  const category=state.category==="__ALL__"?"全部车型":state.category;
+  $("ruleScopeNote").textContent="本次全量历史："+metricName(state.metric)+" · "+category+" · "+state.stage+"。以下结论按完整分析期计算，不随左侧日期或单车型重算；P25/P75是历史波动，验证同向仍需预测回测。";
+  const matching=rules.filter(r=>r.metric===state.metric&&r.category===category&&r.stage===state.stage&&num(r.typical)!==null);
+  const lookup=new Map((data.findings||[]).map(r=>[[r.category,r.metric,r.stage,r.pattern].join("|"),r]));
+  const candidates=matching.map(r=>({...r,...(lookup.get([r.category,r.metric,r.stage,r.pattern].join("|"))||{})})).sort((a,b)=>Number(Boolean(b.cross_year_candidate))-Number(Boolean(a.cross_year_candidate))||(b.periods||0)-(a.periods||0)).slice(0,3);
+  if(!candidates.length){emptyBox(c,"当前口径和阶段尚无合格规律样本","完整分析资料保留空样本、其他指标及所有验证状态，可继续核对原因。");return;}
+  const list=el("div","finding-list","",c);
+  for(const r of candidates){const item=el("article","finding-item","",list);el("small","",r.pattern,item);el("span","finding-value",fmtPct(r.typical),item);el("strong","",r.finding||r.conclusion,item);el("p","",r.evidence_level||r.validation_status,item);el("small","",r.models+"车型 / "+r.periods+"周期 / "+r.years+"年；历史 "+fmtPct(r.train_ratio)+"，验证"+(r.validation_year||"年度未满足")+" "+fmtPct(r.validation_ratio),item);}
+}
+
+function libraryDefinitions(){
+  const base=[["model","车型"],["metric","指标"],["stage","阶段"],["cycle","批次"],["source","来源"]];
+  const ruleColumns=[["category","车型组"],["metric","指标"],["stage","阶段"],["pattern","规律"],["typical","典型比例","pct"],["p25","周期P25","pct"],["p75","周期P75","pct"],["models","车型数"],["samples","样本数"],["periods","周期数"],["years","年份数"],["conclusion","描述"],["train_ratio","历史比例","pct"],["validation_year","验证年度"],["validation_ratio","验证年度比例","pct"],["validation_status","验证情况"],["validation_note","验证说明"],["validation_models","共同验证车型数"],["validation_train_years","训练年数"],["detail_sheet","证据类型"]];
+  const periodColumns=[["role","环节"],["metric","指标"],["stage","阶段"],["kind","周期"],["transition","周期转换"],["dimension","分类维度"],["category","类别"],["models","车型数"],["pairs","比较对数"],["periods","不同周期"],["years","年份数"],["ratio","总量比","pct"],["daily_ratio","日均比","pct"],["p25","周期P25","pct"],["p75","周期P75","pct"],["above100","高于100%占比","pct"],["yearly","分年日均比"],["evidence","证据说明"],["status","状态"]];
+  const raw=(key)=>result[key]||[];
+  const def=(key,title,records,columns,note)=>({key,title,records,columns,note});
+  const launchFields=[["period_no","上市第N期"],["grain","上市粒度"],["start","开始"],["end","结束"],["observed_start","观测开始"],["observed_end","观测结束"],["current","本期观测量","num"],["daily_avg","日均量","num"],["observed","观测天数"],["expected_days","应有天数"],["status","状态"]];
+  return [
+    def("rules","规律汇总与跨年验证",rules,ruleColumns,"全量历史的车型等权中位数；不是销量加权总量比。验证同向仅是历史重复，不能直接视为预测有效。"),
+    def("months","全年月份与月份证据",data.monthly_profiles||[],[["category","车型组"],["metric","指标"],["stage","阶段"],["month","月份"],["daymean","单车型日均中位数","num"],["models","完整月车型数"],["complete","完整车型月数"],["pairmodels","相邻月车型数"],["pairs","相邻月比较对数"],["periods","不同年月数"],["years","年份数"],["ratio","总量占上月","pct"],["daily","日均占上月","pct"],["above","上升占比","pct"],["yearly","分年日均比"],["conclusion","证据判断"]],"每组、指标和阶段均保留1—12月；1月比较上年12月。不同月份车型构成可能不同，不以月度绝对量直接判定淡旺季。"),
+    def("deposits","下订周期规律",raw("period_summary").filter(r=>r.role!=="锁单"),periodColumns,"包含小订、大定、留存大定、小转大等本次实际存在的指标，分别统计，不相加。"),
+    def("locks","锁单周期规律",raw("period_summary").filter(r=>r.role==="锁单"),periodColumns,"按真实锁单日期独立统计，不将锁单统一提前3天。"),
+    def("models","车型属性与分组",entries,[["model","车型"],["category","车型组"],["brand","品牌"],["segment","产品档位"],["energy","能源类型"],["stages","销售阶段"],["metrics","可用指标"]],(data.grouping||{}).reason||"仅取同一工作簿的原始车型属性。缺失与映射冲突保留。"),
+    def("coverage","数据覆盖与方法",raw("coverage"),[["metric","指标"],["stage","阶段"],["models","车型数"],["observations","车型日数"],["dates","不同日期数"],["start","开始日期"],["end","结束日期"]],"这是本次输入全量的覆盖，不是当前左侧日期窗口的覆盖。方法和日历来源见下方展开说明。"),
+    def("audit","输入数据审计",Object.entries(meta.audit||{}).map(([check,count])=>({check,count})),[["check","检查项"],["count","记录数"]],"源表读取、来源择一、阶段判定、未结束或未来数据排除等检查计数；计数可能属于不同处理阶段，不可简单相加。"),
+    def("periodCoverage","周期有效性检查",raw("period_coverage"),[["role","环节"],["metric","指标"],["stage","阶段"],["kind","周期"],["total","全部比较数"],["valid","有效数"],["current_incomplete","本期不完整"],["previous_incomplete","前期不完整"],["negative","含负值"],["previous_zero","前期为零"]],"保留不可比原因，缺失和不可比不补成0%倍率。"),
+    def("weekly","周内明细",raw("weekly"),[...base,["week","周一日期"],...[0,1,2,3,4,5,6].map((i)=>["indexes."+i,["周一","周二","周三","周四","周五","周六","周日"][i],"num"]),["ratio","周末/工作日","pct"]],"完整普通周；每日指数=该日销量/该周日均×100，100为周均水平。"),
+    def("monthly","月内明细",raw("monthly"),[...base,["year","年份"],["month","月份"],["ratio","月末7天/其余日期","pct"],["status","状态"]],"完整自然月最后7天日均/其余日期日均；不补日期，前期为0时留空。"),
+    def("annual","年度季节性明细",raw("annual"),[...base,["year","年份"],...Array.from({length:12},(_,i)=>["indexes."+i,(i+1)+"月指数","num"]),["status","状态"]],"完整自然年，各月日均/12个月日均的均值×100。指数100为年均水平，真实零月保留。"),
+    def("holidays","节假日原始明细",raw("holidays"),[...base,["year","年份"],["holiday","节日"],["before","节前指数","pct"],["during","节中指数","pct"],["after","节后指数","pct"],["control_days","对照日期数"]],"平销完整节前7天、节中和节后7天，同星期双侧对照；包含节后数据，仅解释历史。"),
+    def("lifecycle","首周生命周期",raw("lifecycle"),[...base,["d1_ratio","首日相对D3—D7","pct"],["first2_share","前两天占首周","pct"]],"D1—D7完整，按原始指标、阶段、批次和来源分别分析。"),
+    def("launchPeriods","上市后周期观测",raw("launch_periods"),[...base,...launchFields],"以首销日为D1，周每7天，月按上市日逐月对齐；尾期不完整保留证据。"),
+    def("launchPacing","上市后相邻周期",raw("launch_pacing"),[...base,["grain","粒度"],["pattern","比较"],["previous_stage","前期阶段"],["current_stage","本期阶段"],["previous_start","前期开始"],["previous_end","前期结束"],["start","本期开始"],["end","本期结束"],["previous","前期量","num"],["current","本期量","num"],["ratio","总量比","pct"],["daily_ratio","日均比","pct"],["previous_observed","前期有效日"],["previous_days","前期天数"],["current_observed","本期有效日"],["current_days","本期天数"],["previous_source","前期来源"],["status","状态"]],"同车型、批次、指标、来源，完整非负相邻周期才计算比例。"),
+    def("lags","锁单滞后完整明细",raw("lock_lags"),[...base,["brand","品牌"],["segment","产品档位"],["energy","能源类型"],["lag","滞后天数"],["pairs","共同日期数"],["start","开始"],["end","结束"],["level_corr","水平相关","corr"],["change_corr","日变化相关","corr"],["change_pairs","变动对数"],["deposit_source","大定来源"],["lock_source","锁单来源"],["status","说明"]],"0—3天使用共同非负日期；相关性不是逐单转化率，也不是锁单预测系数。"),
+    def("comparisons","周期比例完整明细",raw("period_comparisons"),[...base,["brand","品牌"],["segment","产品档位"],["energy","能源类型"],["role","环节"],["kind","周期"],["transition","周期转换"],["start","本期开始"],["end","本期结束"],["previous_start","前期开始"],["previous_end","前期结束"],["current","本期量","num"],["previous","前期量","num"],["current_days","本期天数"],["current_observed","本期有效日"],["previous_days","前期天数"],["previous_observed","前期有效日"],["ratio","总量比","pct"],["daily_ratio","日均比","pct"],["holiday_adjusted_days","假期调休日"],["current_negative_days","本期负值日"],["previous_negative_days","前期负值日"],["status","状态"]],"包括缺前期、缺日、前期为零和负值等不可比记录，保留完整前后日期。"),
+    def("profiles","预测辅助完整记录",profiles,[...base,["grain","预测周期"],["cutoff","评估截至"],["target_start","目标开始"],["target_end","目标结束"],["baseline","基准预测","num"],["estimate","规律预测","num"],["factor","历史日均倍率","pct"],["p25","倍率P25","pct"],["p75","倍率P75","pct"],["train_samples","训练样本"],["test_samples","共同回测样本"],["wape","规律WAPE","pct"],["baseline_wape","基准WAPE","pct"],["bias","预测偏差","pct"],["status","适用状态"],["tail_note","尾期说明"],["evaluation_status","评估状态"],["method","规则方法"]],"预测状态、训练数量、基准得分和适用边界按同次后端计算保留；没有有效评分时不视为已验证。"),
+    def("backtests","预测回测完整记录",backtests,[...base,["grain","周期"],["origin","评估截至"],["target_start","目标开始"],["target_end","目标结束"],["actual","实际量","num"],["baseline","基准预测","num"],["predicted","规律预测","num"],["train_samples","训练样本"]],"按同车型、指标、阶段、批次和来源保留每个留出窗口，不限当前选中的预测画像。")
+  ];
+}
+const libraryTables=libraryDefinitions();
+const fieldValue=(r,key)=>key.split(".").reduce((v,k)=>v==null?null:v[k],r);
+function currentLibrary(){return libraryTables.find(t=>t.key===state.libraryTable)||libraryTables[0];}
+function libraryColumns(table){
+  if(table.columns.length)return table.columns;
+  const labels={model:"车型",metric:"指标",stage:"阶段",cycle:"批次",source:"来源",grain:"预测周期",status:"状态",train_count:"训练样本数",backtest_count:"回测样本数",method:"方法",tail_note:"尾期说明",actual:"实际值",prediction:"预测值",baseline:"基准值",wape:"WAPE",baseline_wape:"基准WAPE",bias:"偏差",target_start:"目标开始",target_end:"目标结束",cutoff:"截至日期"};
+  return unique(table.records.flatMap(r=>Object.keys(r))).map(k=>[k,labels[k]||k,/wape|bias/.test(k)?"pct":undefined]);
+}
+function libraryRows(){
+  return currentLibrary().records.filter(r=>(state.libraryMetric==="__ALL__"||r.metric===state.libraryMetric)&&(state.libraryStage==="__ALL__"||String(r.stage||r.stages||"").split(/[,、]/).includes(state.libraryStage))&&(state.libraryCategory==="__ALL__"||(r.category||categoryOf(r.model))===state.libraryCategory));
+}
+function renderLibraryControls(){
+  $("libraryControls").hidden=state.evidence!=="library";
+  if(state.evidence!=="library")return;
+  const table=currentLibrary();state.libraryTable=table.key;
+  setOptions($("libraryTable"),libraryTables.map(t=>({value:t.key,label:t.title})),table.key);
+  const choices=(field)=>unique(table.records.map(r=>r[field]).filter(v=>typeof v==="string")).sort((a,b)=>a.localeCompare(b,"zh-CN"));
+  for(const [field,id,key,label] of [["metric","libraryMetric","libraryMetric","全部指标"],["stage","libraryStage","libraryStage","全部阶段"],["category","libraryCategory","libraryCategory","全部分类"]]){
+    const values=field==="category"?unique(table.records.map(r=>r.category||(r.model?categoryOf(r.model):null))).sort():choices(field);
+    setOptions($(id),[{value:"__ALL__",label},...values.map(v=>({value:v,label:v}))],state[key]);state[key]=$(id).value;
+  }
+  const method=$("libraryMethods");clear(method);
+  if(["coverage","audit","periodCoverage","models"].includes(table.key)){
+    const detail=el("details","","",method);el("summary","","查看数据来源、方法与日历",detail);
+    el("p","","来源："+(meta.source_name||"未提供")+"；工作表："+(meta.source_sheets||[]).join("、")+"；模式："+(meta.source_mode||"未提供")+"；SHA-256："+(meta.sha256||"未提供"),detail);
+    (meta.notes||[]).forEach(n=>el("p","",n,detail));
+    Object.entries(meta.calendar_sources||{}).forEach(([year,url])=>el("p","",year+"年日历来源："+url,detail));
+  }
+}
+function openLibrary(key="rules"){
+  state.evidence="library";state.libraryTable=key;state.libraryMetric="__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.search="";state.pageNo=0;$("evidenceSearch").value="";
+  document.querySelectorAll("[data-evidence]").forEach(b=>{const on=b.dataset.evidence==="library";b.classList.toggle("is-active",on);b.setAttribute("aria-pressed",String(on));});
+  updatePage("evidence");
 }
 function renderPatterns(){
   renderPatternTabs();
@@ -1109,6 +1189,7 @@ function updateTrial(){
   el("small","",daily?fmtNum(base)+" × "+fmtNum(factor)+" × "+fmtNum(days)+"天":"上期总量 "+fmtNum(base)+" × 总量倍率 "+fmtNum(factor),out);
 }
 function evidenceRows(){
+  if(state.evidence==="library")return libraryRows();
   if(state.evidence==="daily")return currentSeries(state.metric);
   return (result.lock_lags||[]).filter(r=>r.metric==="留存大定"&&r.stage===state.stage&&
     (state.model==="__ALL__"||String(r.model)===state.model)&&
@@ -1120,12 +1201,20 @@ function searchEvidence(list){
   return list.filter(r=>Object.values(r).some(v=>String(v==null?"":v).toLocaleLowerCase().includes(q))||categoryOf(r.model).toLocaleLowerCase().includes(q));
 }
 function renderEvidence(){
+  renderLibraryControls();
   const list=searchEvidence(evidenceRows());
   const pages=Math.max(1,Math.ceil(list.length/PAGE_SIZE));
   state.pageNo=Math.min(state.pageNo,pages-1);
   const wrap=$("evidenceTableWrap"),offset=state.pageNo*PAGE_SIZE,page=list.slice(offset,offset+PAGE_SIZE);
   $("evidenceMeta").textContent=state.evidence==="daily"?"净大定和锁单分别显示当前口径；表内保留原始阶段、批次、来源和负值。筛选命中 "+fmtInt(list.length)+" 条记录。":"净大定→交车锁单的0–3日共同日期相关性；不代表逐单转化率，也不作为锁单数量预测系数。筛选命中 "+fmtInt(list.length)+" 条记录。";
-  if(state.evidence==="daily"){
+  if(state.evidence==="library"){
+    const table=currentLibrary(),columns=libraryColumns(table);
+    $("evidenceMeta").textContent=table.title+" · 全量快照独立筛选命中 "+fmtInt(list.length)+" 条。"+table.note;
+    makeTable(wrap,columns.map(c=>c[1]),page.map(r=>columns.map(([key,label,format])=>{
+      const value=fieldValue(r,key),text=format==="pct"?fmtPct(value):format==="num"?fmtNum(value):format==="corr"?(num(value)===null?"—":value.toFixed(3)):value==null?"—":Array.isArray(value)?value.join("、"):typeof value==="object"?JSON.stringify(value):String(value);
+      return {text,cls:typeof value==="number"?"number"+(value<0?" negative":""):""};
+    })),"当前资料没有匹配记录。可清除搜索或切换指标、分类、阶段；样本不足的类型仍保留入口。");
+  }else if(state.evidence==="daily"){
     makeTable(wrap,["日期","车型","车型分类","指标口径","阶段","观测值","批次 / 周期","来源","生命周期"],
       page.map(r=>[{text:dateOnly(r.date)},{text:r.model},{text:categoryOf(r.model)},{text:metricName(r.metric)+" · "+metricSource(r.metric)},{text:r.stage},{text:fmtNum(r.value),cls:"number"+(num(r.value)<0?" negative":"")},{text:r.cycle},{text:r.source},{text:r.life==null?"—":"D"+r.life}]),
       state.search.trim()?"没有匹配“"+state.search.trim()+"”的记录。清除搜索后查看当前范围。":"当前范围没有逐日观测，可调整日期、车型或销售阶段。");
@@ -1148,7 +1237,9 @@ function exportCsv(){
   const list=searchEvidence(evidenceRows());
   if(!list.length){announce("没有匹配记录可导出，请清除搜索或调整范围。");return;}
   let headers,items;
-  if(state.evidence==="daily"){
+  if(state.evidence==="library"){
+    const columns=libraryColumns(currentLibrary());headers=columns.map(c=>c[1]);items=list.map(r=>columns.map(([key])=>{const value=fieldValue(r,key);return Array.isArray(value)?value.join("、"):value!=null&&typeof value==="object"?JSON.stringify(value):value;}));
+  }else if(state.evidence==="daily"){
     headers=["日期","车型","车型分类","指标源口径","阶段","观测值","批次周期","来源","生命周期"];
     items=list.map(r=>[dateOnly(r.date),r.model,categoryOf(r.model),metricSource(r.metric),r.stage,r.value,r.cycle,r.source,r.life==null?"":"D"+r.life]);
   }else{
@@ -1157,7 +1248,7 @@ function exportCsv(){
   }
   const content="\uFEFF"+[headers,...items].map(row=>row.map(csvEscape).join(",")).join("\r\n");
   const blob=new Blob([content],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=el("a");
-  a.href=url;a.download="销量规律_"+(state.evidence==="daily"?metricName(state.metric):"净大定锁单")+"_"+state.stage+"_"+(state.evidence==="daily"?"逐日明细":"净大定锁单相关")+".csv";a.click();
+  a.href=url;a.download=state.evidence==="library"?"销量规律_"+currentLibrary().title+".csv":"销量规律_"+(state.evidence==="daily"?metricName(state.metric):"净大定锁单")+"_"+state.stage+"_"+(state.evidence==="daily"?"逐日明细":"净大定锁单相关")+".csv";a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
   announce("已生成 "+fmtInt(list.length)+" 条记录的 CSV，下载已交给浏览器。");
 }
@@ -1192,12 +1283,10 @@ function refresh(resetPage=true){
   showUpdate($("panel-"+state.page));
   saveRoute(false);
 }
-function setExcelLink(){
-  const link=$("excelLink"),topLink=$("excelTopLink");
-  [link,topLink].forEach(a=>{if(a){a.href=meta.excel_name||"鸿蒙智行销量规律分析.xlsx";a.download=meta.excel_name||"";}});
+function setReportMetadata(){
   $("generatedAt").textContent=meta.generated_at?("生成于 "+String(meta.generated_at).replace("T"," ").slice(0,16)):"";
   $("sourceBadge").textContent="数据源 · "+(meta.source_name||"未提供");
-  $("footerSource").textContent="源文件："+(meta.source_name||"未提供")+" · "+dateOnly(meta.date_start)+" 至 "+dateOnly(meta.date_end)+" · SHA-256 "+(meta.sha256||"未提供");
+  $("footerSource").textContent="源文件："+(meta.source_name||"未提供")+" · 全量分析日期 "+dateOnly(meta.analysis_start||meta.date_start)+" 至 "+dateOnly(meta.analysis_end||meta.date_end)+" · SHA-256 "+(meta.sha256||"未提供");
 }
 const motionPreference=window.matchMedia("(prefers-reduced-motion: reduce)");
 const runningMotion=new Map();
@@ -1217,7 +1306,7 @@ function announce(message){
   node.textContent=message;node.classList.add("is-visible");
   statusTimer=setTimeout(()=>node.classList.remove("is-visible"),5000);
 }
-const routeKeys=["page","pattern","metric","category","model","stage","start","end","grain","launchGrain","compare","evidence","forecastModel","forecastGrain","profileKey"];
+const routeKeys=["page","pattern","metric","category","model","stage","start","end","grain","launchGrain","compare","evidence","forecastModel","forecastGrain","profileKey","libraryTable","libraryMetric","libraryCategory","libraryStage"];
 function saveRoute(push){
   const params=new URLSearchParams();routeKeys.forEach(k=>params.set(k,String(state[k])));
   const hash="#"+params.toString();
@@ -1230,7 +1319,7 @@ function restoreRoute(){
   if(!hash.includes("=")&&["overview","patterns","forecast","evidence"].includes(hash))state.page=hash;
   if(!metricByKey.get(state.metric)?.available)state.metric=defaultMetric.key;
   if(!["months","week","launch","holiday","cycles"].includes(state.pattern))state.pattern="months";
-  if(!["daily","lags"].includes(state.evidence))state.evidence="daily";
+  if(!["daily","lags","library"].includes(state.evidence))state.evidence="daily";
   if(!["日","周","月","年"].includes(state.grain))state.grain="月";
   if(!["周","月"].includes(state.launchGrain))state.launchGrain="周";
   if(!["日","周","月"].includes(state.forecastGrain))state.forecastGrain="月";
@@ -1330,8 +1419,16 @@ let searchTimer;$("evidenceSearch").addEventListener("input",e=>{state.search=e.
 $("prevPage").addEventListener("click",()=>{state.pageNo=Math.max(0,state.pageNo-1);renderEvidence();showUpdate($("evidenceTableWrap"));});
 $("nextPage").addEventListener("click",()=>{state.pageNo+=1;renderEvidence();showUpdate($("evidenceTableWrap"));});
 $("exportCsv").addEventListener("click",exportCsv);
+$("openLibrary").addEventListener("click",()=>openLibrary());
+$("allRules").addEventListener("click",()=>openLibrary("rules"));
+$("openMethods").addEventListener("click",()=>openLibrary("coverage"));
+for(const key of ["libraryTable","libraryMetric","libraryCategory","libraryStage"])$(key).addEventListener("change",e=>{
+  state[key]=e.target.value;state.pageNo=0;
+  if(key==="libraryTable"){state.libraryMetric="__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.search="";$("evidenceSearch").value="";}
+  renderEvidence();saveRoute(false);
+});
 let resizeTimer;window.addEventListener("resize",()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>refresh(false),150);});
-setExcelLink();restoreRoute();
+setReportMetadata();restoreRoute();
 document.querySelectorAll("[data-metric]").forEach(b=>{if(b.dataset.metric==="交车锁单"&&!metrics.some(x=>x.key==="交车锁单"&&x.available))b.disabled=true;});
 document.querySelectorAll("[data-pattern]").forEach(b=>{const on=b.dataset.pattern===state.pattern;b.classList.toggle("is-active",on);b.setAttribute("aria-selected",on?"true":"false");});
 refresh();saveRoute(false);

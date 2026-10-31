@@ -434,9 +434,34 @@ async function capture(page, filename) {
         await textMatches(page, "#actionStatus", /下载已交给浏览器/);
       });
     }
-    await check("Excel附件下载入口可用", async () => {
-      const event = page.waitForEvent("download"); await page.locator("#excelTopLink").click(); const d = await event;
-      assert.equal(await d.failure(), null); assert.equal(d.suggestedFilename(), "鸿蒙智行销量规律分析.xlsx");
+    await check("网页完整资料覆盖原Excel内容并保留独立筛选及原值导出", async () => {
+      await reset();assert.equal(await page.locator('a[href$=".xlsx"]').count(),0);
+      assert.ok(await page.locator("#overviewRuleCard").isVisible());
+      await page.locator("#allRules").click();assert.equal(await page.locator("#libraryControls").isVisible(),true);
+      const datasetKeys=await page.locator("#libraryTable option").evaluateAll(xs=>xs.map(x=>x.value));assert.equal(datasetKeys.length,19);
+      assert.match(await page.locator("#libraryControls").innerText(),/独立筛选/);
+      for(const key of datasetKeys){
+        await page.locator("#libraryTable").selectOption(key);
+        assert.ok(await page.locator("#evidenceMeta").innerText());
+        assert.ok(await page.locator("#evidenceTableWrap th").count()>0,key);
+      }
+      await page.locator("#libraryTable").selectOption("comparisons");
+      const expected=await page.evaluate(()=>window.PATTERNS_DATA.results.period_comparisons||[]);
+      assert.equal(await page.locator("#evidenceTableWrap tbody tr").count(),Math.min(100,expected.length));
+      const extra=expected.find(r=>!["留存大定","交车锁单"].includes(r.metric));
+      if(extra){await page.locator("#libraryMetric").selectOption(extra.metric);assert.ok((await page.locator("#evidenceTableWrap tbody").innerText()).includes(extra.metric));await page.locator("#libraryMetric").selectOption("__ALL__");}
+      const event=page.waitForEvent("download");await page.locator("#exportCsv").click();const download=await event;assert.equal(await download.failure(),null);
+      const stream=await download.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
+      const records=parseCsv(Buffer.concat(chunks).toString("utf8"));assert.equal(records.length,expected.length+1);
+      const currentIndex=records[0].indexOf("本期量"),ratioIndex=records[0].indexOf("日均比");
+      for(let i=0;i<expected.length;i++){assert.equal(Number(records[i+1][currentIndex]),expected[i].current);assert.equal(records[i+1][ratioIndex],expected[i].daily_ratio==null?"":String(expected[i].daily_ratio));}
+      await page.reload();assert.equal(await page.locator("#libraryTable").inputValue(),"comparisons");
+      await page.locator("#openMethods").click();assert.equal(await page.locator("#libraryTable").inputValue(),"coverage");
+      await page.locator("#libraryMethods summary").click();assert.match(await page.locator("#libraryMethods").innerText(),/SHA-256/);
+      await capture(page,"sales-full-library-methods.png");
+      await page.locator("#libraryTable").selectOption("months");await page.setViewportSize({width:390,height:844});await page.waitForTimeout(200);
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await capture(page,"sales-full-library-mobile.png");
+      await page.setViewportSize({width:1440,height:1000});await reset();
     });
     await check("快速连续切换最终状态正确，减少动效后无动画", async () => {
       await page.evaluate(() => ["patterns", "forecast", "evidence", "overview"].forEach(key => document.getElementById("nav-" + key).click()));
