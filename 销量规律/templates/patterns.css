@@ -77,3 +77,17 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 .bar-row{align-items:start!important;min-width:0}
 .bar-label{white-space:normal!important;overflow-wrap:anywhere!important;word-break:break-word;line-height:1.45;min-width:0}
 .pattern-chart.bar-list{max-height:420px;overflow-y:auto;overflow-x:hidden;align-content:start}
+
+/* Mobile filters are progressive disclosure; desktop keeps the full sidebar open. */
+.mobile-filter-toggle{display:none}
+@media (max-width:850px){
+  .mobile-filter-toggle{display:inline-flex;align-items:center;justify-content:center;min-width:72px;min-height:44px;white-space:nowrap}
+  .sidebar-filter-head{min-height:44px}
+  body.filters-collapsed #filterFields,
+  body.filters-collapsed .sidebar-details{display:none!important}
+  body:not(.filters-collapsed) #filterFields{display:block}
+}
+@media (min-width:851px){
+  .mobile-filter-toggle{display:none!important}
+  #filterFields{display:block!important}
+}

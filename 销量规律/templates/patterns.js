@@ -17,7 +17,17 @@ const sourceInsights = data.source_insights || {};
 const PAGE_SIZE = 100;
 const cache = new Map();
 const metricDateWindows = new Map();
+const domainLastPatterns = new Map();
 const expandedEvidenceTitles = new Set();
+const uiStorageKey="sales-patterns-ui:v2:"+[meta.sha256||meta.source_name||location.pathname,meta.date_start,meta.date_end].join("|");
+let restoringRoute=false;
+try{
+  const saved=JSON.parse(sessionStorage.getItem(uiStorageKey)||"null");
+  if(saved&&saved.version===2){
+    for(const [key,value] of Object.entries(saved.metricDates||{}))if(value&&/^\d{4}-\d{2}-\d{2}$/.test(value.start)&&/^\d{4}-\d{2}-\d{2}$/.test(value.end)&&value.start<=value.end)metricDateWindows.set(key,value);
+    for(const [key,value] of Object.entries(saved.domainPatterns||{}))if(typeof value==="string")domainLastPatterns.set(key,value);
+  }
+}catch(_){/* Browser storage may be unavailable for local files. URL state still works. */}
 const numberFmt = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 1});
 const integerFmt = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 0});
 const pctFmt = new Intl.NumberFormat("zh-CN", {style:"percent", maximumFractionDigits:1});
@@ -26,7 +36,7 @@ const state = {
   category:"__ALL__", model:"__ALL__", stage:"",
   start:"", end:"", grain:"月", launchGrain:"周", compare:false, search:"", pageNo:0,
   forecastModel:"", forecastGrain:"月", profileKey:"",
-  libraryTable:"rules", libraryMetric:"__ALL__", libraryCategory:"__ALL__", libraryStage:"__ALL__",
+  libraryTable:"rules", libraryMetric:"__ALL__", libraryCategory:"__ALL__", libraryStage:"__ALL__",libraryGrain:"__ALL__",
   sourceCurve:"", sourceHourMetric:"", sourceHourStage:""
 };
 const $ = id => document.getElementById(id);
@@ -702,17 +712,20 @@ function patternAvailable(pattern){
   return !(pattern==="structure"&&state.metric==="交车锁单");
 }
 function renderResearchNavigation(){
-  if(!patternAvailable(state.pattern))state.pattern=state.metric==="小订数量"?"structure":"lags";
   const domain=patternDomain(state.pattern);
   document.querySelectorAll("[data-domain]").forEach(b=>{
     const selected=b.dataset.domain===domain;
     b.classList.toggle("is-active",selected);b.setAttribute("aria-selected",String(selected));b.tabIndex=selected?0:-1;
-    b.disabled=!researchDomains[b.dataset.domain].some(patternAvailable);
+    b.disabled=false;
   });
   document.querySelectorAll("[data-pattern]").forEach(b=>{
-    b.hidden=patternDomain(b.dataset.pattern)!==domain;b.disabled=!patternAvailable(b.dataset.pattern);
+    b.hidden=patternDomain(b.dataset.pattern)!==domain;b.disabled=false;
+    b.title=patternAvailable(b.dataset.pattern)?"":"当前口径不适用，点击查看说明";
     if(b.dataset.pattern==="structure")b.textContent=state.metric==="小订数量"?"小订进度与退订":"转化与订单结构";
   });
+  const names={calendar:"研究日历",lifecycle:"阶段进度",orders:"订单关系"};
+  const active=document.querySelector('[data-pattern="'+state.pattern+'"]');
+  $("pageDescription").textContent="研究主题："+names[domain]+" · 当前专题："+(active?.textContent||"");
   const context=$("patternContext");if(context){
     clear(context);
     const scope=el("span","","以下按当前口径、车型、阶段和日期筛选；累计曲线不与逐日销量相加。",context);
@@ -744,6 +757,13 @@ function renderPatternTabs(){
   const trend=$("cycleTrend");if(trend){trend.hidden=state.pattern!=="cycles";if(!trend.hidden)renderTrend();}
   const metric=state.metric;
   const intro=$("patternIntro");
+  if(!patternAvailable(state.pattern)){
+    const reason=state.metric==="小订数量"?"小订仅在小订期研究；上市后首销/平销、节假日平销对照和留存大定到锁单关系不适用于小订口径。":"锁单没有小订转化或大定订单构成；可研究锁单节奏与留存大定到锁单的滞后。";
+    intro.textContent=metricName(state.metric)+" · 当前专题不适用";
+    clear($("patternKpis"));emptyBox(container,"当前口径不适用此专题",reason);
+    const button=el("button","button button-quiet",state.metric==="小订数量"?"查看小订进度与退订":"查看锁单滞后",container);button.type="button";button.addEventListener("click",()=>activatePattern(state.metric==="小订数量"?"structure":"lags"));
+    return;
+  }
   if(state.pattern==="lags"){
     renderLagResearch(container);return;
   }
@@ -1076,7 +1096,7 @@ function renderSourceMap(){
     ["launch","首销到平销如何变化？","按上市D天对齐，比较相邻周/月"],
     ["lags","留存大定到锁单滞后多久？","同车型、阶段与批次的0—3天相关"]
   ];
-  for(const [pattern,title,detail] of options){const button=el("button","research-entry","",grid);button.type="button";el("strong","",title,button);el("span","",detail,button);button.addEventListener("click",()=>{updatePage("patterns");activatePattern(pattern);});}
+  for(const [pattern,title,detail] of options){const button=el("button","research-entry","",grid);button.type="button";el("strong","",title,button);el("span","",detail,button);button.addEventListener("click",()=>activatePattern(pattern));}
 }
 
 function renderRuleFindings(){
@@ -1085,7 +1105,7 @@ function renderRuleFindings(){
   const candidates=scopedFindings();
   const table=el("div","table-wrap","",c);
   makeTable(table,["研究问题","典型比例","历史波动 P25—P75","样本覆盖","判断"],candidates.map(r=>[r.title,fmtPct(r.stats.typical),fmtPct(r.stats.p25)+"—"+fmtPct(r.stats.p75),r.stats.models+"车型 / "+r.stats.samples+"记录 / "+r.years+"年",r.stats.models>=3&&r.years>=2?"跨车型跨年线索；待预测验证":"局部历史线索；待扩充验证"]),"当前范围还没有满足完整性要求的规律样本。可先研究阶段进度或核对数据覆盖。");
-  const trs=table.querySelectorAll("tbody tr");candidates.forEach((r,i)=>{const td=trs[i]?.cells[0];if(!td)return;td.replaceChildren();const button=el("button","text-button",r.title,td);button.type="button";button.addEventListener("click",()=>{updatePage("patterns");activatePattern(r.pattern);});});
+  const trs=table.querySelectorAll("tbody tr");candidates.forEach((r,i)=>{const td=trs[i]?.cells[0];if(!td)return;td.replaceChildren();const button=el("button","text-button",r.title,td);button.type="button";button.addEventListener("click",()=>activatePattern(r.pattern));});
   const note=el("p","note-line",meta.sample?"当前为样例数据，结果用于验证研究流程。":"跨车型同向仍需检查车型构成、年份和批次；以上不是已验证预测系数。",c);
 }
 function scopedFindings(){
@@ -1142,6 +1162,7 @@ function libraryColumns(table){
 }
 function libraryRows(){
   const table=currentLibrary();
+  const grainMatches=r=>state.libraryGrain==="__ALL__"||(r.grain||r.kind)===state.libraryGrain;
   if(table.key==="rules")return scopedFindings().map(r=>({category:state.model!=="__ALL__"?state.model:state.category,metric:state.metric,stage:state.stage,pattern:r.title,typical:r.stats.typical,p25:r.stats.p25,p75:r.stats.p75,models:r.stats.models,samples:r.stats.samples,periods:r.stats.periods,years:r.years,conclusion:"当前范围描述",validation_status:"待预测验证",detail_sheet:r.pattern}));
   if(table.key==="coverage"){
     const series=currentSeries(state.metric),dates=series.map(r=>r.date).sort();
@@ -1156,18 +1177,19 @@ function libraryRows(){
   if(table.key==="locks"&&state.metric!=="交车锁单")return [];
   if(table.key==="deposits"&&state.metric==="交车锁单")return [];
   if(["deposits","locks","periodCoverage"].includes(table.key)){
-    const list=(result.period_comparisons||[]).filter(r=>inScope(r,state.metric)&&recordInWindow(r)),groups=new Map();
+    const list=(result.period_comparisons||[]).filter(r=>inScope(r,state.metric)&&recordInWindow(r)&&grainMatches(r)),groups=new Map();
     for(const row of list){const key=[row.kind,row.transition||""].join("|");if(!groups.has(key))groups.set(key,[]);groups.get(key).push(row);}
     return [...groups.values()].map(rs=>{const valid=rs.filter(r=>r.status==="有效"),s=summary(valid,"daily_ratio"),t=summary(valid,"ratio");return {metric:state.metric,stage:state.stage,role:metricName(state.metric),kind:rs[0].kind,transition:rs[0].transition,category:state.category,models:s.models,pairs:s.samples,periods:s.periods,ratio:t.typical,daily_ratio:s.typical,p25:s.p25,p75:s.p75,total:rs.length,valid:valid.length,current_incomplete:rs.filter(r=>r.status==="本期不完整").length,previous_incomplete:rs.filter(r=>r.status==="前期缺失或不完整").length,negative:rs.filter(r=>/负/.test(r.status||"")).length,previous_zero:rs.filter(r=>r.status==="前期为零").length,status:s.samples?"当前范围重算":"样本不足"};});
   }
   return table.records.filter(r=>{
+    if(!grainMatches(r))return false;
     if(r.model&&!modelInScope(r))return false;
     if(!r.model&&r.category&&r.category!==(state.category==="__ALL__"?"全部车型":state.category))return false;
     if(table.key==="models")return safeArray(r.metrics).includes(state.metric)&&safeArray(r.stages).includes(state.stage);
     const auxiliary=["sourceEarly","sourceCurves","sourceHourly"].includes(table.key);
     if(!auxiliary&&r.metric&&r.metric!==state.metric)return false;
     if((["launchPeriods","launchPacing"].includes(table.key)||r.stage)&&!stageMatches(r,table.key==="launchPeriods"?"launch_periods":table.key==="launchPacing"?"launch_pacing":undefined))return false;
-    if(auxiliary&&state.libraryMetric!=="__ALL__"&&r.metric!==state.libraryMetric)return false;
+    if(auxiliary&&state.libraryMetric!=="__ALL__"&&(table.key==="sourceCurves"?r.curve:r.metric)!==state.libraryMetric)return false;
     if(auxiliary&&!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly(r.date||r.anchor_date)))return true;
     return recordInWindow(r);
   }).map(r=>["sourceEarly","sourceCurves","sourceHourly"].includes(table.key)?{...r,date_scope_note:!/^\d{4}-\d{2}-\d{2}$/.test(dateOnly(r.date||r.anchor_date))?"日期未知，仅保留核对，不参与当前日期窗统计":"按原始日期或阶段起始日定位"}:r);
@@ -1179,10 +1201,17 @@ function renderLibraryControls(){
   setOptions($("libraryTable"),libraryTables.map(t=>({value:t.key,label:t.title})),table.key);
   const choices=(field)=>unique(table.records.map(r=>r[field]).filter(v=>typeof v==="string")).sort((a,b)=>a.localeCompare(b,"zh-CN"));
   for(const [field,id,key,label] of [["metric","libraryMetric","libraryMetric","全部指标"],["stage","libraryStage","libraryStage","全部阶段"],["category","libraryCategory","libraryCategory","全部分类"]]){
-    const values=field==="category"?unique(table.records.map(r=>r.category||(r.model?categoryOf(r.model):null))).sort():choices(field);
+    const values=field==="category"?unique(table.records.map(r=>r.category||(r.model?categoryOf(r.model):null))).sort():field==="metric"&&table.key==="sourceCurves"?choices("curve"):choices(field);
+    if(field==="metric"&&table.key==="sourceCurves"&&state.libraryMetric!=="__ALL__"&&!values.includes(state.libraryMetric))values.push(state.libraryMetric);
     setOptions($(id),[{value:"__ALL__",label},...values.map(v=>({value:v,label:v}))],state[key]);state[key]=$(id).value;
     $(id).closest("label").hidden=field!=="metric"||!["sourceEarly","sourceCurves","sourceHourly"].includes(table.key);
   }
+  const grainControl=$("libraryGrain");
+  const supportsGrain=["comparisons","launchPeriods","launchPacing","profiles","backtests","periodCoverage","deposits","locks"].includes(table.key);
+  grainControl.closest("label").hidden=!supportsGrain;
+  const grainValues=unique([...table.records.map(r=>r.grain||r.kind),state.libraryGrain==="__ALL__"?null:state.libraryGrain]).filter(v=>["日","周","月","年"].includes(v)).sort((a,b)=>["日","周","月","年"].indexOf(a)-["日","周","月","年"].indexOf(b));
+  setOptions(grainControl,[{value:"__ALL__",label:"全部周期"},...grainValues.map(value=>({value,label:value}))],state.libraryGrain);
+  if(!supportsGrain)state.libraryGrain="__ALL__";
   const scope=document.querySelector(".library-scope");if(scope)scope.textContent=["audit","sourceInventory"].includes(table.key)?"此表说明整份输入文件的结构与读取情况，没有口径或日期维度。":"随全局车型、阶段和日期范围筛选；周期记录须完整落窗。"+(["sourceEarly","sourceCurves","sourceHourly"].includes(table.key)?"辅助源表保留原指标名称，可在此选择源指标，不代表当前主口径。日期未知的记录单列状态保留核对，不参与图表。":"主指标为“"+metricName(state.metric)+"”。");
   const method=$("libraryMethods");clear(method);
   if(["coverage","audit","periodCoverage","models"].includes(table.key)){
@@ -1193,7 +1222,9 @@ function renderLibraryControls(){
   }
 }
 function openLibrary(key="rules"){
-  state.evidence="library";state.libraryTable=key;state.libraryMetric=key==="sourceHourly"?state.metric:"__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.search="";state.pageNo=0;$("evidenceSearch").value="";
+  const fromTopic=state.page==="patterns";
+  state.libraryGrain=fromTopic&&["launchPeriods","launchPacing"].includes(key)?state.launchGrain:fromTopic&&key==="comparisons"?state.grain:"__ALL__";
+  state.evidence="library";state.libraryTable=key;state.libraryMetric=key==="sourceHourly"?state.metric:key==="sourceCurves"&&fromTopic&&state.sourceCurve?state.sourceCurve:"__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.search="";state.pageNo=0;$("evidenceSearch").value="";
   document.querySelectorAll("[data-evidence]").forEach(b=>{const on=b.dataset.evidence==="library";b.classList.toggle("is-active",on);b.setAttribute("aria-pressed",String(on));});
   updatePage("evidence");
 }
@@ -1221,12 +1252,13 @@ function forecastEligibleModels(){
   return unique(base).sort((a,b)=>a.localeCompare(b,"zh-CN"));
 }
 function profileId(p){return [p.model,p.metric,p.stage,p.cycle,p.source,p.grain,p.cutoff||p.as_of,p.target_start,p.target_end].join("|");}
+function profileDisplayCutoff(p){return dateOnly(p.metric==="小订数量"?(p.last_observation||p.cutoff||p.as_of):(p.cutoff||p.as_of||p.last_observation));}
 function fillForecastControls(){
   const candidates=forecastEligibleModels();
   if(!candidates.includes(state.forecastModel))state.forecastModel=candidates.includes(state.model)?state.model:(candidates[0]||"");
   setOptions($("forecastModel"),candidates.map(x=>({value:x,label:x})),state.forecastModel);
   const list=profiles.filter(p=>String(p.model)===state.forecastModel&&p.metric===state.metric&&p.stage===state.stage&&p.grain===state.forecastGrain);
-  const opts=list.map(p=>({value:profileId(p),label:(p.cycle||"未分批")+" · "+(p.source||"未标来源")+" · "+(dateOnly(p.target_start)||"待定")+"～"+(dateOnly(p.target_end)||"待定")+" · 截止 "+(dateOnly(p.cutoff||p.as_of)||"未知")}));
+  const opts=list.map(p=>({value:profileId(p),label:(p.cycle||"未分批")+" · "+(p.source||"未标来源")+" · "+(dateOnly(p.target_start)||"待定")+"～"+(dateOnly(p.target_end)||"待定")+" · "+(p.metric==="小订数量"?"小订观测至 ":"截止 ")+(profileDisplayCutoff(p)||"未知")}));
   state.profileKey=opts.some(x=>x.value===state.profileKey)?state.profileKey:(opts[0]?opts[0].value:"");
   setOptions($("forecastProfile"),opts,state.profileKey);
   const selected=opts.find(o=>o.value===state.profileKey);
@@ -1329,17 +1361,22 @@ function renderForecast() {
   const kpis=$("forecastKpis");clear(kpis);
   const empty=$("forecastEmpty");empty.hidden=true;
   if(profile){
-    const cutoff=dateOnly(profile.cutoff||profile.as_of||profile.last_observation);
+    const cutoff=profileDisplayCutoff(profile),smallHistory=state.metric==="小订数量"&&!profile.target_start;
     const latestOutside=Boolean(cutoff&&((state.end&&cutoff>state.end)||(state.start&&cutoff<state.start)));
-    const target=latestOutside?"超出当前历史范围":profile.target_start&&profile.target_end?dateOnly(profile.target_start)+"～"+dateOnly(profile.target_end):"暂无完整目标期";
+    const target=smallHistory?"小订期历史回测":latestOutside?"超出当前历史范围":profile.target_start&&profile.target_end?dateOnly(profile.target_start)+"～"+dateOnly(profile.target_end):"暂无完整目标期";
     [
       ["目标周期",target],
-      ["基准",latestOutside?"—":fmtNum(profile.baseline)],
-      ["规则估计",latestOutside||profile.status==="no_complete_target_period"?"—":fmtNum(profile.estimate)],
+      ["基准",smallHistory||latestOutside?"—":fmtNum(profile.baseline)],
+      ["规则估计",smallHistory||latestOutside||profile.status==="no_complete_target_period"?"—":fmtNum(profile.estimate)],
       ["所选窗 WAPE / 基准",fmtPct(evaluation.wape)+" / "+fmtPct(evaluation.baselineWape)]
     ].forEach(x=>{const c=el("div","forecast-kpi",null,kpis);el("span","",x[0],c);el("strong","",x[1],c);});
     const note=$("forecastProfileNote");
-    if(latestOutside){
+    if(smallHistory){
+      note.textContent="小订期历史回测 · 本序列小订观测至 "+(cutoff||"未知日期")+"。未来目标期须完整落在已确认的小订期内；当前没有可用目标期，基准和估计留空。"+(profile.tail_note?" "+profile.tail_note:"")+" 日期筛选仅控制历史回测展示与评分。"+(evaluation.note?" "+evaluation.note:"");
+      if(state.forecastGrain!=="日"){
+        const button=el("button","button button-quiet","查看日回测",note);button.type="button";button.addEventListener("click",()=>{state.forecastGrain="日";state.profileKey="";$("forecastGrain").value="日";renderForecast();saveRoute(false);});
+      }
+    }else if(latestOutside){
       note.textContent="当前日期范围不含最新预测时点（"+cutoff+"），预测数值留空，以下仅显示所选历史回测。日期筛选控制历史展示和评分窗口；每个回测训练期仍可使用所选开始日期以前、且早于目标期的历史。"+(evaluation.note?" "+evaluation.note:"");
     }else{
       const imp=evaluation.improvement;
@@ -1504,31 +1541,42 @@ function announce(message){
   node.textContent=message;node.classList.add("is-visible");
   statusTimer=setTimeout(()=>node.classList.remove("is-visible"),5000);
 }
-const routeKeys=["page","pattern","metric","category","model","stage","start","end","grain","launchGrain","compare","evidence","forecastModel","forecastGrain","profileKey","libraryTable","libraryMetric","libraryCategory","libraryStage","sourceCurve","sourceHourMetric","sourceHourStage"];
+const routeKeys=["page","pattern","metric","category","model","stage","start","end","grain","launchGrain","compare","evidence","forecastModel","forecastGrain","profileKey","libraryTable","libraryMetric","libraryCategory","libraryStage","libraryGrain","sourceCurve","sourceHourMetric","sourceHourStage","search","pageNo"];
+const routeDefaults={...state};
 function saveRoute(push){
+  if(restoringRoute)return;
+  if(state.start&&state.end)metricDateWindows.set(state.metric,{start:state.start,end:state.end});
+  if(state.page==="patterns")domainLastPatterns.set(state.metric+"|"+patternDomain(state.pattern),state.pattern);
+  try{sessionStorage.setItem(uiStorageKey,JSON.stringify({version:2,metricDates:Object.fromEntries(metricDateWindows),domainPatterns:Object.fromEntries(domainLastPatterns)}));}catch(_){}
   const params=new URLSearchParams();routeKeys.forEach(k=>params.set(k,String(state[k])));
   const hash="#"+params.toString();
   if(location.hash!==hash)history[push?"pushState":"replaceState"](null,"",hash);
 }
 function restoreRoute(){
+  restoringRoute=true;
+  try{
   const hash=location.hash.slice(1),params=new URLSearchParams(hash);
   const routeHasStage=params.has("stage");
-  routeKeys.forEach(k=>{if(params.has(k))state[k]=k==="compare"?params.get(k)==="true":params.get(k);});
+  routeKeys.forEach(k=>{state[k]=params.has(k)?k==="compare"?params.get(k)==="true":k==="pageNo"?Number(params.get(k)):params.get(k):routeDefaults[k];});
+  if(!Number.isSafeInteger(state.pageNo)||state.pageNo<0)state.pageNo=0;
   if(!hash.includes("=")&&["overview","patterns","forecast","evidence"].includes(hash))state.page=hash;
   if(!metricByKey.get(state.metric)?.available)state.metric=defaultMetric.key;
   if(!["months","week","launch","holiday","cycles","structure","hourly","lags"].includes(state.pattern))state.pattern="months";
-  if(!patternAvailable(state.pattern))state.pattern=state.metric==="小订数量"?"structure":"lags";
   if(!["daily","lags","library"].includes(state.evidence))state.evidence="daily";
   if(!["日","周","月","年"].includes(state.grain))state.grain="月";
   if(!["周","月"].includes(state.launchGrain))state.launchGrain="周";
   if(!["日","周","月"].includes(state.forecastGrain))state.forecastGrain="月";
+  if(!["__ALL__","日","周","月","年"].includes(state.libraryGrain))state.libraryGrain="__ALL__";
   const validDate=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value+"T00:00:00Z"))&&new Date(value+"T00:00:00Z").toISOString().slice(0,10)===value;
   if(!validDate(state.start)||!validDate(state.end)){state.start="";state.end="";}
   updateFilters(false);
   if(!routeHasStage&&state.page==="patterns")syncPatternStage(state.pattern);
   $("trendGrain").value=state.grain;$("compareMetrics").checked=state.compare;$("forecastGrain").value=state.forecastGrain;
+  $("evidenceSearch").value=state.search;
   document.querySelectorAll("[data-evidence]").forEach(b=>{const on=b.dataset.evidence===state.evidence;b.classList.toggle("is-active",on);b.setAttribute("aria-pressed",String(on));});
-  clearDateError();refresh();updatePage(state.page,false);
+  clearDateError();refresh(false);updatePage(state.page,false);
+  }finally{restoringRoute=false;}
+  saveRoute(false);
 }
 function clearDateError(){
   $("dateError").hidden=true;$("dateError").textContent="";
@@ -1573,11 +1621,17 @@ function restorePatternDates(){
   state.start=bounds[0];state.end=bounds[1];$("dateStart").value=state.start;$("dateEnd").value=state.end;clearDateError();refresh();return true;
 }
 function activatePattern(pattern){
-  if(!patternAvailable(pattern))return;
+  if(!Object.values(researchDomains).some(list=>list.includes(pattern)))return;
+  const same=state.page==="patterns"&&state.pattern===pattern;
+  if(same){showUpdate($("patternPanels"));announce("当前已是“"+(document.querySelector('[data-pattern="'+pattern+'"]')?.textContent||pattern)+"”，可在下方选择专题或查看证据。");return;}
   const previousStage=state.stage;
   if(state.pattern==="launch"&&pattern!=="launch"&&state.stage==="首销及平销")normalizeStageOutsideLaunch();
-  state.pattern=pattern;syncPatternStage(pattern);updateFilters(false);refresh(false);showUpdate($("patternPanels"));
-  if(state.stage!==previousStage)announce("已切换到“"+state.stage+"”阶段，保留当前车型和日期范围。");
+  state.pattern=pattern;state.page="patterns";
+  if(patternAvailable(pattern))syncPatternStage(pattern);
+  domainLastPatterns.set(state.metric+"|"+patternDomain(pattern),pattern);
+  cache.clear();updateFilters(false);renderRangeNotice();updatePage("patterns",false);showUpdate($("patternPanels"));saveRoute(!same);
+  if(state.stage!==previousStage)announce("已切换到“"+(state.stage==="小订阶段"?"小订期":state.stage)+"”阶段，保留当前车型和日期范围。");
+  else announce("已切换到“"+(document.querySelector('[data-pattern="'+pattern+'"]')?.textContent||pattern)+"”。");
 }
 function bindTabs(container,selector,activate){
   container.addEventListener("keydown",event=>{
@@ -1593,12 +1647,19 @@ bindTabs(document.querySelector(".main-nav"),"[data-panel]",b=>updatePage(b.data
 bindTabs(document.querySelector(".subnav"),"[data-pattern]",b=>activatePattern(b.dataset.pattern));
 function activateDomain(domain){
   const patterns=researchDomains[domain]||[];
-  activatePattern(patterns.find(p=>patternAvailable(p)&&p===state.pattern)||patterns.find(patternAvailable));
+  const remembered=domainLastPatterns.get(state.metric+"|"+domain);
+  const target=patterns.includes(state.pattern)?state.pattern:patterns.includes(remembered)?remembered:patterns.find(patternAvailable)||patterns[0];
+  activatePattern(target);
 }
 bindTabs(document.querySelector(".subnav-domain"),"[data-domain]",b=>activateDomain(b.dataset.domain));
 document.querySelectorAll("[data-domain]").forEach(b=>b.addEventListener("click",()=>activateDomain(b.dataset.domain)));
 window.addEventListener("popstate",restoreRoute);window.addEventListener("hashchange",restoreRoute);
 document.querySelector(".skip-link").addEventListener("click",e=>{e.preventDefault();$("mainContent").focus();});
+$("toggleFilters").addEventListener("click",()=>{
+  const collapsed=document.body.classList.toggle("filters-collapsed");
+  $("toggleFilters").setAttribute("aria-expanded",String(!collapsed));
+  $("toggleFilters").textContent=collapsed?"展开筛选":"收起筛选";
+});
 document.querySelector(".brand").addEventListener("click",e=>{e.preventDefault();updatePage("overview");});
 document.querySelectorAll("[data-panel]").forEach(b=>b.addEventListener("click",()=>updatePage(b.dataset.panel)));
 document.querySelectorAll("[data-go]").forEach(b=>b.addEventListener("click",()=>{updatePage(b.dataset.go);$("pageTitle").focus({preventScroll:true});window.scrollTo({top:0});}));
@@ -1607,10 +1668,11 @@ document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click"
   metricDateWindows.set(state.metric,{start:state.start,end:state.end});
   state.metric=b.dataset.metric;
   const saved=metricDateWindows.get(state.metric);if(saved){state.start=saved.start;state.end=saved.end;}
+  if(state.metric==="小订数量"){state.forecastGrain="日";state.profileKey="";$("forecastGrain").value="日";}
   if(!patternAvailable(state.pattern))state.pattern=state.metric==="小订数量"?"structure":"lags";
   if(state.pattern==="hourly")state.sourceHourMetric=state.metric;
   clearDateError();updateFilters(false);if(state.page==="patterns")syncPatternStage(state.pattern);
-  if(!currentSeries(state.metric).length&&scopedOptionRows(state.metric).some(r=>stageMatches(r))){
+  if(!saved&&!currentSeries(state.metric).length&&scopedOptionRows(state.metric).some(r=>stageMatches(r))){
     const bounds=metricBounds.get(state.metric)||["",""];state.start=bounds[0];state.end=bounds[1];updateFilters(false);
     announce("当前日期没有该口径记录，已恢复此口径的有效日期范围。");
   }
@@ -1621,7 +1683,7 @@ $("modelFilter").addEventListener("change",e=>{state.model=e.target.value;update
 $("stageFilter").addEventListener("change",e=>{state.stage=e.target.value;refresh();});
 $("dateStart").addEventListener("change",applyDates);
 $("dateEnd").addEventListener("change",applyDates);
-$("resetFilters").addEventListener("click",()=>{metricDateWindows.clear();state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.launchGrain="周";state.compare=false;$("trendGrain").value="月";$("launchGrain").value="周";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();announce("已恢复默认口径、车型和日期范围。");});
+$("resetFilters").addEventListener("click",()=>{metricDateWindows.clear();domainLastPatterns.clear();state.libraryGrain="__ALL__";state.metric=defaultMetric.key;state.category="__ALL__";state.model="__ALL__";state.stage="";state.start="";state.end="";state.grain="月";state.launchGrain="周";state.compare=false;$("trendGrain").value="月";$("launchGrain").value="周";$("compareMetrics").checked=false;$("evidenceSearch").value="";state.search="";state.pageNo=0;clearDateError();updateFilters(true);if(state.page==="patterns"&&(state.pattern==="launch"||state.pattern==="holiday"))syncPatternStage(state.pattern);refresh();announce("已恢复默认口径、车型和日期范围。");});
 $("trendGrain").addEventListener("change",e=>{state.grain=e.target.value;refresh();});
 $("compareMetrics").addEventListener("change",e=>{state.compare=e.target.checked;refresh();});
 $("launchGrain").addEventListener("change",e=>{state.launchGrain=e.target.value;refresh();});
@@ -1636,21 +1698,21 @@ document.querySelectorAll("[data-evidence]").forEach(b=>b.addEventListener("clic
   document.querySelectorAll("[data-evidence]").forEach(x=>{const on=x===b;x.classList.toggle("is-active",on);x.setAttribute("aria-pressed",on?"true":"false");});
   renderEvidence();showUpdate($("evidenceTableWrap"));saveRoute(false);
 }));
-let searchTimer;$("evidenceSearch").addEventListener("input",e=>{state.search=e.target.value;state.pageNo=0;clearTimeout(searchTimer);searchTimer=setTimeout(()=>{renderEvidence();showUpdate($("evidenceTableWrap"));},120);});
-$("prevPage").addEventListener("click",()=>{state.pageNo=Math.max(0,state.pageNo-1);renderEvidence();showUpdate($("evidenceTableWrap"));});
-$("nextPage").addEventListener("click",()=>{state.pageNo+=1;renderEvidence();showUpdate($("evidenceTableWrap"));});
+let searchTimer;$("evidenceSearch").addEventListener("input",e=>{state.search=e.target.value;state.pageNo=0;saveRoute(false);clearTimeout(searchTimer);searchTimer=setTimeout(()=>{renderEvidence();showUpdate($("evidenceTableWrap"));saveRoute(false);},120);});
+$("prevPage").addEventListener("click",()=>{state.pageNo=Math.max(0,state.pageNo-1);renderEvidence();showUpdate($("evidenceTableWrap"));saveRoute(false);});
+$("nextPage").addEventListener("click",()=>{state.pageNo+=1;renderEvidence();showUpdate($("evidenceTableWrap"));saveRoute(false);});
 $("exportCsv").addEventListener("click",exportCsv);
 $("openLibrary").addEventListener("click",()=>openLibrary());
 $("allRules").addEventListener("click",()=>updatePage("patterns"));
 $("openMethods").addEventListener("click",()=>openLibrary("coverage"));
-for(const key of ["libraryTable","libraryMetric","libraryCategory","libraryStage"])$(key).addEventListener("change",e=>{
+for(const key of ["libraryTable","libraryMetric","libraryCategory","libraryStage","libraryGrain"])$(key).addEventListener("change",e=>{
   state[key]=e.target.value;state.pageNo=0;
-  if(key==="libraryTable"){state.libraryMetric="__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.search="";$("evidenceSearch").value="";}
+  if(key==="libraryTable"){state.libraryMetric="__ALL__";state.libraryCategory="__ALL__";state.libraryStage="__ALL__";state.libraryGrain="__ALL__";state.search="";$("evidenceSearch").value="";}
   renderEvidence();saveRoute(false);
 });
 let resizeTimer;window.addEventListener("resize",()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>refresh(false),150);});
 setReportMetadata();restoreRoute();
 document.querySelectorAll("[data-metric]").forEach(b=>{if(b.dataset.metric==="交车锁单"&&!metrics.some(x=>x.key==="交车锁单"&&x.available))b.disabled=true;});
 document.querySelectorAll("[data-pattern]").forEach(b=>{const on=b.dataset.pattern===state.pattern;b.classList.toggle("is-active",on);b.setAttribute("aria-selected",on?"true":"false");});
-refresh();saveRoute(false);
+refresh(false);saveRoute(false);
 })();

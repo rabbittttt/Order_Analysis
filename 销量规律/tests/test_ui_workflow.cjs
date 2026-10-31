@@ -39,6 +39,11 @@ async function choosePattern(page,key) {
   if(!await tab.isVisible())await page.locator('[data-domain="'+domains[key]+'"]').click();
   await tab.click();
 }
+async function ensureFiltersOpen(page) {
+  const toggle = page.locator("#toggleFilters");
+  if (!(await toggle.count()) || !(await toggle.isVisible())) return;
+  if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+}
 async function capture(page, filename) {
   if (!screenshotDir) return;
   await fs.mkdir(screenshotDir, {recursive: true});
@@ -50,7 +55,7 @@ async function capture(page, filename) {
   const context = await browser.newContext({viewport: {width: 1440, height: 1000}, acceptDownloads: true});
   context.on("page", p => { p.on("pageerror", e => errors.push(e.message)); p.on("request", r => { if (/^https?:/.test(r.url())) requests.push(r.url()); }); });
   const page = await context.newPage(), url = pathToFileURL(reportPath).href;
-  const reset = async () => { await page.goto(url); await page.locator("#resetFilters").click(); };
+  const reset = async () => { await page.goto(url); await ensureFiltersOpen(page); await page.locator("#resetFilters").click(); };
   try {
     await page.goto(url);
     await capture(page, "sales-ui-after-desktop.png");
@@ -105,6 +110,19 @@ async function capture(page, filename) {
       await page.locator("#nav-overview").click();assert.ok(!(await page.locator("#stageFilter option").allTextContents()).includes("首销及平销"));await page.locator('[data-metric="交车锁单"]').click();assert.equal(await page.locator("#stageFilter").inputValue(),"平销");
       await page.goBack();assert.equal(await page.locator("#pattern-launch").getAttribute("aria-selected"),"true");assert.equal(await page.locator("#stageFilter").inputValue(),entryStage);
       await reset();
+    });
+    await check("从上市后专题返回首页再进入月份入口保留首销阶段", async () => {
+      await reset();
+      await page.locator("#nav-patterns").click(); await choosePattern(page, "launch");
+      await page.locator("#stageFilter").selectOption("首销");
+      await page.locator("#nav-overview").click();
+      await page.locator("#stageFilter").selectOption("首销");
+      const monthEntry = page.getByRole("button", {name: /月份和月内进度/});
+      assert.equal(await monthEntry.count(), 1);
+      await monthEntry.click();
+      assert.equal(await page.locator("#pageTitle").innerText(), "规律研究");
+      assert.equal(await page.locator("#pattern-months").getAttribute("aria-selected"), "true");
+      assert.equal(await page.locator("#stageFilter").inputValue(), "首销");
     });
     await check("上市后节奏按口径、车型和完整日期窗口筛选", async () => {
       for(const metric of ["留存大定","交车锁单"]){
@@ -361,6 +379,7 @@ async function capture(page, filename) {
        let row=await scopeRow("UI节日");assert.deepEqual(row.slice(3,8),["110%","110%","110%","2","2"]);
        row=await scopeRow("UI零值节日");assert.equal(row[3],"0%");assert.equal(row[6],"1");assert.match(row[8],/无历史对照 1\/2/);
        row=await scopeRow("UI冲突节日");assert.equal(row[6],"1");assert.equal(row[7],"2");assert.match(row[8],/逐日对照冲突 1\/2/);
+       await ensureFiltersOpen(fixture);
        await fixture.locator("#categoryFilter").selectOption("UI分类B");await choosePattern(fixture,"holiday");
        text=await fixture.locator("#patternPanels .pattern-card").first().innerText();assert.ok(text.includes("UI分类B"));assert.ok(text.includes("100%"));
        await fixture.locator("#categoryFilter").selectOption("__ALL__");await fixture.locator('[data-metric="交车锁单"]').click();await choosePattern(fixture,"holiday");
@@ -477,7 +496,10 @@ async function capture(page, filename) {
     await check("快速连续切换最终状态正确，减少动效后无动画", async () => {
       await page.evaluate(() => ["patterns", "forecast", "evidence", "overview"].forEach(key => document.getElementById("nav-" + key).click()));
       assert.equal(await page.locator("#pageTitle").innerText(), "研究首页");
+      // Clear the short update animation created by the preceding rapid switch before enabling reduced motion.
+      await page.waitForTimeout(220);
       await page.emulateMedia({reducedMotion: "reduce"});
+      await page.waitForTimeout(30);
       await page.locator("#nav-patterns").click(); await choosePattern(page,"week");
       assert.equal(await page.evaluate(() => document.getAnimations().length), 0);
       const transition = await page.locator("#nav-patterns").evaluate(e => getComputedStyle(e).transitionDuration);
@@ -487,10 +509,11 @@ async function capture(page, filename) {
     for (const [width,height] of sizes) {
       await check(width + "×" + height + " 四页布局与触摸导航", async () => {
         const p = await context.newPage(); await p.setViewportSize({width,height}); await p.goto(url);
+        if (width <= 850) assert.equal(await p.locator("#toggleFilters").getAttribute("aria-expanded"), "false", "mobile filters should default to collapsed");
         if (width === 390) await capture(p, "sales-ui-after-mobile.png");
         for (const name of ["overview", "patterns", "forecast", "evidence"]) {
           await p.locator("#nav-" + name).click();
-          if(name==="patterns"){await p.locator("#stageFilter").selectOption("首销");await choosePattern(p,"launch");if(width===390)await capture(p,"sales-launch-mobile.png");}
+          if(name==="patterns"){await ensureFiltersOpen(p);await p.locator("#stageFilter").selectOption("首销");await choosePattern(p,"launch");if(width===390)await capture(p,"sales-launch-mobile.png");}
           assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), name + " has document overflow");
           assert.equal(await p.locator("#panel-" + name).isVisible(), true);
           if (width >= 1920) {
@@ -526,6 +549,7 @@ async function capture(page, filename) {
           assert.deepEqual(lowContrast, [], name + " has unreadable supporting text");
         }
         if (width <= 850) {
+          await ensureFiltersOpen(p);
           const bounds = await p.locator(".nav-item").evaluateAll(nodes => nodes.map(e => ({width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,right:e.getBoundingClientRect().right,left:e.getBoundingClientRect().left})));
           assert.ok(bounds.every(r => r.width >= 44 && r.height >= 44 && r.left >= 0 && r.right <= width));
           const inputs = await p.locator("#categoryFilter,#modelFilter,#stageFilter,#dateStart,#dateEnd,#exportCsv").evaluateAll(nodes => nodes.map(e => e.getBoundingClientRect().height));
