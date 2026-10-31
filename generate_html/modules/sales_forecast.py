@@ -675,7 +675,9 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                     "处理=使用全部日期列求和%d，不把最后一个日期误作合计",
                     label, sheet.title, row_number, total,
                 )
-            if total <= 0:
+            # Explicit zero days are observations and retain source priority.
+            # An entirely unknown row still provides no daily facts.
+            if total <= 0 and not any(value is not None for value in daily):
                 continue
             first_header_date = date_columns[0][1]
             generation = _canonical_model(label, model_mapping)
@@ -747,7 +749,10 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 prefix_complete = prefix_complete and value is not None
                 if prefix_complete:
                     running += value
-                cumulative.append(min(running / max(final_total, 1), 1) if prefix_complete and total_complete else None)
+                cumulative.append(
+                    min(running / final_total, 1)
+                    if prefix_complete and total_complete and final_total > 0 else None
+                )
             item = {
                 "model": generation if modern_names else label,
                 "source_model": label,
@@ -768,7 +773,9 @@ def _read_small_order_history(path: Path | None = None) -> tuple[Path | None, li
                 "dates": dates,
                 "small_progress": cumulative,
                 "standard_progress": reservation_reference_shape(fallback_curve)["standard_progress"],
-                "d1_share": daily[0] / max(final_total, 1) if daily and daily[0] is not None and total_complete else 0,
+                "d1_share": (
+                    daily[0] / final_total if daily and daily[0] is not None and total_complete else 0
+                ) if final_total > 0 else None,
                 "small_hourly_curve": [],
                 "daily_actual": True,
                 "source_sheet": sheet.title,

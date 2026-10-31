@@ -234,8 +234,9 @@ class SourcePatternsTests(unittest.TestCase):
 
         curves = [row for row in data["curves"] if row["curve"] == "累计直接大定占比" and row["day"] == 1]
         by_curve_model = {row["model"]: row for row in curves}
-        self.assertEqual(by_curve_model["主车型A"]["denominator"], 3)
-        self.assertEqual(by_curve_model["主车型B"]["denominator"], 6)
+        self.assertIsNone(by_curve_model["主车型A"]["denominator"])
+        self.assertIsNone(by_curve_model["主车型B"]["denominator"])
+        self.assertIn("截至D日累计总大定", by_curve_model["主车型A"]["denominator_note"])
         self.assertEqual(by_curve_model["主车型A"]["date"], "2026-10-03")
         self.assertEqual(by_curve_model["主车型B"]["date"], "2026-10-12")
         self.assertEqual(by_curve_model["主车型"]["status"], "车型映射冲突/未明确版本")

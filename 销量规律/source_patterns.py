@@ -66,6 +66,7 @@ CURVE_SHEETS = (
     "首销期退订当日数量",
     "小转大累计完成度",
     "直接大定累计完成度",
+    "累计直接大定进度",  # Legacy completion curve, not cumulative order mix.
     "大定累计完成度",
 )
 
@@ -402,7 +403,11 @@ def _raw_row(row: Mapping[str, Any]) -> dict[str, Any]:
 def _ratio_denominator(meta: Mapping[str, Any], curve: str) -> tuple[Any, str | None]:
     """Return the existing total used by a curve, never a recomputed total."""
 
-    if "小订转化" in curve:
+    if curve in {"每日直接大定占比", "累计直接大定占比"}:
+        # Their denominators vary by D day. A whole-phase total is neither
+        # the daily gross count nor the gross count accumulated through Dn.
+        return None, None
+    if curve == "小订累计完成度" or "小订转化" in curve:
         names = ("总小订", "总小订数", "小订总量")
     elif "退订率" in curve:
         names = ("总小订", "总小订数", "小订总量")
@@ -422,7 +427,32 @@ def _ratio_denominator(meta: Mapping[str, Any], curve: str) -> tuple[Any, str | 
 
 
 def _is_ratio_curve(sheet: str) -> bool:
-    return any(token in sheet for token in ("占比", "率", "完成度"))
+    return sheet == "累计直接大定进度" or any(token in sheet for token in ("占比", "率", "完成度"))
+
+
+def _early_quality_status(row: Mapping[str, Any], feature: str,
+                          meta: Mapping[str, Any], source_cutoff: date | None) -> str | None:
+    """Honor every source day used by a feature without deleting its facts."""
+    periods = set(re.findall(r"D1\+D2|D1|D2", feature))
+    if "D1+D2" in periods:
+        periods.update(("D1", "D2"))
+    if not periods:
+        return None
+    for period in ("D1", "D2", "D1+D2"):
+        field = period + "口径状态"
+        if period not in periods or field not in row:
+            continue  # Older exports have no status columns; preserve known values.
+        status = _text(row.get(field))
+        if status not in {"通过", "部分字段有效"}:
+            return f"源表{field}：{status or '未提供'}"
+    anchor, _ = _anchor(meta, "首销")
+    start = _date_value(anchor)
+    if start:
+        last_day = start + timedelta(days=1 if "D2" in periods else 0)
+        cutoff = min(date.today(), source_cutoff) if source_cutoff else date.today()
+        if last_day >= cutoff:
+            return "当日未结束" if last_day == cutoff else "未来数据"
+    return None
 
 
 def _early_features(rows: list[dict[str, Any]], headers: list[str],
@@ -459,6 +489,7 @@ def _early_features(rows: list[dict[str, Any]], headers: list[str],
             feature_value: Any = number if number is not None else value
             status = _status_for_value(value, source_cutoff=source_cutoff,
                                        meta=meta)
+            status = _early_quality_status(row, header, meta, source_cutoff) or status
             denominator = None
             denominator_field = None
             numerator = None
@@ -512,6 +543,7 @@ def _early_features(rows: list[dict[str, Any]], headers: list[str],
                 actual_date=_date_value(anchor_date),
                 meta=meta,
             )
+            base_status = _early_quality_status(row, alias, meta, source_cutoff) or base_status
             status = base_status if base_status != "有效" else ("分母为零" if denominator == 0 else "有效")
             result.append({
                 **common,
@@ -559,6 +591,12 @@ def _curve_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
         anchor_date, anchor_type = _anchor(meta, stage)
         dimensions = _meta_dimensions(meta)
         denominator, denominator_field = _ratio_denominator(meta, sheet)
+        denominator_note = (f"车型基本信息.{denominator_field}（原始总量）"
+                            if denominator_field else "源表未提供可用分母")
+        if sheet == "每日直接大定占比":
+            denominator_note = "当日直接大定 ÷ 当日总大定；分母随D日变化，原比例照录，不用全期总量替代或反推分母"
+        elif sheet == "累计直接大定占比":
+            denominator_note = "累计直接大定 ÷ 截至D日累计总大定；原比例照录，不用全期总量替代或反推分母"
         # Do not emit trailing empty columns, but keep internal blanks.
         observed_days = [day for header, day in d_headers if row.get(header) not in (None, "")]
         max_day = max(observed_days, default=0)
@@ -591,8 +629,7 @@ def _curve_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
                 "base": _number(denominator) if _number(denominator) is not None else denominator,
                 "denominator": _number(denominator) if _number(denominator) is not None else denominator,
                 "denominator_field": denominator_field,
-                "denominator_note": (f"车型基本信息.{denominator_field}（原始总量）"
-                                      if denominator_field else "源表未提供可用分母"),
+                "denominator_note": denominator_note,
                 "source": sheet,
                 "source_sheet": sheet,
                 "anchor_date": anchor_date,
@@ -821,7 +858,8 @@ def build_source_insights(path: str | Path) -> dict[str, Any]:
         empty["notes"].append(f"缺少工作表：{EARLY_SHEET}")
     for sheet in CURVE_SHEETS:
         if sheet not in cache:
-            empty["notes"].append(f"缺少曲线工作表：{sheet}")
+            if sheet != "累计直接大定进度":  # Optional legacy spelling.
+                empty["notes"].append(f"缺少曲线工作表：{sheet}")
             continue
         headers, rows = cache[sheet]
         empty["curves"].extend(_curve_records(sheet, rows, headers, meta_maps, source_cutoff))
