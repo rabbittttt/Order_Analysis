@@ -15,6 +15,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Iterable
+from zipfile import BadZipFile
+from zlib import error as ZlibError
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -1836,16 +1838,30 @@ def reorder_summary_sheets(workbook):
         workbook._sheets.append(last_sheet)
 
 
+# Only malformed generated content is recoverable here. Filesystem/permission
+# failures and errors reading the original inputs must still fail the refresh.
+SUMMARY_FORMAT_ERRORS = (BadZipFile, ZlibError, EOFError, KeyError, SyntaxError, ValueError, TypeError)
+
+
 def summary_is_current(source, output, mapping, orders_dir, as_of_date):
     if not output_is_current(source, output, mapping):
         return False
-    book = load_workbook(output, read_only=True, data_only=True)
-    try:
-        if GUIDE_SHEET not in book.sheetnames or DAILY_SHEET not in book.sheetnames:
+    # Own the handle even when openpyxl fails before returning a workbook;
+    # Windows must be able to replace the damaged derived file afterwards.
+    with output.open("rb") as handle:
+        try:
+            book = load_workbook(handle, read_only=True, data_only=True)
+        except SUMMARY_FORMAT_ERRORS as exc:
+            LOGGER.warning("[销量汇总损坏] 文件=%s | %s: %s | 处理=从原始来源重新生成",
+                           output, type(exc).__name__, exc)
             return False
-        return book.properties.identifier == forecast_signature(source, mapping, orders_dir, as_of_date)
-    finally:
-        book.close()
+        try:
+            if GUIDE_SHEET not in book.sheetnames or DAILY_SHEET not in book.sheetnames:
+                return False
+            identifier = book.properties.identifier
+        finally:
+            book.close()
+    return identifier == forecast_signature(source, mapping, orders_dir, as_of_date)
 
 
 def resolve_source_path(requested: Path) -> Path:
@@ -1931,13 +1947,22 @@ def main() -> int:
         LOGGER.debug("二次处理输出: %s", args.output)
         ensure_mapping(args.mapping, args.source)
         if not args.force and summary_is_current(args.source, args.output, args.mapping, args.orders, args.as_of_date):
-            LOGGER.info("销量数据汇总已是最新，跳过刷新：%s", args.output)
-            book = load_workbook(args.output, read_only=True, data_only=True)
+            # read_only defers cell parsing. A readable workbook header does not
+            # guarantee its cached daily tables can actually be consumed.
+            audit_day = date.fromisoformat(args.as_of_date) if args.as_of_date else date.today()
             try:
-                audit_final_forecast(book, date.fromisoformat(args.as_of_date) if args.as_of_date else date.today())
-            finally:
-                book.close()
-            return 0
+                with args.output.open("rb") as handle:
+                    book = load_workbook(handle, read_only=True, data_only=True)
+                    try:
+                        audit_final_forecast(book, audit_day)
+                    finally:
+                        book.close()
+            except SUMMARY_FORMAT_ERRORS as exc:
+                LOGGER.warning("[销量汇总损坏] 文件=%s | %s: %s | 处理=从原始来源重新生成",
+                               args.output, type(exc).__name__, exc)
+            else:
+                LOGGER.info("销量数据汇总已是最新，跳过刷新：%s", args.output)
+                return 0
         build_secondary(args.source, args.output, args.mapping, args.orders, args.as_of_date)
         return 0
     except Exception:

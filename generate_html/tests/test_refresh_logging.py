@@ -25,7 +25,7 @@ class RefreshLoggingTests(TestCase):
 
     def refresh(self, setup='', *, reuse=False, debug=False, fail=False):
         return self.process('''
-import logging, sys
+import io, logging, sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -44,7 +44,7 @@ with patch.object(refresh,'parse_args',return_value=args), \\
  patch.object(refresh,'resolve_mapping_path',side_effect=lambda p:p), \\
  patch.object(refresh,'ensure_mapping'),patch.object(refresh,'summary_is_current',return_value=REUSE), \\
  patch.object(refresh,'build_secondary',side_effect=build) as rebuilt, \\
- patch.object(refresh,'load_workbook',return_value=book),patch.object(refresh,'audit_final_forecast'):
+ patch.object(refresh,'load_workbook',return_value=book),patch.object(Path,'open',side_effect=lambda *a,**k:io.BytesIO()),patch.object(refresh,'audit_final_forecast'):
  code=refresh.main()
  assert code==(1 if FAIL else 0), code
  assert rebuilt.call_count==(0 if REUSE or FAIL else 1),rebuilt.call_count

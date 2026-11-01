@@ -2038,25 +2038,36 @@ def _read_actual_profiles(store, stage_windows=None, today=None) -> tuple[list[d
                     for source_row, values in enumerate(sheet.iter_rows(min_row=header_row + 1, values_only=True), header_row+1):
                         date_key = _iso(values[columns["date"]] if columns["date"] < len(values) else None)
                         raw_hour = values[columns["hour"]] if columns["hour"] < len(values) else None
-                        orders = _optional_number(values[columns["orders"]] if columns["orders"] < len(values) else None)
+                        raw_orders = values[columns["orders"]] if columns["orders"] < len(values) else None
+                        orders = None if isinstance(raw_orders, bool) else _optional_number(raw_orders)
                         if isinstance(raw_hour, (datetime,)):
                             hour = raw_hour.hour
                         else:
-                            hour_match = re.search(r"\d{1,2}", str(raw_hour if raw_hour is not None else ""))
-                            hour = int(hour_match.group()) if hour_match else -1
+                            hour_match = re.fullmatch(r"(\d{1,2})(?:\.0+|\s*[时点]|:00(?::00)?)?", str(raw_hour if raw_hour is not None else "").strip())
+                            hour = int(hour_match.group(1)) if hour_match and not isinstance(raw_hour, bool) else -1
                         if not date_key:
                             continue
-                        if not 0 <= hour <= 23 or orders is None or not math.isfinite(orders) or orders < 0 or (date_key, hour) in seen_small_hours:
+                        bucket = grouped.setdefault(date_key, {"date": date_key, "last_hour": -1, "orders": 0, "hours": []})
+                        reason = ("小时无效" if not 0 <= hour <= 23 else
+                                  "数量无效" if orders is None or not math.isfinite(orders) or orders < 0 else
+                                  "小时重复" if (date_key, hour) in seen_small_hours else "")
+                        if reason:
                             invalid_small_dates.add(date_key)
+                            bucket["hourly_valid"] = False
+                            previous = bucket.get("hourly_status", "分时数据异常：")
+                            bucket["hourly_status"] = previous if reason in previous else previous + ("、" if previous != "分时数据异常：" else "") + reason
                             continue
                         seen_small_hours.add((date_key, hour))
-                        bucket = grouped.setdefault(date_key, {"date": date_key, "last_hour": -1, "orders": 0, "hours": []})
                         bucket["last_hour"] = max(bucket["last_hour"], hour)
                         bucket["orders"] += int(round(orders))
                         origin = cell_source_text(sheet, source_row, columns["orders"]+1, cancel_item.path.name)
                         bucket["hours"].append({"hour": hour, "orders": int(round(orders)), "_field_origins": {"orders": origin}})
                         bucket.setdefault("_field_origins", {})["orders"] = join_source_texts(
                             bucket.get("_field_origins", {}).get("orders"), origin)
+                for day in invalid_small_dates:
+                    # The retained rows are evidence, not a complete or trusted
+                    # hourly snapshot. Keep independent daily actuals separately.
+                    grouped[day]["orders"] = None
                 profile["small_hourly_days"] = list(grouped.values())
                 cancel_daily_rows = [
                     {"date": day, "orders": bucket["orders"] if day not in invalid_small_dates else None,
@@ -2764,7 +2775,7 @@ def _resolve_actual_profiles(
 def _completed_hourly_curve(bucket, field, daily_total=None):
     """Normalize finished observations only; an explicit blank is not zero."""
     hours = bucket.get("hours") or []
-    if not hours:
+    if bucket.get("hourly_valid") is False or not hours:
         return []
     by_hour = [0.0] * 24
     for row in hours:

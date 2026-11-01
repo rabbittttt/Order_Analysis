@@ -351,11 +351,15 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
         for raw in raw_profiles:
             for day in raw.get(key, []):
                 hours = list(day.get("hours", []))
+                if key == "small_hourly_days" and day.get("hourly_valid") is False and not hours:
+                    hours = [{"hour": None, field: None}]  # Persist quality even without usable points.
                 for hour in hours:
                     record = [raw["model"], date_cell(day.get("date")), hour.get("hour"), hour.get(field),
                               _source_parts(raw.get(source_key))[0]]
                     if key == "hourly_days":
                         record.extend(hour.get(metric) for metric in ("small_to_big", "direct", "lock"))
+                    else:
+                        record.append(day.get("hourly_status") or ("分时数据异常" if day.get("hourly_valid") is False else "有效"))
                     identity = (raw["model"], iso_day(day.get("date")), hour.get("hour"))
                     positions = {field: 3, **({"small_to_big": 5, "direct": 6, "lock": 7} if key == "hourly_days" else {})}
                     for metric, position in positions.items():
@@ -368,7 +372,7 @@ def public_forecast_tables(book, data, emit, weekly_rows=(), as_of_date=None, ra
                         records[identity] = [a if a is not None else b for a, b in zip(records[identity], record)]
                     if record_origins.get(identity):
                         records[identity][4] = source_files_text(join_source_texts(*record_origins[identity].values()))
-        component_headers = ["小时小转大", "小时直接大定", "小时交车锁单"] if key == "hourly_days" else []
+        component_headers = ["小时小转大", "小时直接大定", "小时交车锁单"] if key == "hourly_days" else ["分时口径状态"]
         emit(sheet, ["订单分析代际名", "日期", "小时", label, "来源文件", *component_headers], [records[k] for k in sorted(records)])
         if key == "hourly_days":
             reconcile_intraday_fields(rows, data.get("actuals", []), records)
@@ -1199,7 +1203,24 @@ def read_public_forecast(book, history, today=None):
             if profile is None or d > current.isoformat():
                 continue
             value = row.get(label)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
+            if key == "small_hourly_days":
+                # Read quality before filtering values; otherwise discarded bad
+                # points become an apparently complete reference after round-trip.
+                bucket = buckets.setdefault((model, d), {"date": d, "last_hour": 0, field: 0, "hours": []})
+                status = row.get("分时口径状态")
+                raw_hour = row.get("小时")
+                valid_hour = (isinstance(raw_hour, (int, float)) and not isinstance(raw_hour, bool)
+                              and math.isfinite(raw_hour) and int(raw_hour) == raw_hour and 0 <= raw_hour < 24)
+                valid_value = (isinstance(value, (int, float)) and not isinstance(value, bool)
+                               and math.isfinite(value) and value >= 0)
+                duplicate = valid_hour and any(point["hour"] == int(raw_hour) for point in bucket["hours"])
+                invalid = "分时口径状态" in row and status != "有效"
+                if invalid or not valid_hour or not valid_value or duplicate:
+                    bucket["hourly_valid"] = False
+                    bucket["hourly_status"] = str(status) if invalid and status else "分时数据异常：小时或数量无效/重复"
+                if not valid_hour or not valid_value or duplicate:
+                    continue
+            elif not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
                 continue  # Keep partial source components in Excel; an unknown gross is not zero.
             profile[source_key] = {"file": row.get("来源文件"), "sheet": sheet}
             bucket = buckets.setdefault((model, d), {"date": d, "last_hour": 0, field: 0, "hours": []})
@@ -1212,6 +1233,8 @@ def read_public_forecast(book, history, today=None):
                        if kind == "首销订单" for r in entries} if key == "hourly_days" else {}
         for (model, d), bucket in sorted(buckets.items()):
             bucket["hours"].sort(key=lambda r: r["hour"])
+            if bucket.get("hourly_valid") is False:
+                bucket[field] = None
             if key == "hourly_days":
                 daily = daily_index.get((model, d), {})
                 status = str(daily.get("首销分时核对") or "未核对，日/时快照不可混用")

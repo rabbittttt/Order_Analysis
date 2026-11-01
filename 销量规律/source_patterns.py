@@ -667,6 +667,27 @@ def _hour_metric(source_metric: str) -> str:
     return text
 
 
+def _hourly_stage(sheet: str, day: date, meta: Mapping[str, Any]) -> tuple[str, str | None]:
+    """Resolve observed phase from model dates, keeping the source sheet intact."""
+    small = sheet == "小订by时"
+    phase = "小订" if small else "首销"
+    start = _date_value(_metadata_value(meta, phase + "开始", phase + "开始日期", phase + "起始日期"))
+    end = _date_value(_metadata_value(meta, phase + "结束", phase + "结束日期"))
+    if start and end and start > end:
+        return "阶段未知", phase + "阶段日期冲突"
+    if small:
+        # Match daily small-order eligibility: missing small-order boundaries
+        # alone do not remove known small-order observations.
+        if start and end and not start <= day <= end:
+            return "小订期外", "不在小订期"
+        return "小订", None
+    if not start or not end:
+        return "阶段未知", "首销阶段日期未维护"
+    if day < start:
+        return "首销前", "不在首销或平销期"
+    return ("首销" if day <= end else "平销"), None
+
+
 def _hourly_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
                     meta_maps: Mapping[str, dict[str, Any]], source_cutoff: date | None) -> list[dict[str, Any]]:
     model_field = _model_field(headers)
@@ -674,7 +695,7 @@ def _hourly_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
     hour_field = _hour_field(headers)
     if not model_field or not date_field or not hour_field:
         return []
-    excluded = {model_field, date_field, hour_field, "来源文件", "数据来源"}
+    excluded = {model_field, date_field, hour_field, "来源文件", "数据来源", "分时口径状态"}
     excluded.update(header for header in headers if "来源" in header)
     metric_fields = [header for header in headers if header not in excluded]
     # Ignore text-only metadata fields accidentally placed beside measurements.
@@ -697,8 +718,8 @@ def _hourly_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
     for (model, day, source_metric), observations in groups.items():
         meta = _lookup_metadata(model, meta_maps)
         dimensions = _meta_dimensions(meta)
-        stage = "小订" if sheet == "小订by时" else "首销"
-        anchor_date, anchor_type = _anchor(meta, stage)
+        stage, stage_status = _hourly_stage(sheet, day, meta)
+        anchor_date, anchor_type = _anchor(meta, "小订" if sheet == "小订by时" else "首销")
         hour_values: dict[int, list[Any]] = defaultdict(list)
         for hour, value, _row in observations:
             if hour is not None:
@@ -725,11 +746,18 @@ def _hourly_records(sheet: str, rows: list[dict[str, Any]], headers: list[str],
             group_status = "总量无效"
         else:
             group_status = "有效"
+        source_statuses = {_text(row.get("分时口径状态")) for _hour, _value, row in observations
+                           if "分时口径状态" in row}
+        invalid_source_statuses = source_statuses - {"有效"}
+        if invalid_source_statuses:
+            group_status = "来源分时口径异常：" + "、".join(sorted(status or "未提供" for status in invalid_source_statuses))
         mapping_status = _text(meta.get("_mapping_status"))
         if mapping_status:
             group_status = mapping_status
         elif source_cutoff and day >= source_cutoff:
             group_status = "未来数据"
+        elif stage_status:
+            group_status = stage_status
         # An open model may still have complete historical hours.  Unlike
         # final-scale D1/D2 and cumulative curves, a historical hourly day is
         # usable when its own 24-hour quality checks pass.
