@@ -213,16 +213,17 @@ class LaunchRhythmModule:
         start_date = date_labels[0] if date_labels else ""
         end_date = date_labels[-1] if date_labels else periods[-1]
 
-        def latest(name: str) -> float:
-            values = metrics.get(name, [0])
-            return next((value for value in reversed(values) if value is not None), 0)
+        def latest(*names: str) -> float:
+            # A known zero keeps the primary row's priority over legacy aliases.
+            return next((value for name in names for value in reversed(metrics.get(name, []))
+                         if value is not None), 0)
 
         cumulative_order = sum(value for value in metrics.get("当日大定数量", []) if value is not None)
         cumulative_net = sum(value for value in metrics.get("当日留存大定数量", []) if value is not None)
         cumulative_lock = next((value for value in reversed(metrics.get("累计交车锁单数量", []))
                                 if value is not None), None)
-        cumulative_small = latest("累计小订转大定数量") or latest("累计小订转大数量")
-        cumulative_small_rate = latest("累计小订转化率") or latest("累计小转大率")
+        cumulative_small = latest("累计小订转大定数量", "累计小订转大数量")
+        cumulative_small_rate = latest("累计小订转化率", "累计小转大率")
         cumulative_small_base = safe_rate(cumulative_small, cumulative_small_rate) if cumulative_small_rate > 0 else 0
         cumulative_direct = latest("累计直接大定数量")
         source_note = f"{'当周' if grain == 'week' else '当日'}直接大定 / {'当周' if grain == 'week' else '当日'}小订转大 · 数量不累计，小转大率和直接大定占比为累计口径"

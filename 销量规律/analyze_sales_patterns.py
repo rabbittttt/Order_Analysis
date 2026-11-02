@@ -790,6 +790,14 @@ def lock_lag_analysis(panel):
                     changes=sorted(d for d in x if d-timedelta(days=1) in x and x[d]>=0 and x[d-timedelta(days=1)]>=0 and
                                    all(d+timedelta(days=k) in y and y[d+timedelta(days=k)]>=0
                                        for k in range(-1,4)))
+                    # All four lags share sample eligibility through d+3.
+                    # Date filters must include those locks and the previous
+                    # day used by daily changes, not just deposit dates.
+                    evidence_dates = [*matched, *(d-timedelta(days=1) for d in changes),
+                                      *(d+timedelta(days=3) for d in matched),
+                                      *(d+timedelta(days=3) for d in changes)]
+                    evidence_start = min(evidence_dates, default=None)
+                    evidence_end = max(evidence_dates, default=None)
                     for lag in range(4):
                         xs=[x[d] for d in matched]
                         ys=[y[d+timedelta(days=lag)] for d in matched]
@@ -799,7 +807,7 @@ def lock_lag_analysis(panel):
                         results.append(dict(model=key[0],stage=key[1],cycle=key[2],metric=metric,
                             brand=rs[0].get('brand','未提供'),segment=rs[0].get('segment','未提供'),
                             energy=rs[0].get('energy','未提供'),lag=lag,pairs=len(matched),
-                            start=min(matched) if matched else None,end=max(matched) if matched else None,
+                            start=evidence_start,end=evidence_end,
                             level_corr=correlation(xs,ys) if enough else None,
                             change_corr=correlation(dx,dy) if len(changes)>=14 else None,
                             change_pairs=len(changes),deposit_source=ds,lock_source=ls,
