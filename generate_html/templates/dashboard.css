@@ -4580,3 +4580,152 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   .forecast-workspace.forecast-studio .forecast-import input::file-selector-button{min-height:40px}
   .forecast-chart-key-note{margin-left:0;flex-basis:100%}
 }
+
+/* Independent forecast entry: the existing forecast components share one page
+   scroll area. All overrides stay inside the forecast application. */
+body.forecast-app {
+  height:100vh;
+  height:100dvh;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+  background:var(--page);
+  background-image:none;
+}
+body.forecast-app .topbar {
+  position:relative;
+  flex:0 0 auto;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:10px 20px;
+  min-height:68px;
+  padding:12px 22px;
+  border-bottom:1px solid var(--line);
+  background:#fff;
+  box-shadow:none;
+}
+body.forecast-app .topbar .brand {color:var(--ink);gap:10px;min-width:0}
+body.forecast-app .topbar .brand strong {font-size:19px;line-height:1.4}
+body.forecast-app .topbar .brand-mark {width:34px;height:34px;flex-basis:34px;border-color:var(--line)}
+body.forecast-app .topbar .topbar-main {display:flex;flex:1 1 auto;min-width:0;margin-left:auto}
+body.forecast-app .topbar .topbar-end {display:flex;flex:1 1 auto;gap:12px;min-width:0;margin-left:auto}
+body.forecast-app .topbar .filters,
+body.forecast-app .topbar .filters[data-mode=window] {display:flex;flex-wrap:wrap;gap:8px;min-width:0;width:auto}
+body.forecast-app .topbar .filters label:first-child {width:250px;min-width:180px;max-width:100%;flex:0 1 250px}
+body.forecast-app .topbar .filters .period-field {width:210px;min-width:0;flex:0 1 210px}
+body.forecast-app .topbar .filters select {height:38px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:var(--page);color:var(--ink);font-size:13px}
+body.forecast-app .topbar .filters span {color:var(--muted)}
+body.forecast-app .topbar .top-actions #updatedAt {padding:0;border:0;background:none;color:var(--muted);font-size:11px;white-space:normal}
+body.forecast-app .topbar .filter-group,
+body.forecast-app .quick-generation-filter,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-stage-switcher,
+body.forecast-app .mobile-module-picker {display:none}
+body.forecast-app .app-shell {display:grid;grid-template-columns:148px minmax(0,1fr);flex:1 1 auto;min-height:0;height:auto;align-items:stretch;overflow:hidden}
+body.forecast-app .module-bar {position:static;top:auto;align-self:stretch;min-width:0;min-height:0;height:auto;padding:20px 10px;background:#fff;border-right:1px solid var(--line);box-shadow:none;backdrop-filter:none;overflow-y:auto}
+body.forecast-app .module-bar .module-nav {display:flex;flex-direction:column;gap:6px;overflow:visible;padding:0}
+body.forecast-app .module-bar .module-nav button,
+body.forecast-app .module-bar .module-nav a {display:flex;align-items:center;justify-content:flex-start;min-height:44px;height:auto;width:100%;padding:10px 12px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);box-shadow:none;font-size:13px;font-weight:600;text-align:left;text-decoration:none;white-space:normal;line-height:1.5;transform:none}
+body.forecast-app .module-bar .module-nav button:hover,
+body.forecast-app .module-bar .module-nav a:hover {background:var(--page);color:var(--primary-strong);border-color:transparent;box-shadow:none;transform:none}
+body.forecast-app .module-bar .module-nav button.active {background:var(--primary-soft);color:var(--primary-strong);border-color:transparent;box-shadow:none}
+body.forecast-app .module-bar .module-nav a.forecast-order-link {margin-top:16px;border-top:1px solid var(--line);border-radius:0;padding-top:16px;font-weight:500}
+body.forecast-app .workspace {min-width:0;min-height:0;height:100%;padding:18px 22px 20px;overflow:hidden}
+body.forecast-app #page {height:100%;max-height:none;min-height:0;overflow:auto;padding-right:4px;scrollbar-gutter:stable}
+body.forecast-app .page-workspace.forecast-page,
+body.forecast-app .page-workspace.forecast-page>.page-workspace-body,
+body.forecast-app .forecast-workspace.forecast-studio,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scroll-body {height:auto;min-height:0;max-height:none;overflow:visible}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-pane.active,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-lifecycle-subpane.active {max-height:none;overflow:visible;padding-right:0}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 14px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:none}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-heading {display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:center;min-width:0;max-width:none;align-self:center;flex:auto;padding:0;background:none}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-heading small {font-size:11px;letter-spacing:0}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-heading h3 {font-size:17px;white-space:normal;overflow-wrap:anywhere}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-heading>small,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-heading>h3 {grid-column:1}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-source-button {grid-column:2;grid-row:1/3;justify-self:start;min-height:34px;padding:6px 10px;border:1px solid var(--line-strong);border-radius:7px;background:var(--primary-soft);color:var(--primary-strong);font-size:12px;white-space:nowrap}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-source-button:hover {border-color:var(--primary);background:var(--page)}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target>.forecast-status {grid-column:2;grid-row:1;justify-self:end;align-self:center;font-size:11px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-meta {display:flex;grid-column:1/-1;grid-row:auto;flex-wrap:wrap;align-items:center;gap:8px 14px;padding-top:8px;border-top:1px solid var(--line)}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-tabs {display:flex;align-items:center;flex:1 1 auto;gap:16px;width:auto;max-width:100%;margin:0;padding:0;border:0;border-radius:0;background:none;overflow:visible}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-tabs button {min-height:38px;padding:7px 0;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;font-size:13px;box-shadow:none}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-tabs button.active {color:var(--primary-strong);border-bottom-color:var(--primary);background:none;box-shadow:none}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-sources {display:flex;flex:1 1 auto;justify-content:flex-end;min-width:0;flex-wrap:wrap;gap:5px 10px;margin:0}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-target-sources>[data-forecast-reset] {margin-left:0}
+body.forecast-app .forecast-general-settings,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-parameters-pane {min-width:0;margin:0 0 12px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff}
+body.forecast-app .forecast-general-settings .forecast-target-settings {width:100%;min-width:0;flex:auto}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-general-settings .forecast-target-settings .forecast-target-form {display:grid;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:12px 16px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-general-settings .forecast-target-form label {grid-column:auto;min-width:0;gap:5px;font-size:12px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-general-settings .forecast-target-form input,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-general-settings .forecast-target-form select {min-height:38px;font-size:13px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-result-main,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-result-main:has(>.forecast-scale-check:not([hidden])) {grid-template-columns:minmax(0,1fr);gap:12px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-result-main>[data-forecast-region=summary],
+body.forecast-app .forecast-workspace.forecast-studio .forecast-result-main>.forecast-scale-check {grid-column:1/-1;grid-row:auto}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scale-details {min-width:0;grid-column:1/-1;margin:0;border:1px solid var(--line);border-radius:10px;background:#fff;overflow:hidden}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scale-details>summary {min-height:40px;padding:10px 12px;color:var(--muted);font-size:12px;line-height:1.6;cursor:pointer;list-style-position:inside}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scale-details[open]>summary {border-bottom:1px solid var(--line);color:var(--ink)}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scale-details>.forecast-scale-check {margin:0;padding:12px;border:0;border-radius:0;box-shadow:none}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scenarios {grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scenario {border-radius:10px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-scenario-head {padding:10px 12px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-metric-strip {row-gap:10px;padding:12px 2px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-metric.primary strong {font-size:28px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-decision-grid {grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-decision-card {padding:12px;border-radius:10px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-result-chart-scroll .forecast-decision-svg,
+body.forecast-app .forecast-workspace.forecast-studio .forecast-compact-line-scroll svg {height:240px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-parameters-pane .forecast-controls-rail {grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-parameters-pane .forecast-controls-rail>.forecast-scale-check {grid-column:1/-1}
+body.forecast-app .forecast-workspace.forecast-studio .forecast-parameters-pane .forecast-evidence-controls {display:grid;gap:12px}
+body.forecast-app #page:has(>.raw-layout) {overflow:hidden}
+body.forecast-app .raw-layout {height:100%;min-height:0}
+@media(min-width:1700px) {
+  body.forecast-app .workspace {padding:22px 28px}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-general-settings .forecast-target-settings .forecast-target-form {grid-template-columns:repeat(5,minmax(0,1fr))!important}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-result-chart-scroll .forecast-decision-svg,
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-compact-line-scroll svg {height:260px}
+}
+@media(max-width:1100px) {
+  body.forecast-app .topbar {min-height:64px;gap:10px 14px;padding:10px 16px}
+  body.forecast-app .topbar .top-actions {display:none}
+  body.forecast-app .app-shell {grid-template-columns:132px minmax(0,1fr)}
+  body.forecast-app .workspace {padding:14px 16px}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target-sources {justify-content:flex-start;flex-basis:100%}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-decision-grid {grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:700px) {
+  body.forecast-app .topbar {display:flex;gap:10px;min-height:0;padding:10px 12px}
+  body.forecast-app .topbar .brand strong {font-size:17px}
+  body.forecast-app .topbar .topbar-main {flex-basis:100%;margin:0}
+  body.forecast-app .topbar .topbar-end {margin:0;justify-content:flex-start}
+  body.forecast-app .topbar .filters,
+  body.forecast-app .topbar .filters[data-mode=window] {display:flex;flex:1 1 auto;width:100%;min-width:0}
+  body.forecast-app .topbar .filters label:first-child {width:auto;flex:1 1 180px;min-width:0}
+  body.forecast-app .topbar .filters .period-field {width:auto;flex:1 1 150px;min-width:0}
+  body.forecast-app .app-shell {grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  body.forecast-app .module-bar {height:auto;padding:6px 10px;border-right:0;border-bottom:1px solid var(--line);overflow:visible}
+  body.forecast-app .module-bar .module-nav {display:flex;flex-direction:row;flex-wrap:wrap;gap:4px;width:100%;min-width:0;max-width:100%}
+  body.forecast-app .module-bar .module-nav button,
+  body.forecast-app .module-bar .module-nav a {width:auto;min-height:40px;padding:7px 10px;font-size:12px}
+  body.forecast-app .module-bar .module-nav a.forecast-order-link {margin:0;padding:7px 10px;border:1px solid transparent;border-radius:8px}
+  body.forecast-app .workspace {padding:10px}
+  body.forecast-app #page {padding-right:0;scrollbar-gutter:auto}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target {padding:10px;gap:8px}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target-heading h3 {font-size:16px}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target>.forecast-status {max-width:130px;line-height:1.5}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target-tabs {display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;width:100%;flex-basis:100%}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target-tabs button {min-height:42px;width:100%;padding:6px 0;font-size:12px;white-space:normal}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target-sources {gap:5px 8px}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-scenarios,
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-parameters-pane .forecast-controls-rail {grid-template-columns:minmax(0,1fr)}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-general-settings .forecast-target-settings .forecast-target-form {grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-general-settings .forecast-target-form label:has(input[type=date]) {grid-column:1/-1}
+  body.forecast-app .forecast-general-settings,
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-parameters-pane {padding:10px}
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-input-grid input,
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target-form input,
+  body.forecast-app .forecast-workspace.forecast-studio .forecast-target-form select {min-height:40px;font-size:14px}
+}

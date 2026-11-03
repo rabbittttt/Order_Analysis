@@ -24,7 +24,7 @@ from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook, reset_conflict_diagnostics
 from core.forecast_summary import SUMMARY_NAME, visible_target_names
 from core.model_identity import FORECAST_SOURCE_PATH
-from core.renderer import b64gzip, render_dashboard
+from core.renderer import b64gzip, render_dashboard, split_dashboard_pages, write_raw_block_assets
 from core.validation import validate_manifest
 from modules.registry import MODULES
 
@@ -421,7 +421,16 @@ def build(
         validation_seconds = perf_counter() - validation_started
         LOGGER.info("开始写入 HTML（主体 %d 个，看板 %d 个）", len(subjects), len(dashboards))
         stage_started = perf_counter()
-        render_dashboard(manifest, ROOT / "templates", output_file)
+        order_manifest, forecast_manifest, forecast_output = split_dashboard_pages(
+            manifest, output_file, forecast_disabled=disable_sales_forecast
+        )
+        if forecast_manifest["dashboards"]:
+            forecast_manifest["raw_block_urls"] = write_raw_block_assets(raw_blocks, forecast_output)
+        # Publish resources and the destination page before its new entry link.
+        # The diagnostic manifest remains complete for validation and tooling.
+        render_dashboard(forecast_manifest, ROOT / "templates", forecast_output)
+        render_dashboard(order_manifest, ROOT / "templates", output_file)
+        LOGGER.info("独立销量预测看板: %s（底表按需加载，发布时保留 forecast_assets 目录）", forecast_output)
         render_seconds = perf_counter() - stage_started
         output_size = output_file.stat().st_size
         LOGGER.info("生成HTML体积: %.1fMB", output_size / 1024 / 1024)

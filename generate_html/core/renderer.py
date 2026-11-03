@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import gzip
+import hashlib
 import json
 import logging
 import math
@@ -9,6 +10,86 @@ from time import perf_counter
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
+
+
+FORECAST_PAGE_NAME = "鸿蒙智行销量预测.html"
+
+
+def split_dashboard_pages(
+    manifest: dict[str, Any], output_file: Path, *, forecast_disabled: bool = False
+) -> tuple[dict[str, Any], dict[str, Any], Path]:
+    """Derive two presentations of one build without copying/recomputing business data."""
+    forecast_file = output_file.with_name(FORECAST_PAGE_NAME)
+    if forecast_file.resolve() == output_file.resolve():
+        raise ValueError(f"订单看板输出名不能为独立预测看板保留名称：{FORECAST_PAGE_NAME}")
+    boards = manifest.get("dashboards", {})
+    forecast_boards = {
+        key: board for key, board in boards.items()
+        if key.rpartition("|")[2] == "sales_forecast" and not forecast_disabled
+    }
+    order = {
+        **manifest,
+        "app_mode": "order",
+        "dashboards": {key: board for key, board in boards.items()
+                       if key.rpartition("|")[2] != "sales_forecast"},
+    }
+    order.pop("forecast_page", None)
+    if forecast_boards:
+        order["forecast_page"] = forecast_file.name
+    forecast = {
+        **manifest,
+        "app_mode": "forecast",
+        "order_page": output_file.name,
+        "forecast_legacy_page": output_file.name,
+        "forecast_disabled": forecast_disabled,
+        "meta": {**manifest.get("meta", {}), "title": "鸿蒙智行销量预测"},
+        "config": {**manifest.get("config", {}), "title": "鸿蒙智行销量预测",
+                   "module_order": ["sales_forecast", "raw"]},
+        "subjects": [{**subject, "modules": [module for module in subject.get("modules", [])
+                                               if module in {"sales_forecast", "raw"}]}
+                     for subject in manifest.get("subjects", [])],
+        "dashboards": forecast_boards,
+        "chart_assets": {},
+        "raw_files": manifest.get("raw_files", []) if forecast_boards else [],
+        "raw_blocks": {},
+        "raw_block_urls": {},
+    }
+    forecast.pop("forecast_page", None)
+    return order, forecast, forecast_file
+
+
+def _write_text_atomic(output_file: Path, text: str) -> None:
+    """Write beside the destination, then replace only after the complete write."""
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=output_file.parent, prefix=f".{output_file.name}.",
+                            suffix=".tmp", delete=False) as staging:
+        temporary = Path(staging.name)
+    try:
+        temporary.write_text(text, encoding="utf-8", newline="")
+        temporary.replace(output_file)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def write_raw_block_assets(raw_blocks: dict[str, str], output_file: Path) -> dict[str, str]:
+    """Immutable script blocks work from both a static HTTP host and local file URLs."""
+    urls = {}
+    for key, value in raw_blocks.items():
+        script = ("window.DASHBOARD_RAW_B64=window.DASHBOARD_RAW_B64||{};"
+                  f"window.DASHBOARD_RAW_B64[{json.dumps(key)}]={json.dumps(value)};\n")
+        content = script.encode("utf-8")
+        digest = hashlib.sha256(content).hexdigest()
+        relative = Path("forecast_assets") / f"raw-{digest}.js"
+        destination = output_file.parent / relative
+        if destination.exists():
+            # Never replace a published hash URL with different bytes: a cached
+            # old page must always resolve the exact snapshot it was built with.
+            if destination.read_bytes() != content:
+                raise ValueError(f"预测底表资源校验失败，请检查发布目录：{destination}")
+        else:
+            _write_text_atomic(destination, script)
+        urls[key] = relative.as_posix()
+    return urls
 
 
 def b64gzip(text: str) -> str:
@@ -108,17 +189,9 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
     html = html.replace("__DASHBOARD_BLOCKS__", board_payload)
     html = html.replace("__DASHBOARD_JS__", javascript)
     html = html.replace("__BRAND_LOGO__", f"data:image/png;base64,{logo_data}")
-    output_file.parent.mkdir(parents=True, exist_ok=True)
     # Write on the same volume, and close before replacing (Windows). A disk
     # write/replace failure must not truncate the previous usable dashboard.
-    with NamedTemporaryFile(dir=output_file.parent, prefix=f".{output_file.name}.",
-                            suffix=".tmp", delete=False) as staging:
-        temporary = Path(staging.name)
-    try:
-        temporary.write_text(html, encoding="utf-8")
-        temporary.replace(output_file)
-    finally:
-        temporary.unlink(missing_ok=True)
+    _write_text_atomic(output_file, html)
 
     logging.getLogger(__name__).info(
         "HTML输出明细: 公共数据打包 %.2fs | JSON序列化 %.2fs | 看板压缩 %.2fs | 其余输出 %.2fs",

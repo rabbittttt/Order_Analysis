@@ -1,6 +1,6 @@
 // End-to-end interactions on the actual main.py output, with isolated browser storage.
 const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
-const project=path.resolve(__dirname,'../../..'),{chromium}=require(path.join(project,'.test_runtime/node_modules/playwright'));
+const project=path.resolve(__dirname,'../../..'),{chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const out=path.join(project,'.test_outputs/ui_audit_20261002/after');
 const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
 (async()=>{
@@ -35,9 +35,11 @@ const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析
   await page.waitForFunction(()=>!document.querySelector('#toast').classList.contains('show'));
   await page.locator('[data-module="sales_forecast"]').click();await page.waitForSelector('.forecast-workspace');await ready();
   check('新模块从顶部开始',await page.locator('#page').evaluate(n=>n.scrollTop)===0);
-  await page.locator('[data-forecast-stage-switch="steady"]').click();await page.waitForFunction(()=>document.querySelector('#periodContext').textContent.includes('平销'));
-  await page.locator('[data-forecast-stage-switch="launch"]').click();await page.waitForFunction(()=>document.querySelector('#periodContext').textContent==='按预测阶段窗口');
-  check('阶段切换同步顶部周期',await page.locator('#periodContext').innerText()==='按预测阶段窗口');
+  await page.locator('[data-forecast-nav="steady"]').click();await page.waitForFunction(()=>document.querySelector('#periodContext').textContent.includes('平销'));
+  await page.locator('[data-forecast-nav="launch"]').click();await page.waitForFunction(()=>document.querySelector('#periodContext').textContent==='按预测阶段窗口');
+  check('阶段切换同步窗口与侧栏',await page.locator('#periodContext').textContent()==='按预测阶段窗口'&&await page.locator('[data-forecast-nav="launch"]').evaluate(n=>n.classList.contains('active'))&&await page.locator('[data-forecast-stage-pane="launch"]').isVisible());
+  await page.locator('[data-forecast-tab="params"]').click();
+  check('独立参数页可调整车型与预测参数',await page.locator('[data-forecast-target="launchDate"]').isVisible()&&await page.locator('[data-forecast-input="conversion"]').isVisible());
   await page.locator('[data-forecast-tab="evidence"]').click();
   const picker=page.locator('[data-forecast-task="small_progress"] .forecast-chart-picker');
   await picker.locator('summary').click();await picker.locator('[data-reference-search]').fill('M9');
@@ -59,10 +61,10 @@ const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析
   await page.setViewportSize({width:390,height:844});await picker.locator('summary').click();await picker.locator('[data-reference-search]').fill('M9');await picker.scrollIntoViewIfNeeded();
   await page.screenshot({path:path.join(out,'reference-picker-390.png')});
   check('手机参考面板在内容流中',await picker.locator('.forecast-chart-picker-panel').evaluate(n=>getComputedStyle(n).position)==='static');
-  check('手机模块列表显示当前模块',await page.locator('#moduleSelect').isVisible()&&await page.locator('#moduleSelect').inputValue()==='sales_forecast'&&!await page.locator('#moduleNav').isVisible());
-  await page.locator('#moduleSelect').selectOption('raw');await page.waitForSelector('#rawSearch');check('手机可直接到达底表中心',new URL(page.url()).searchParams.get('module')==='raw');
-  await page.locator('#moduleSelect').selectOption('sales_forecast');await page.waitForSelector('.forecast-workspace');
-  await page.setViewportSize({width:1440,height:1000});await page.locator('[data-forecast-stage-switch="launch"]').click();await page.locator('[data-forecast-tab="result"]').click();
+  check('手机导航显示当前预测阶段',await page.locator('#moduleNav').isVisible()&&await page.locator('[data-forecast-nav="launch"]').isVisible()&&await page.locator('[data-forecast-nav="launch"]').evaluate(n=>n.classList.contains('active')));
+  await page.locator('[data-forecast-nav="raw"]').click();await page.waitForSelector('#rawSearch');check('手机可直接到达底表中心',new URL(page.url()).searchParams.get('module')==='raw');
+  await page.locator('[data-forecast-nav="launch"]').click();await page.waitForSelector('.forecast-workspace');
+  await page.setViewportSize({width:1440,height:1000});await page.locator('[data-forecast-nav="launch"]').click();await page.locator('[data-forecast-tab="result"]').click();
   const config=await page.locator('.forecast-workspace').evaluate(n=>JSON.parse(n.dataset.forecastConfig));
   const imported=page.locator('[data-forecast-import="launch"]'),date=config.target.launch_date,name=config.target.name;
   const records=()=>page.evaluate(name=>JSON.parse(localStorage.getItem('harmony-forecast-v1:'+location.pathname)).imports.find(row=>row[0]===name)?.[1]?.rows||[],name);

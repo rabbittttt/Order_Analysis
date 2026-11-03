@@ -23,10 +23,27 @@
     return restore(value.root);
   }
   const DATA = await decompressJson(window.DASHBOARD_DATA_B64);
+  const FORECAST_APP=DATA.app_mode==='forecast';
+  document.body.classList.toggle('forecast-app',FORECAST_APP);
   DATA.dashboard_blocks=window.DASHBOARD_BLOCKS_B64||DATA.dashboard_blocks||{};
   window.DASHBOARD_DATA = DATA;
   const {protectCompletion,distributeInteger,genericDailyShape,genericHourlyCompletion,isKnownAttribute,smallReferenceScore,steadyReferenceScore,completedSmallOrderDays}=window.ForecastMath;
-  const RAW_BLOCKS = window.DASHBOARD_RAW_B64 || {};
+  const RAW_BLOCKS = window.DASHBOARD_RAW_B64 = window.DASHBOARD_RAW_B64 || {};
+  const rawBlockRequests=new Map();
+  async function getRawBlock(key){
+    if(RAW_BLOCKS[key])return RAW_BLOCKS[key];
+    const source=DATA.raw_block_urls?.[key];
+    if(!source)return '';
+    if(!rawBlockRequests.has(key))rawBlockRequests.set(key,new Promise((resolve,reject)=>{
+      const script=document.createElement('script');let timer;
+      const finish=error=>{clearTimeout(timer);script.remove();if(error){rawBlockRequests.delete(key);reject(error)}else resolve(RAW_BLOCKS[key])};
+      script.src=new URL(source,location.href).href;script.async=true;
+      script.onload=()=>finish(RAW_BLOCKS[key]?null:new Error('底表文件内容不完整'));
+      script.onerror=()=>finish(new Error('底表文件加载失败，请确认已部署配套的 forecast_assets 文件夹'));
+      timer=setTimeout(()=>finish(new Error('底表加载超时，请重试')),30000);document.head.append(script);
+    }));
+    return rawBlockRequests.get(key);
+  }
   window.CHART_RENDER_MODE = DATA.config.chart_render_mode || "generated";
   const $ = selector => document.querySelector(selector);
   const displayText = value => String(value ?? "").replaceAll("净大定", "留存大定");
@@ -218,7 +235,7 @@
   const stackedTrendPalette=["#FFF2CC","#E2F0D9","#C8E8E8","#A8D8EA","#A0C1E8","#DCC5ED","#F0C8C8","#F8D8B0"];
   const moduleLabels = DATA.config.module_labels;
   const forecastStages=[{id:"small",label:"小订预测"},{id:"launch",label:"首销预测"},{id:"steady",label:"平销预测"}];
-  const forecastViews=["result","evidence","score"];
+  const forecastViews=FORECAST_APP?["result","params","evidence","score"]:["result","evidence","score"];
   const state = {subject:null,module:"overview",forecastStage:null,forecastStageAuto:true,forecastView:"result",forecastCampaign:null,grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawFreezeRow:true,rawFreezeColumn:false,rawFreezeFirstColumn:true};
   const forecastDrafts=new Map();
   const forecastDraftSelector='[data-forecast-target],[data-forecast-input],[data-forecast-allocation],[data-forecast-ref],[data-forecast-ref-weight],[data-forecast-chart-ref],[data-small-ref],[data-small-weight],[data-small-input],[data-steady-ref],[data-steady-weight],[data-bridge-control],[data-lifecycle-ref],[data-lifecycle-weight],[data-lifecycle-chart-ref]';
@@ -257,7 +274,12 @@
   }
   function loadForecastState(){
     try{
-      const raw=localStorage.getItem(forecastStorageKey);if(!raw)return;
+      let raw=localStorage.getItem(forecastStorageKey),migrated=false;
+      if(raw===null&&FORECAST_APP&&DATA.forecast_legacy_page){
+        const oldPath=new URL(DATA.forecast_legacy_page,location.href).pathname;
+        raw=localStorage.getItem('harmony-forecast-v1:'+oldPath);migrated=raw!==null;
+      }
+      if(!raw)return;
       if(raw.length>8*1024*1024)throw Error('保存的数据过大');
       const saved=JSON.parse(raw);
       if(saved?.version!==1||!['drafts','imports','scopes'].every(key=>Array.isArray(saved[key])&&saved[key].length<=500))throw Error('保存格式不兼容');
@@ -286,6 +308,7 @@
       for(const [key,value] of drafts)forecastDrafts.set(key,value);
       for(const [key,value] of imports)importedForecastRows.set(key,value);
       for(const [key,value] of scopes)forecastImportScopes.set(key,value);
+      if(migrated)persistForecastState();
     }catch(error){forecastStorageWarning='本机保存内容不可读取，已使用系统默认值；原保存内容未删除。'}
   }
   loadForecastState();
@@ -417,7 +440,13 @@
   const sameForecastModel=(leftValue,rightValue,aliases=forecastModelAliases())=>{const left=forecastModelKey(leftValue,aliases),right=forecastModelKey(rightValue,aliases);return !!left&&!!right&&left===right};
   const moduleAvailable=(item,moduleId)=>moduleId==="sales_forecast"
     ?item?.type==="generation"&&(item.modules.includes(moduleId)||DATA.subjects.some(candidate=>candidate.modules.includes("sales_forecast")))
-    :item.modules.includes(moduleId);
+    :DATA.app_mode==='forecast'&&moduleId==='raw'?!!DATA.raw_files?.length:!!item?.modules.includes(moduleId);
+  function forecastPageUrl(){
+    const url=new URL(DATA.forecast_page,location.href);url.searchParams.set('subject',state.subject||'');url.searchParams.set('module','sales_forecast');
+    if(!state.forecastStageAuto&&state.forecastStage)url.searchParams.set('forecastStage',state.forecastStage);
+    url.searchParams.set('forecastView',state.forecastView||'result');if(state.forecastCampaign)url.searchParams.set('forecastCampaign',state.forecastCampaign);
+    return url.href;
+  }
   function forecastDataFromBoard(board){const view=Object.values(board?.views||{})[0],page=Object.values(view?.pages||{})[0];return page?.workspace?.data}
   function linkedForecastData(data){
     const selected=subject();
@@ -510,14 +539,17 @@
   async function init(){
     const params=new URLSearchParams(location.search),requested=params.get("subject");
     const requestedSubject=DATA.subjects.find(item=>item.id===requested||item.name===requested);
-    state.subject=(requestedSubject||DATA.subjects.find(item=>item.modules.includes("overview"))||DATA.subjects[0]).id;
-    state.module=params.get("module")||state.module;
+    state.subject=((FORECAST_APP?requestedSubject?.type==='generation'&&requestedSubject:requestedSubject)||DATA.subjects.find(item=>FORECAST_APP?item.type==='generation'&&moduleAvailable(item,'sales_forecast'):item.modules.includes("overview"))||(FORECAST_APP&&DATA.subjects.find(item=>item.type==='generation'))||DATA.subjects[0]).id;
+    state.module=params.get("module")||(FORECAST_APP?'sales_forecast':state.module);
+    if(FORECAST_APP&&!['raw','sales_forecast'].includes(state.module))state.module='sales_forecast';
     state.grain=params.get("grain")||state.grain;state.period=params.get("period")||state.period;
     readRawLocation(params);
     if(state.module==="launch_rhythm"&&!params.get("grain"))state.grain="day";
     if(forecastStages.some(item=>item.id===params.get("forecastStage"))){state.forecastStage=params.get("forecastStage");state.forecastStageAuto=false}
     state.forecastCampaign=params.get("forecastCampaign")||null;
     if(forecastViews.includes(params.get("forecastView")))state.forecastView=params.get("forecastView");
+    if(!FORECAST_APP&&DATA.forecast_page&&state.module==='sales_forecast'&&moduleAvailable(subject(),'sales_forecast')){location.replace(forecastPageUrl());return;}
+    if(FORECAST_APP){document.title='鸿蒙智行 · 销量预测';$('.brand strong').textContent=document.title;$('#subjectSelect').setAttribute('aria-label','预测车型');}
     $("#updatedAt").textContent=`生成时间 ${DATA.meta.generated_at.replace("T"," ")}`;
     bindStatic();renderSubjectSelect();if(await ensureState()===false)return;await renderAll();syncUrl("replace");
   }
@@ -562,6 +594,7 @@
   async function ensureState(){
     const revision=ensureState.revision=(ensureState.revision||0)+1;
     let item=subject();
+    if(DATA.app_mode==='forecast'&&(DATA.forecast_disabled||!Object.keys(DATA.dashboard_blocks||{}).some(key=>key.endsWith('|sales_forecast')))){state.module='sales_forecast';return true;}
     if(!moduleAvailable(item,state.module))state.module=item.modules.find(id=>id!=="raw"&&moduleAvailable(item,id))||"raw";
     if(state.module==="raw")return true;
     const subjectId=state.subject,moduleId=state.module;
@@ -578,7 +611,7 @@
   }
   function renderSubjectSelect(){
     const order=[["group","集团"],["brand","品牌"],["generation","代际"]];
-    const subjects=DATA.subjects;
+    const subjects=FORECAST_APP?DATA.subjects.filter(item=>item.type==='generation'):DATA.subjects;
     $("#subjectSelect").innerHTML=order.map(([type,label])=>`<optgroup label="${label}">${subjects.filter(item=>item.type===type).map(item=>`<option value="${item.id}">${esc(item.name)}</option>`).join("")}</optgroup>`).join("");
     $("#subjectSelect").value=state.subject;
   }
@@ -634,11 +667,31 @@
   function applyForecastView(root,id){
     if(!root||!forecastViews.includes(id))return;
     state.forecastView=id;
+    if(FORECAST_APP){document.body.dataset.forecastView=id;root.querySelector('.forecast-general-settings')?.toggleAttribute('hidden',id!=='params');}
     const stage=forecastStages.some(item=>item.id===state.forecastStage)?state.forecastStage:"launch",prefix=stage==="launch"?"forecast":`${stage}-forecast`;
     root.querySelectorAll('[data-forecast-tab]').forEach(button=>{const active=button.dataset.forecastTab===id;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.setAttribute('aria-controls',`${prefix}-pane-${button.dataset.forecastTab}`);button.tabIndex=active?0:-1});
     root.querySelectorAll('[data-forecast-pane]').forEach(pane=>pane.classList.toggle('active',pane.dataset.forecastPane===id));
     root.querySelectorAll('[data-lifecycle-subpane]').forEach(pane=>pane.classList.toggle('active',pane.dataset.lifecycleSubpane===`${stage}-${id}`));
     if(stage==='launch'&&id==='score')root._renderLaunchScoreDashboard?.();
+  }
+  function prepareForecastStandalone(root){
+    if(!root)return;
+    root.querySelector('.forecast-target-heading').insertAdjacentHTML('beforeend','<button type="button" class="forecast-source-button" data-workspace-source>来源数据</button>');
+    const evidenceTab=root.querySelector('[data-forecast-tab="evidence"]');
+    evidenceTab.insertAdjacentHTML('beforebegin','<button id="forecast-tab-params" role="tab" aria-selected="false" tabindex="-1" data-forecast-tab="params">参数配置</button>');
+    const settings=root.querySelector('.forecast-target-settings'),general=document.createElement('section');
+    general.className='forecast-general-settings forecast-parameters-pane';general.setAttribute('aria-label','车型与时间参数');
+    general.hidden=state.forecastView!=='params';general.append(settings);root.querySelector('.forecast-target').after(general);
+    for(const stage of forecastStages){
+      const scope=root.querySelector(`[data-forecast-stage-pane="${stage.id}"]`),controls=scope?.querySelector('.forecast-evidence-controls');if(!controls)continue;
+      const pane=document.createElement('section'),launch=stage.id==='launch';
+      pane.id=`${launch?'forecast':stage.id+'-forecast'}-pane-params`;pane.setAttribute('aria-labelledby','forecast-tab-params');pane.setAttribute('role','tabpanel');
+      pane.className=`forecast-parameters-pane ${launch?'forecast-pane':'forecast-lifecycle-subpane'}${state.forecastView==='params'?' active':''}`;
+      pane.setAttribute(launch?'data-forecast-pane':'data-lifecycle-subpane',launch?'params':`${stage.id}-params`);
+      controls.parentElement.before(pane);pane.append(controls);
+    }
+    const scale=root.querySelector('.forecast-scale-check');
+    if(scale){const details=document.createElement('details');details.className='forecast-scale-details';const summary=document.createElement('summary');summary.textContent='总体量级合理性校验';details.append(summary);scale.before(details);details.append(scale);}
   }
   async function activateForecastStage(id,writeHistory=true){
     if(!forecastStages.some(item=>item.id===id))return;
@@ -650,10 +703,25 @@
     const owner=DATA.subjects.find(item=>item.modules.includes("sales_forecast")),source=forecastDataFromBoard(boardCache[`${owner?.id}|sales_forecast`]);
     if(await renderFilters()===false)return;
     if((source?.targets||[]).some(t=>t.secondary_generation&&sameForecastModel(t.primary_generation,subject()?.name))){captureForecastDraft();await renderPage();}
+    if(FORECAST_APP)renderNav();
     if(writeHistory)syncUrl("push");
   }
   function renderNav(){
     const item=subject();
+    if(FORECAST_APP){
+      const options=[...forecastStages.map(stage=>({id:stage.id,label:stage.label})),{id:'raw',label:'底表中心'}];
+      $('#moduleSelect').innerHTML=options.map(option=>`<option value="${option.id}">${option.label}</option>`).join('');
+      $('#moduleSelect').value=state.module==='raw'?'raw':state.forecastStage||'launch';
+      $('#moduleSelect').onchange=event=>$('#moduleNav').querySelector(`[data-forecast-nav="${event.target.value}"]`)?.click();
+      $('#moduleNav').innerHTML=options.map(option=>`<button type="button" data-forecast-nav="${option.id}" class="${(option.id==='raw'?state.module==='raw':state.module==='sales_forecast'&&state.forecastStage===option.id)?'active':''}">${option.label}</button>`).join('')+`<a class="forecast-order-link" href="${esc(new URL(DATA.order_page||'鸿蒙智行订单分析汇总.html',location.href).href)}">返回订单分析</a>`;
+      const link=$('#moduleNav .forecast-order-link'),back=new URL(link.href);back.searchParams.set('subject',state.subject);back.searchParams.set('module','overview');link.href=back.href;
+      $('#moduleNav').onclick=async event=>{
+        const button=event.target.closest('[data-forecast-nav]');if(!button)return;captureForecastDraft();const id=button.dataset.forecastNav;
+        if(id==='raw'){state.module='raw';if(await ensureState()===false)return;await renderAll();syncUrl('push');}
+        else if(state.module!=='sales_forecast'){state.module='sales_forecast';state.forecastStage=id;state.forecastStageAuto=false;if(await ensureState()===false)return;await renderAll();syncUrl('push');}
+        else await activateForecastStage(id);
+      };return;
+    }
     $('#moduleSelect').innerHTML=DATA.config.module_order.map(id=>`<option value="${esc(id)}" ${moduleAvailable(item,id)?'':'disabled'}>${esc(moduleLabels[id])}${moduleAvailable(item,id)?'':'（当前主体不可用）'}</option>`).join('');
     $('#moduleSelect').value=state.module;
     $('#moduleSelect').onchange=event=>$('#moduleNav').querySelector(`[data-module="${event.target.value}"]`)?.click();
@@ -665,7 +733,7 @@
     $("#moduleNav").onclick=async event=>{
       const button=event.target.closest("[data-module]");
       if(!button||button.disabled||button.dataset.module===state.module)return;
-      captureForecastDraft();state.module=button.dataset.module;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(state.module==="launch_rhythm")state.grain="day";if(await ensureState()===false)return;await renderAll();syncUrl("push");
+      captureForecastDraft();if(button.dataset.module==='sales_forecast'&&DATA.forecast_page){state.forecastStageAuto=true;location.assign(forecastPageUrl());return;}state.module=button.dataset.module;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(state.module==="launch_rhythm")state.grain="day";if(await ensureState()===false)return;await renderAll();syncUrl("push");
     };
   }
   function parseDay(text){
@@ -739,11 +807,12 @@
     if(state.module==="raw"){await renderRaw();return}
     const board=await getDashboard(),page=board?.views?.[state.grain]?.pages?.[state.period];
     if(revision!==pageRevision||moduleId!==state.module||subjectId!==state.subject)return;
-    if(!board||!page){$("#page").innerHTML='<div class="empty-page">当前主体暂无该分析</div>';return}
+    if(!board||!page){$("#page").innerHTML=`<div class="empty-page">${FORECAST_APP&&DATA.forecast_disabled?'本次生成已关闭销量预测，请启用后重新生成。':'当前主体暂无该分析'}</div>`;return}
     if(page.layout==="workspace"&&page.workspace){
       const workspace=state.module==="sales_forecast"?{...page.workspace,data:linkedForecastData(page.workspace.data)}:page.workspace;
       if(state.module==="sales_forecast")workspace.source=linkedForecastSource(workspace);
       $("#page").innerHTML=renderWorkspacePage(workspace);
+      if(FORECAST_APP)prepareForecastStandalone($('#page .forecast-workspace'));
       if(state.module!=="sales_forecast")document.querySelector("[data-workspace-source]")?.addEventListener("click",()=>jumpToSource(workspace.source));
       bindForecastWorkspaceV2();restoreForecastDraft();bindReferencePickers($('#page'));
       return;
@@ -2010,7 +2079,12 @@
       const lockInput=root.querySelector('[data-forecast-input="lock"]'),lockHint=lockInput?.closest('.forecast-common-lock')?.querySelector('em');
       root._forecastDailyEvidence.targetFactor=index=>bridgeSettings(root,'launch',0).factors[calendarType(target.launchDate,index).type]||1;
       if(actual){target.selectedSource=actual.selected_source||'missing';target.selectedSourceLabel=actual.selected_source_label||'数据缺失';target.fieldSources=actual.field_sources||{};target.missingFields=actual.missing_fields||[];target.dataMissing=!!actual.data_missing;target.sourceLatestDate=actual.source_latest_date||''}
-      const sourceButton=document.querySelector('[data-workspace-source]');if(sourceButton)sourceButton.onclick=()=>jumpToSource(actual?.day_source||data.history_source);
+      const sourceButton=document.querySelector('[data-workspace-source]');if(sourceButton)sourceButton.onclick=()=>{
+        let source=actual?.day_source||data.history_source;
+        if(FORECAST_APP&&state.forecastStage==='small')source=Object.entries(actual?.small_daily_sources||{}).sort(([a],[b])=>b.localeCompare(a)).map(([,value])=>value).find(value=>value?.file&&value?.sheet)||data.small_order_source||source;
+        if(FORECAST_APP&&state.forecastStage==='steady'){const steady=(data.steady_history||[]).find(item=>sameModel(item.generation||item.model,target.primaryGeneration||target.name));if(steady?.source_file&&steady?.source_sheet)source={file:steady.source_file,sheet:steady.source_sheet};}
+        jumpToSource(source);
+      };
       const timeSummary=root.querySelector('[data-forecast-time-summary]');if(timeSummary){const stageNow=absoluteStage(target),generated=String(DATA.meta?.generated_at||'').replace('T',' ').slice(0,16);timeSummary.textContent=`判定日期${today}（数据生成于${generated||'未知'}）；小订窗口 ${target.smallStartDate||'未维护'} ~ ${target.smallEndDate||'未维护'}（${target.smallDateSourceLabel||'来源缺失'}）；首销窗口 ${target.launchDate||'未维护'} ~ ${stageNow.end||'未维护'}，共${target.days}天（${target.dateSourceLabel}）；平销自 ${target.steadyStartDate||'缺失'} 起（${target.steadyDateSourceLabel||'来源缺失'}）`}
       refreshForecastHeaderBrief(root);
       const indexedDays=[...(actual?.days||[])].filter(row=>row.date&&row.date<=today).map(row=>({...row,index:dayIndexForDate(target.launchDate,row.date)})).filter(row=>row.index>=0&&row.index<target.days).sort((a,b)=>a.index-b.index),todayIndex=stageInfo.key==='active'?stageInfo.day-1:-1,todayRow=indexedDays.find(row=>row.index===todayIndex&&row.date===today),latestHourly=[...(actual?.hourly_days||[])].filter(row=>row.date===today).sort((a,b)=>Number(a.last_hour||0)-Number(b.last_hour||0)).at(-1);let partial=null;
@@ -2298,13 +2372,19 @@
   async function loadRawRows(fileIndex,sheetIndex){
     const key=`${fileIndex}|${sheetIndex}`;
     if(rawRowsKey===key)return rawRowsCache;
-    const b64=RAW_BLOCKS[key]||"";
-    return b64?((await decompressJson(b64)).rows||[]):[];
+    const b64=RAW_BLOCKS[key]||await getRawBlock(key);
+    try{return b64?((await decompressJson(b64)).rows||[]):[]}
+    catch(error){delete RAW_BLOCKS[key];rawBlockRequests.delete(key);throw error;}
   }
   function visibleRawRows(rows,query){const header=rows.length?[rows[0]]:[];return[...header,...filterRawRows(rows.slice(1),query)]}
   async function renderRaw(){
     const revision=++rawRenderRevision,fileIndex=state.rawFile,sheetIndex=state.rawSheet,file=DATA.raw_files[fileIndex]||DATA.raw_files[0],sheet=file?.sheets[sheetIndex]||file?.sheets[0];
-    const rows=await loadRawRows(fileIndex,sheetIndex);
+    let rows;
+    try{rows=await loadRawRows(fileIndex,sheetIndex)}catch(error){
+      if(revision!==rawRenderRevision||state.module!=='raw'||fileIndex!==state.rawFile||sheetIndex!==state.rawSheet)return;
+      $('#page').innerHTML=`<div class="empty-page" role="alert"><p>${esc(error.message)}</p><button type="button" data-raw-retry>重新加载底表</button></div>`;
+      $('[data-raw-retry]').onclick=()=>renderRaw();return;
+    }
     if(revision!==rawRenderRevision||state.module!=="raw"||fileIndex!==state.rawFile||sheetIndex!==state.rawSheet)return;
     // Commit export data only with the matching visible sheet. A stale async
     // read must not replace the current page's cache after its revision check.
@@ -2365,10 +2445,10 @@
     downloadBlob(blob,`${base}_${(sheet?.name||"Sheet").replace(/[\\/:*?\"<>|]/g,"_")}.csv`);showToast(`已导出 ${rows.length} 行 CSV`);
   }
   async function exportRawWorkbook(file,button){
-    const b64=RAW_BLOCKS[file?.workbook_key];
-    if(!b64){showToast('整表文件不可用，请重新生成看板后重试');return}
     button.disabled=true;button.textContent='正在导出…';
     try{
+      const b64=RAW_BLOCKS[file?.workbook_key]||await getRawBlock(file?.workbook_key);
+      if(!b64)throw new Error('整表文件不可用');
       // Yield before decoding so the loading state is painted. Chunking avoids
       // allocating another full-size binary string for a large workbook.
       await new Promise(resolve=>setTimeout(resolve,0));
