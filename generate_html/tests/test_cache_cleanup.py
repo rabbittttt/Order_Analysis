@@ -80,7 +80,10 @@ class CacheCleanupTests(unittest.TestCase):
             with self.subTest(error=type(error).__name__, warnings=warnings), TemporaryDirectory() as directory:
                 root = Path(directory)
                 cache = self.make_files(root)
-                args = argparse.Namespace(input=root, output=root / "dashboard.html", debug=False, check=True, no_open=True, disable_sales_forecast=False)
+                shared = root / "shared-input"
+                shared.mkdir()
+                shared_cache = self.make_files(shared)
+                args = argparse.Namespace(input=shared, output=root / "dashboard.html", debug=False, check=True, no_open=True, disable_sales_forecast=False)
                 with ExitStack() as stack:
                     stack.enter_context(patch.object(generator, "parse_args", return_value=args))
                     stack.enter_context(patch.object(generator, "configure_runtime", return_value=root / "log" / "run.log"))
@@ -92,6 +95,7 @@ class CacheCleanupTests(unittest.TestCase):
                     else:
                         self.assertEqual(generator.main(), expected)
                 self.assertFalse(cache.exists())
+                self.assertTrue(shared_cache.exists())
                 self.assertTrue((root / "source.xlsx").exists())
 
 

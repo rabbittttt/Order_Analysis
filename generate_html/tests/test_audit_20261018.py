@@ -115,7 +115,7 @@ class GenerationOutcomeTests(TestCase):
              patch.object(generator.webbrowser, 'open', return_value=True) as browser, \
              self.assertLogs(generator.LOGGER, level='INFO') as captured:
             code = generator.main()
-        cleanup.assert_called_once_with(args.input)
+        cleanup.assert_called_once_with(args.output.parent)
         return code, captured.output, startfile, browser
 
     def test_non_strict_run_with_module_or_excel_error_is_not_success(self):

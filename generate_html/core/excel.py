@@ -1439,8 +1439,9 @@ class WorkbookItem:
 
 
 class WorkbookStore:
-    def __init__(self, input_dir: Path):
+    def __init__(self, input_dir: Path, *, cache_dir: Path | None = None):
         self.input_dir = input_dir
+        self.cache_dir = cache_dir
         self.items: list[WorkbookItem] = []
         self.chart_assets: dict[str, str] = {}
         self.load_errors: list[str] = []
@@ -1468,7 +1469,7 @@ class WorkbookStore:
             LOGGER.warning("输入目录中没有找到 .xlsx 文件: %s", self.input_dir)
         for path in paths:
             try:
-                workbook = (load_data_workbook(path, self.input_dir / ".cache" / "excel")
+                workbook = (load_data_workbook(path, self.cache_dir)
                             if data_only_view else load_workbook(path, data_only=True, read_only=False))
                 self.items.append(WorkbookItem(path=path, workbook=workbook))
                 LOGGER.debug("已读取 Excel: %s（%d 个 Sheet）", path.name, len(workbook.sheetnames))

@@ -35,7 +35,7 @@ class ForecastSourceLocationTests(TestCase):
                                         side_effect=lambda manifest, templates, output:
                                         output.write_text('generated', encoding='utf-8')))
 
-    def test_source_and_summary_are_raw_only_and_remain_exportable(self):
+    def test_forecast_workbooks_are_excluded_and_remain_unchanged(self):
         for disabled in (False, True):
             with self.subTest(disabled=disabled), TemporaryDirectory() as folder, ExitStack() as stack:
                 root = Path(folder)
@@ -64,12 +64,8 @@ class ForecastSourceLocationTests(TestCase):
                 self.assertEqual([s['name'] for s in manifest['subjects']], ['鸿蒙智行'])
                 raw_files = manifest['raw_files']
                 self.assertCountEqual([file['name'] for file in raw_files],
-                                      [ordinary.name, *auxiliaries])
+                                      [ordinary.name])
                 for name, sheet in auxiliaries.items():
-                    raw = next(file for file in raw_files if file['name'] == name)
-                    self.assertEqual([s['source_sheet'] for s in raw['sheets']], [sheet])
-                    self.assertEqual(base64.b64decode(manifest['raw_blocks'][raw['workbook_key']]),
-                                     original_bytes[name])
                     self.assertEqual((root / name).read_bytes(), original_bytes[name])
 
     def test_auxiliary_workbooks_alone_do_not_count_as_analysis_inputs(self):

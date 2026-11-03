@@ -18,13 +18,14 @@ class ForecastDisabledRunTests(unittest.TestCase):
         with patch.object(sys, "argv", ["main.py", "--disable-sales-forecast"]):
             self.assertTrue(generator.parse_args().disable_sales_forecast)
 
-    def test_disabled_run_preserves_navigation_and_other_modules(self):
+    def test_order_build_never_runs_forecast_even_with_legacy_config(self):
         for disabled in (True, False):
             with self.subTest(disabled=disabled), TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 output = root / "dashboard.html"
                 config = generator.load_config(generator.ROOT / "config.json")
                 config["refresh_sales_forecast_data_before_build"] = True
+                config["module_order"] = [*config["module_order"], "sales_forecast"]
                 original = dict(config)
                 subjects = [Subject("group", "鸿蒙智行", "group"), Subject("model", "问界M9", "generation")]
                 store = Mock(items=[Mock()], load_errors=[], multi_source_groups={}, chart_assets={})
@@ -46,18 +47,22 @@ class ForecastDisabledRunTests(unittest.TestCase):
                 stack.enter_context(patch.object(generator, "raw_tables", return_value=([], {})))
                 stack.enter_context(patch.object(generator, "add_kpi_comparisons"))
                 stack.enter_context(patch.object(generator, "validate_manifest", return_value=[]))
-                stack.enter_context(patch.object(generator, "render_dashboard", side_effect=lambda *args: output.write_text("generated", encoding="utf-8")))
+                render = stack.enter_context(patch.object(generator, "render_dashboard", side_effect=lambda *args: output.write_text("generated", encoding="utf-8")))
                 manifest, _ = generator.build(root, output, disable_sales_forecast=disabled)
                 self.assertEqual(config, original)
-                self.assertIn("sales_forecast", manifest["config"]["module_order"])
-                self.assertEqual(refresh.call_args.args[0]["refresh_sales_forecast_data_before_build"], not disabled)
-                self.assertEqual(forecast.build.call_count, 0 if disabled else len(subjects))
+                self.assertEqual(render.call_count, 1)
+                self.assertEqual(render.call_args.args[0]["app_mode"], "order")
+                self.assertEqual(render.call_args.args[2], output)
+                self.assertFalse((root / "forecast_assets").exists())
+                self.assertNotIn("sales_forecast", manifest["config"]["module_order"])
+                refresh.assert_not_called()
+                self.assertEqual(forecast.build.call_count, 0)
                 for subject in manifest["subjects"]:
-                    self.assertEqual("sales_forecast" in subject["modules"], not disabled)
+                    self.assertNotIn("sales_forecast", subject["modules"])
                     self.assertIn("overview", subject["modules"])
                     self.assertIn("raw", subject["modules"])
                     self.assertIn(subject["id"] + "|overview", manifest["dashboards"])
-                    self.assertEqual(subject["id"] + "|sales_forecast" in manifest["dashboards"], not disabled)
+                    self.assertNotIn(subject["id"] + "|sales_forecast", manifest["dashboards"])
 
 
 if __name__ == "__main__":

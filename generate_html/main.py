@@ -25,7 +25,7 @@ from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook, reset_conflict_diagnostics
 from core.forecast_summary import SUMMARY_NAME, visible_target_names
 from core.model_identity import FORECAST_SOURCE_PATH
-from core.renderer import b64gzip, render_dashboard, split_dashboard_pages, write_raw_block_assets
+from core.renderer import b64gzip, render_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
 
@@ -315,23 +315,18 @@ def build(
     LOGGER.info("输入目录: %s", input_dir)
     LOGGER.info("输出文件: %s", output_file)
     config = load_config(ROOT / "config.json")
-    if disable_sales_forecast:
-        config["refresh_sales_forecast_data_before_build"] = False
-        LOGGER.info("销量预测：已按本次运行参数禁用，导航保留置灰，跳过预测刷新及计算")
+    # Forecast now has its own project; legacy flags/config cannot re-enable it here.
+    config["module_order"] = [name for name in config.get("module_order", []) if name != "sales_forecast"]
+    config["module_labels"] = {name: label for name, label in config.get("module_labels", {}).items() if name != "sales_forecast"}
+    config.pop("refresh_sales_forecast_data_before_build", None)
+    config.pop("forecast_as_of_date", None)
+    order_modules = [module for module in MODULES if module.id != "sales_forecast"]
     if config.get("chart_render_mode") not in {"original", "generated"}:
         raise ValueError("config.json 的 chart_render_mode 必须是 original 或 generated")
-    if date.today().year not in PUBLISHED_YEARS:
-        LOGGER.warning(
-            "[日历校验] %d年中国法定节假日数据尚未维护；预测日期将仅按自然周判断工作日/周末",
-            date.today().year,
-        )
     manifest_mode = config.get("build_manifest_mode", "compact")
     if manifest_mode not in {"compact", "full", "off"}:
         raise ValueError("config.json 的 build_manifest_mode 必须是 compact、full 或 off")
-    stage_started = perf_counter()
-    refresh_sales_forecast_data(config, input_dir)
-    refresh_seconds = perf_counter() - stage_started
-    store = WorkbookStore(input_dir)
+    store = WorkbookStore(input_dir, cache_dir=output_file.parent / ".cache" / "excel")
     stage_started = perf_counter()
     raw_only_names = (SUMMARY_NAME, FORECAST_SOURCE_PATH.name)
     store.load(exclude_names=set(raw_only_names), data_only_view=config.get("chart_render_mode") == "generated")
@@ -341,7 +336,7 @@ def build(
         raise RuntimeError(f"没有成功读取任何Excel，无法生成看板：{details}")
     try:
         stage_started = perf_counter()
-        subjects = discover_subjects(store, forecast_target_names(input_dir / SUMMARY_NAME))
+        subjects = discover_subjects(store)
         discovery_seconds = perf_counter() - stage_started
         LOGGER.info("已识别分析主体 %d 个", len(subjects))
         LOGGER.debug("分析主体明细: %s", "、".join(subject.name for subject in subjects))
@@ -350,17 +345,13 @@ def build(
         runtime_warnings = list(store.load_errors)
         module_seconds: dict[str, float] = defaultdict(float)
         module_builds: dict[str, int] = defaultdict(int)
-        for module in MODULES:
-            if module.id == "sales_forecast":
-                module.summary_path = input_dir / SUMMARY_NAME
+        for module in order_modules:
             set_config = getattr(module, "set_config", None)
             if set_config:
                 set_config(config)
         for subject in subjects:
             matched_modules = []
-            for module in MODULES:
-                if disable_sales_forecast and module.id == "sales_forecast":
-                    continue
+            for module in order_modules:
                 if hasattr(module, "set_dashboards"):
                     module.set_dashboards(dashboards)
                 module_started = perf_counter()
@@ -381,11 +372,11 @@ def build(
                 matched_modules.append(module.label)
             LOGGER.debug("主体映射完成: %s -> %s", subject.name, "、".join(matched_modules) if matched_modules else "仅底表")
         configured_order = config.get("module_order") or []
-        known_modules = {module.id for module in MODULES} | {"raw"}
+        known_modules = {module.id for module in order_modules} | {"raw"}
         unknown_modules = [module for module in configured_order if module not in known_modules]
         if unknown_modules:
             LOGGER.warning("[\u914d\u7f6e\u6821\u9a8c] module_order \u5305\u542b\u672a\u77e5\u6a21\u5757: %s", "\u3001".join(unknown_modules))
-        missing_modules = [module.id for module in MODULES if module.id not in configured_order]
+        missing_modules = [module.id for module in order_modules if module.id not in configured_order]
         if missing_modules:
             LOGGER.warning("[\u914d\u7f6e\u6821\u9a8c] module_order \u672a\u914d\u7f6e\u5df2\u6ce8\u518c\u6a21\u5757: %s", "\u3001".join(missing_modules))
         set_capabilities(subjects, capabilities, configured_order)
@@ -394,15 +385,11 @@ def build(
             LOGGER.info("多文件来源：%d类，共%d个文件匹配项参与合并；详细文件名可使用 --debug 查看",
                         len(store.multi_source_groups), sum(store.multi_source_groups.values()))
         stage_started = perf_counter()
-        # Forecast source/summary sheets belong in the raw center, but must not
-        # create ordinary analysis subjects or feed unrelated dashboard modules.
-        for name in raw_only_names:
-            raw_path = input_dir / name
-            if raw_path.exists() and all(item.path.resolve() != raw_path.resolve() for item in store.items):
-                store.items.append(WorkbookItem(raw_path, load_data_workbook(raw_path, input_dir / ".cache" / "excel")))
+        # Forecast-only workbooks stay outside the order report and its raw center.
         raw_files, raw_blocks = raw_tables(store)
         raw_seconds = perf_counter() - stage_started
         manifest = {
+            "app_mode": "order",
             "meta": {
                 "title": config["title"],
                 "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -422,16 +409,7 @@ def build(
         validation_seconds = perf_counter() - validation_started
         LOGGER.info("开始写入 HTML（主体 %d 个，看板 %d 个）", len(subjects), len(dashboards))
         stage_started = perf_counter()
-        order_manifest, forecast_manifest, forecast_output = split_dashboard_pages(
-            manifest, output_file, forecast_disabled=disable_sales_forecast
-        )
-        if forecast_manifest["dashboards"]:
-            forecast_manifest["raw_block_urls"] = write_raw_block_assets(raw_blocks, forecast_output)
-        # Publish resources and the destination page before its new entry link.
-        # The diagnostic manifest remains complete for validation and tooling.
-        render_dashboard(forecast_manifest, ROOT / "templates", forecast_output)
-        render_dashboard(order_manifest, ROOT / "templates", output_file)
-        LOGGER.info("独立销量预测看板: %s（底表按需加载，发布时保留 forecast_assets 目录）", forecast_output)
+        render_dashboard(manifest, ROOT / "templates", output_file)
         render_seconds = perf_counter() - stage_started
         output_size = output_file.stat().st_size
         LOGGER.info("生成HTML体积: %.1fMB", output_size / 1024 / 1024)
@@ -474,9 +452,8 @@ def build(
         )
         LOGGER.info("模块耗时: %s", module_summary)
         LOGGER.info(
-            "性能汇总: 预测刷新 %.2fs | Excel加载 %.2fs | 主体识别 %.2fs | 模块生成 %.2fs | "
+            "性能汇总: Excel加载 %.2fs | 主体识别 %.2fs | 模块生成 %.2fs | "
             "底表整理 %.2fs | 数据校验 %.2fs | HTML输出 %.2fs | 清单/诊断 %.2fs | 其他编排 %.2fs | 总计 %.2fs",
-            refresh_seconds,
             load_seconds,
             discovery_seconds,
             sum(module_seconds.values()),
@@ -484,7 +461,7 @@ def build(
             validation_seconds,
             render_seconds,
             manifest_seconds,
-            perf_counter() - build_started - sum((refresh_seconds, load_seconds, discovery_seconds, sum(module_seconds.values()), raw_seconds, validation_seconds, render_seconds, manifest_seconds)),
+            perf_counter() - build_started - sum((load_seconds, discovery_seconds, sum(module_seconds.values()), raw_seconds, validation_seconds, render_seconds, manifest_seconds)),
             perf_counter() - build_started,
         )
         return manifest, warnings
@@ -506,13 +483,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--disable-sales-forecast",
         action="store_true",
-        help="仅本次生成禁用销量预测，保留置灰导航，并跳过预测汇总刷新及预测计算。",
+        help=argparse.SUPPRESS,  # Accepted for old launchers; this project is always order-only.
     )
     return parser.parse_args()
 
 
 def cleanup_input_cache(input_dir: Path) -> None:
-    """Remove only this input directory's real .cache folder after the run."""
+    """Remove only the supplied local output directory's real .cache folder."""
     cache_dir = input_dir / ".cache"
     try:
         input_root = input_dir.resolve()
@@ -541,7 +518,7 @@ def main() -> int:
         LOGGER.error("运行日志: %s", log_file)
         return 1
     finally:
-        cleanup_input_cache(args.input)
+        cleanup_input_cache(args.output.parent)
     errors = DIAGNOSTIC_COUNTS["ERROR"]
     if errors:
         LOGGER.error("生成不完整：发生%d条错误；已保留可用HTML供排查，不自动打开: %s",

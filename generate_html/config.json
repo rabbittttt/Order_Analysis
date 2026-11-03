@@ -5,12 +5,7 @@
   //   generated = 用内置 SVG 根据图表数据重绘（推荐，支持周期切换与数据标签）
   //   original  = 嵌入 Excel 中的原始图表图片
   "chart_render_mode": "generated",
-  // 运行 main.py 时，是否先根据 output_file/小订及首销数据整理.xlsx
-  // 自动刷新鸿蒙智行销量数据汇总.xlsx，包含历史参考和当前订单；false 时可单独运行刷新脚本。
-  "refresh_sales_forecast_data_before_build": true,
-  // 销量预测阶段判定日期：留空使用运行当天；填写 YYYY-MM-DD 可复盘指定日期的阶段状态。
-  // 仅影响阶段判断、已发生/未来日期切分和预测窗口，不改写原始订单数据。
-  "forecast_as_of_date": "",
+  // 销量预测已迁至同级独立项目，本项目只生成订单分析。
   // 构建清单：off=不输出（推荐），compact=紧凑JSON，full=缩进格式。
   // 不影响最终HTML和运行日志。
   "build_manifest_mode": "off",
@@ -19,7 +14,6 @@
   "module_order": [
     "overview",
     "channel_analysis",
-    "sales_forecast",
     "cancellation",
     "launch_rhythm",
     "conversion",
@@ -35,7 +29,6 @@
   "module_labels": {
     "overview": "订单总览",
     "channel_analysis": "渠道分析",
-    "sales_forecast": "销量预测",
     "order_mix": "大定选配",
     "lock_mix": "锁单选配",
     "small_order_mix": "小订选配",
