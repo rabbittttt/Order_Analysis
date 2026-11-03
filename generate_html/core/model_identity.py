@@ -5,10 +5,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from core.data_paths import orders_input_directory
+
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
-FORECAST_SOURCE_PATH = PROJECT_ROOT / "output_file" / "小订及首销数据整理.xlsx"
+FORECAST_SOURCE_PATH = orders_input_directory(PROJECT_ROOT) / "小订及首销数据整理.xlsx"
 
 
 _REMOVABLE_WORDS = re.compile(r"鸿蒙智行|车型|款|总计|汇总|合计", re.I)

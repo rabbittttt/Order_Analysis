@@ -9,6 +9,11 @@ SCRIPT_PATH=Path(__file__).resolve()
 CODE_ROOT=SCRIPT_PATH.parent.parent
 ROOT=CODE_ROOT.parent if CODE_ROOT.name.lower() == 'scripts' else CODE_ROOT
 
+def default_input_path():
+    spec=importlib.util.spec_from_file_location('order_data_paths',CODE_ROOT/'generate_html/core/data_paths.py')
+    module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    return module.orders_input_directory(ROOT)/'鸿蒙智行销量数据汇总.xlsx'
+
 def log(message):
     print(f'[{datetime.now():%Y-%m-%d %H:%M:%S}] {message}',flush=True)
 ORDER_METRIC_COLUMNS={
@@ -896,7 +901,7 @@ def open_generated_webpage(path):
 def main():
     started=time.perf_counter()
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument('--input',type=Path,default=ROOT/'output_file/鸿蒙智行销量数据汇总.xlsx')
+    ap.add_argument('--input',type=Path,default=default_input_path())
     ap.add_argument('--out',type=Path,default=None,help='已弃用；为兼容旧命令保留，不再使用该路径')
     ap.add_argument('--calendar',type=Path)
     ap.add_argument('--sample-data',action='store_true',help='将输出标记为样例数据')

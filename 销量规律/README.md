@@ -50,12 +50,12 @@
         patterns.js
       report_config.json
     generate_html/core/china_calendar.py
-  output_file/鸿蒙智行销量数据汇总.xlsx
+  ../共享数据/订单汇总/鸿蒙智行销量数据汇总.xlsx
 ```
 
 上面列出的分析、导出模块、配置和 templates 中的三个文件均为必需文件，迁移到内网时一起复制并保留目录结构。requirements.txt 与本说明可选复制。原 .mjs、node_modules、ZIP、缓存和整个 tests/ 目录均不是运行必需文件；迁移到内网或打包运行版本时可跳过。
 
-一次无参数执行只生成 output_file/鸿蒙智行销量规律分析.html。HTML 为单个离线文件，双击可在浏览器中打开；无需启动网站服务。分析证据只在内存传递，不生成单独的 JSON、Markdown、Excel、预览或日志文件；HTML 内嵌小订、留存大定和锁单的必要数据。已有 Excel 文件不会被删除或覆盖；如果需要保留历史 Excel，请使用已有文件。网页保存失败时控制台报错而不宣告全流程成功。不会清理整个目录。旧 --out 参数仅兼容接收并提示忽略；--input、--calendar 可选使用，日常运行不需要参数。
+一次无参数执行只生成 output_file/鸿蒙智行销量规律分析.html。默认输入与订单分析共用 `generate_html/core/data_paths.py`：优先 `SHARED_DATA_ROOT/订单汇总/`，否则使用项目同级已存在的 `共享数据/订单汇总/`；未启用共享根的独立项目兼容读取 `output_file/`。共享目录或文件缺失不回退旧副本；显式 `--input` 可指定其他工作簿。HTML 为单个离线文件，双击可在浏览器中打开；无需启动网站服务。分析证据只在内存传递，不生成单独的 JSON、Markdown、Excel、预览或日志文件；HTML 内嵌小订、留存大定和锁单的必要数据。已有 Excel 文件不会被删除或覆盖；如果需要保留历史 Excel，请使用已有文件。网页保存失败时控制台报错而不宣告全流程成功。不会清理整个目录。旧 --out 参数仅兼容接收并提示忽略；--input、--calendar 可选使用，日常运行不需要参数。
 
 ## 数据和指标
 

@@ -33,13 +33,14 @@ from core.model_identity import model_key, usable_attribute, stage_records, stag
 from core.forecast_summary import SUMMARY_NAME, INDEX_SHEET, GUIDE_SHEET, DAILY_SHEET, WEEKLY_SHEET, D12_SHEET, D12_HEADERS, public_forecast_tables, summary_scope, summary_quality, table_records, iso_day
 from core.forecast_summary import GROSS_DAILY_SHEET, GROSS_PROGRESS_SHEET, LAUNCH_CANCEL_SHEET, LAUNCH_CANCEL_DAILY_SHEET, SMALL_CANCEL_SHEET, SMALL_CANCEL_DAILY_SHEET
 from core.excel import WorkbookItem, _source_date_range, grain_from_sheet, load_data_workbook, compact_diagnostic_ranges, reset_conflict_diagnostics
+from core.data_paths import orders_input_directory, model_information_directory
 
 CODE_ROOT = GENERATE_HTML_ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
-FORECAST_INPUT_ROOT = PROJECT_ROOT / "input_file" / "销量预测输入文件"
+FORECAST_INPUT_ROOT = model_information_directory(PROJECT_ROOT)
 DEFAULT_SOURCE = FORECAST_SOURCE_PATH
-DEFAULT_OUTPUT = PROJECT_ROOT / "output_file" / SUMMARY_NAME
-DEFAULT_ORDERS = PROJECT_ROOT / "output_file"
+DEFAULT_ORDERS = orders_input_directory(PROJECT_ROOT)
+DEFAULT_OUTPUT = DEFAULT_ORDERS / SUMMARY_NAME
 DEFAULT_MAPPING = DEFAULT_SOURCE
 LEGACY_MAPPINGS = (
     FORECAST_INPUT_ROOT / "传播代际名映射.xlsx",
@@ -48,6 +49,7 @@ LEGACY_MAPPINGS = (
 REFRESH_CODE_DEPENDENCIES = (
     Path(__file__).resolve(),
     GENERATE_HTML_ROOT / "core" / "model_identity.py",
+    GENERATE_HTML_ROOT / "core" / "data_paths.py",
     GENERATE_HTML_ROOT / "core" / "forecast_summary.py",
     GENERATE_HTML_ROOT / "core" / "excel.py",
     GENERATE_HTML_ROOT / "core" / "china_calendar.py",

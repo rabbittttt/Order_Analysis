@@ -93,12 +93,13 @@ class GenerationCampaignTests(TestCase):
         self.assertTrue(any(s['title'].startswith('Pro版 · ') for s in view['pages']['全部阶段']['sections']))
         mix.close();cancel.close()
 
-    def test_default_source_paths_share_project_output_file(self):
+    def test_default_source_paths_share_configured_input_directory(self):
+        from core.data_paths import orders_input_directory
         from modules.sales_forecast import RAW_FORECAST_DATA, HISTORY_CANDIDATES, MODEL_MAPPING_CANDIDATES
         from tools.refresh_sales_forecast_data import parse_args
         code_root = Path(__file__).resolve().parents[2]
         project_root = code_root.parent if code_root.name.lower() == 'scripts' else code_root
-        expected = project_root / 'output_file' / '小订及首销数据整理.xlsx'
+        expected = orders_input_directory(project_root) / '小订及首销数据整理.xlsx'
         self.assertEqual(FORECAST_SOURCE_PATH, expected)
         self.assertEqual(DEFAULT_SOURCE, expected)
         self.assertEqual(DEFAULT_MAPPING, expected)

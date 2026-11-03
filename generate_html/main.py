@@ -20,6 +20,7 @@ from openpyxl import load_workbook
 from core.components import add_kpi_comparisons
 from core.china_calendar import PUBLISHED_YEARS
 from core.config import load_config
+from core.data_paths import orders_input_directory
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook, reset_conflict_diagnostics
 from core.forecast_summary import SUMMARY_NAME, visible_target_names
@@ -493,7 +494,7 @@ def build(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate the HarmonyOS Auto order dashboard.")
-    parser.add_argument("--input", type=Path, default=PROJECT_ROOT / "output_file")
+    parser.add_argument("--input", type=Path, default=orders_input_directory(PROJECT_ROOT))
     parser.add_argument(
         "--output",
         type=Path,
