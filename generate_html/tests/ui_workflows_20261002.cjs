@@ -33,7 +33,10 @@ const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析
   await page.locator('#clearRawSearch').click();check('清空底表搜索恢复行',!await page.locator('#rawEmpty').isVisible());
   const download=page.waitForEvent('download');await page.locator('#exportRaw').click();check('底表导出可用',(await download).suggestedFilename().endsWith('.csv'));
   await page.waitForFunction(()=>!document.querySelector('#toast').classList.contains('show'));
-  await page.locator('[data-module="sales_forecast"]').click();await page.waitForSelector('.forecast-workspace');await ready();
+  check('订单导航无销量预测入口',await page.locator('[data-module="sales_forecast"],#moduleSelect option[value="sales_forecast"]').count()===0);
+  const forecastUrl=new URL(await page.evaluate(()=>window.DASHBOARD_DATA.forecast_page),base);
+  forecastUrl.search=new URLSearchParams({subject:await page.locator('#subjectSelect').inputValue(),module:'sales_forecast'});
+  await page.goto(forecastUrl.href);await page.waitForSelector('.forecast-workspace');await ready();
   check('新模块从顶部开始',await page.locator('#page').evaluate(n=>n.scrollTop)===0);
   await page.locator('[data-forecast-nav="steady"]').click();await page.waitForFunction(()=>document.querySelector('#periodContext').textContent.includes('平销'));
   await page.locator('[data-forecast-nav="launch"]').click();await page.waitForFunction(()=>document.querySelector('#periodContext').textContent==='按预测阶段窗口');

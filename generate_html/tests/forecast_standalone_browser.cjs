@@ -130,22 +130,27 @@ async function run(){
     await page.locator('[data-raw-retry]').click();await page.waitForSelector('#rawTable');await settled(page);
     check('解压失败后重试可重新读取正确资源',await page.locator('#rawTable tr').count()>1);
     await page.unroute('**/forecast_assets/*.js');
-    // Old entry links and URL deep links continue to carry the selected vehicle.
+    // Each app has its own navigation; old prediction URL deep links remain compatible.
     await page.goto(url(orderName,{subject:target,module:'overview'}));await settled(page);
-    check('订单看板保留独立预测入口',await page.locator('[data-module="sales_forecast"]').isEnabled());
-    await page.locator('[data-module="sales_forecast"]').click();await ready(page);
-    check('旧入口跳转独立看板并保留车型',decodeURIComponent(new URL(page.url()).pathname).endsWith('/'+forecastName)&&await page.locator('#subjectSelect').evaluate(n=>n.selectedOptions[0].textContent)===target);
+    for(const width of [1366,390]){
+      await page.setViewportSize({width,height:1000});
+      check(width+'px订单导航不展示销量预测按钮或选项',await page.locator('[data-module="sales_forecast"],#moduleSelect option[value="sales_forecast"]').count()===0);
+      check(width+'px订单导航保留订单总览和底表',await page.locator('[data-module="overview"]').count()===1&&await page.locator('[data-module="raw"]').count()===1);
+    }
+    await page.goto(url(forecastName,forecastParams));await ready(page);
+    check('直接打开独立看板保留车型',await page.locator('#subjectSelect').evaluate(n=>n.selectedOptions[0].textContent)===target);
     await page.goto(url(orderName,forecastParams));await ready(page);
     check('旧预测深链接自动跳转且保留阶段',decodeURIComponent(new URL(page.url()).pathname).endsWith('/'+forecastName)&&new URL(page.url()).searchParams.get('forecastStage')==='launch');
     for(const width of [1366,1920,390]){
-      await page.setViewportSize({width,height:1000});await page.locator('[data-forecast-tab="params"]').click();
+      await page.setViewportSize({width,height:1000});
+      check(width+'px预测导航无返回订单分析入口',await page.locator('.forecast-order-link').count()===0&&await page.getByRole('link',{name:'返回订单分析'}).count()===0);
+      check(width+'px预测导航仅含三阶段和底表',JSON.stringify(await page.locator('[data-forecast-nav]').evaluateAll(nodes=>nodes.map(node=>node.dataset.forecastNav)))===JSON.stringify(['small','launch','steady','raw'])&&JSON.stringify(await page.locator('#moduleSelect option').evaluateAll(nodes=>nodes.map(node=>node.value)))===JSON.stringify(['small','launch','steady','raw']));
+      await page.locator('[data-forecast-tab="params"]').click();
       const layout=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,fields:[...document.querySelectorAll('.forecast-general-settings [data-forecast-target]')].map(n=>{const b=n.getBoundingClientRect();return {left:b.left,right:b.right,width:b.width,height:b.height};})}));
       report.layout.push(layout);check(width+'px参数区域与页面无横向裁切',layout.scroll<=width+1&&layout.fields.length===9&&layout.fields.every(b=>b.left>=0&&b.right<=width+1&&b.width>0&&b.height>0));
       await page.locator('[data-forecast-tab="result"]').click();
       check(width+'px结果区域无整页横向溢出',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     }
-    await page.locator('.forecast-order-link').click();await settled(page);
-    check('返回订单分析保留车型',decodeURIComponent(new URL(page.url()).pathname).endsWith('/'+orderName)&&await page.locator('#subjectSelect').evaluate(n=>n.selectedOptions[0].textContent)===target);
     const filePage=await context.newPage();filePage.on('pageerror',e=>report.errors.push(e.message));
     const fileUrl=pathToFileURL(path.join(output,forecastName));fileUrl.search=new URLSearchParams(forecastParams);
     await filePage.goto(fileUrl.href);await ready(filePage);await filePage.locator('[data-workspace-source]').click();await filePage.waitForSelector('#rawTable');

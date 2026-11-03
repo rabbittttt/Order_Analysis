@@ -713,8 +713,7 @@
       $('#moduleSelect').innerHTML=options.map(option=>`<option value="${option.id}">${option.label}</option>`).join('');
       $('#moduleSelect').value=state.module==='raw'?'raw':state.forecastStage||'launch';
       $('#moduleSelect').onchange=event=>$('#moduleNav').querySelector(`[data-forecast-nav="${event.target.value}"]`)?.click();
-      $('#moduleNav').innerHTML=options.map(option=>`<button type="button" data-forecast-nav="${option.id}" class="${(option.id==='raw'?state.module==='raw':state.module==='sales_forecast'&&state.forecastStage===option.id)?'active':''}">${option.label}</button>`).join('')+`<a class="forecast-order-link" href="${esc(new URL(DATA.order_page||'鸿蒙智行订单分析汇总.html',location.href).href)}">返回订单分析</a>`;
-      const link=$('#moduleNav .forecast-order-link'),back=new URL(link.href);back.searchParams.set('subject',state.subject);back.searchParams.set('module','overview');link.href=back.href;
+      $('#moduleNav').innerHTML=options.map(option=>`<button type="button" data-forecast-nav="${option.id}" class="${(option.id==='raw'?state.module==='raw':state.module==='sales_forecast'&&state.forecastStage===option.id)?'active':''}">${option.label}</button>`).join('');
       $('#moduleNav').onclick=async event=>{
         const button=event.target.closest('[data-forecast-nav]');if(!button)return;captureForecastDraft();const id=button.dataset.forecastNav;
         if(id==='raw'){state.module='raw';if(await ensureState()===false)return;await renderAll();syncUrl('push');}
@@ -722,10 +721,11 @@
         else await activateForecastStage(id);
       };return;
     }
-    $('#moduleSelect').innerHTML=DATA.config.module_order.map(id=>`<option value="${esc(id)}" ${moduleAvailable(item,id)?'':'disabled'}>${esc(moduleLabels[id])}${moduleAvailable(item,id)?'':'（当前主体不可用）'}</option>`).join('');
+    const navigationModules=DATA.config.module_order.filter(id=>id!=="sales_forecast");
+    $('#moduleSelect').innerHTML=navigationModules.map(id=>`<option value="${esc(id)}" ${moduleAvailable(item,id)?'':'disabled'}>${esc(moduleLabels[id])}${moduleAvailable(item,id)?'':'（当前主体不可用）'}</option>`).join('');
     $('#moduleSelect').value=state.module;
     $('#moduleSelect').onchange=event=>$('#moduleNav').querySelector(`[data-module="${event.target.value}"]`)?.click();
-    $("#moduleNav").innerHTML=DATA.config.module_order.map(id=>{
+    $("#moduleNav").innerHTML=navigationModules.map(id=>{
       const available=moduleAvailable(item,id),active=state.module===id;
       const hint=id==="sales_forecast"?"请选择具体车型（代际）后查看":"当前主体没有对应Sheet";
       return '<button data-module="'+id+'" class="'+(active?'active':'')+'" '+(active?'aria-current="page" ':'')+(available?'':'disabled ')+'title="'+(available?moduleLabels[id]:hint)+'">'+moduleLabels[id]+'</button>';
