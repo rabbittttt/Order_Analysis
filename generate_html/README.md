@@ -6,10 +6,16 @@
 
 ## 运行
 
-从本项目的 `scripts/generate_html/` 运行：
+所有项目默认共用所在 `Project/.venv`。新电脑先按共享环境要求安装 Python 3.11+，在 `Project` 根目录双击“初始化共享环境.cmd”重建共享环境并安装依赖；不要复制旧电脑的 `.venv`。保留 `Project/订单分析/scripts/` 和共享数据的相对布局，`Project` 的上级目录和盘符可以不同。
+
+双击 `scripts/启动订单分析.cmd` 即可运行。启动器从自身位置向上找到最近名为 `Project` 的目录，固定使用其 `.venv\Scripts\python.exe`，不会优先子项目 `.venv` 或回退 PATH。共享环境缺失、损坏或缺少依赖时明确提示初始化或安装命令。`ORDER_ANALYSIS_PYTHON` 可显式覆盖解释器；相对值按启动器所在 `scripts/` 目录解析。
+
+浏览器测试生成 Python 夹具时也默认使用所在 `Project/.venv`；既有 `PYTHON_EXE`、`PYTHON_BINARY` 可显式覆盖。带目录的相对值按“订单分析”项目根目录解析，显式命令名保持兼容。
+
+从本项目的 `scripts/generate_html/` 手动运行：
 
 ```powershell
-python main.py --no-open
+..\..\..\.venv\Scripts\python.exe main.py --no-open
 ```
 
 输入按本项目位置定位到 `../共享数据/订单汇总/`；路径不依赖当前命令行目录。不在代码中写入本机盘符。`SHARED_DATA_ROOT` 可指定共享根目录，推荐相对值 `../共享数据`，统一相对于“订单分析”项目根目录解析，也兼容绝对路径。显式 `--input` 和 `--output` 可覆盖本次输入和输出，其相对值仍按运行命令时的当前目录解析。

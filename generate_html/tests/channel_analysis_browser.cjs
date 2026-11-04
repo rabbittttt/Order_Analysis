@@ -12,7 +12,7 @@ const configuredStores={
  '尚界':{'尚界用户中心':221,'鸿蒙智行用户中心':259,'华为旗舰店':13,'华为授权体验店':153,'华为智能生活馆':450},
  '享界':{'享界用户中心':14,'鸿蒙智行用户中心':344,'华为旗舰店':11,'华为授权体验店':100,'华为智能生活馆':387},
 };
-const expected=JSON.parse(execFileSync(process.env.PYTHON_EXE||'python',['-B','-c',String.raw`
+const expected=JSON.parse(execFileSync(require('./shared_python.cjs')(process.env.PYTHON_EXE),['-B','-c',String.raw`
 import json,math,re,sys
 from datetime import date,datetime
 from pathlib import Path
