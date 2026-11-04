@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),path=require('node:path');
 const {execFileSync}=require('node:child_process'),{pathToFileURL}=require('node:url');
 const project=path.resolve(__dirname,'../../..');
 const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwright'));
-const fixture=JSON.parse(execFileSync(process.env.PYTHON_BINARY||'D:/python/python.exe',['-X','utf8','-B','-c',String.raw`
+const fixture=JSON.parse(execFileSync(process.env.PYTHON_BINARY||'python',['-X','utf8','-B','-c',String.raw`
 import json
 from tests.test_audit_20261103_launch_alias_zero import LaunchAliasZeroTests, MISSING_ROW
 t=LaunchAliasZeroTests(); result={}

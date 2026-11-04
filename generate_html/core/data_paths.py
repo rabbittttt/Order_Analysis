@@ -11,10 +11,11 @@ PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE
 
 
 def shared_data_root(project_root: Path = PROJECT_ROOT) -> Path | None:
-    """An explicit root is authoritative even if it has not been created yet."""
+    """Resolve explicit relative roots from the project, not the shell cwd."""
     configured = os.environ.get("SHARED_DATA_ROOT", "").strip()
     if configured:
-        return Path(configured).expanduser().resolve()
+        candidate = Path(configured).expanduser()
+        return (candidate if candidate.is_absolute() else project_root / candidate).resolve()
     candidate = project_root.parent / "共享数据"
     return candidate if candidate.is_dir() else None
 
