@@ -23,13 +23,3 @@ def shared_data_root(project_root: Path = PROJECT_ROOT) -> Path | None:
 def orders_input_directory(project_root: Path = PROJECT_ROOT) -> Path:
     shared = shared_data_root(project_root)
     return shared / "订单汇总" if shared is not None else project_root / "output_file"
-
-
-def forecast_reference_directory(project_root: Path = PROJECT_ROOT) -> Path:
-    shared = shared_data_root(project_root)
-    return shared / "订单汇总" if shared is not None else project_root / "input_file" / "销量预测输入文件"
-
-
-def model_information_directory(project_root: Path = PROJECT_ROOT) -> Path:
-    shared = shared_data_root(project_root)
-    return shared / "车型信息" if shared is not None else project_root / "input_file" / "销量预测输入文件"

@@ -10,7 +10,7 @@ from core.model_identity import generation_records, parent_generation
 
 
 DEFAULT_MODULE_ORDER = [
-    "overview", "channel_analysis", "sales_forecast", "cancellation", "launch_rhythm", "conversion", "order_mix",
+    "overview", "channel_analysis", "cancellation", "launch_rhythm", "conversion", "order_mix",
     "lock_mix", "small_order_mix", "option_fee", "sku", "generic", "raw",
 ]
 # 保留旧导入名作为只读兼容别名；运行时排序仍以 config.json 为唯一来源。
@@ -38,7 +38,7 @@ def is_valid_subject_name(name: str) -> bool:
     return bool(re.fullmatch(r"[\u4e00-\u9fff]{1,3}界[A-Za-z0-9]+(?:[&+/][A-Za-z0-9]+)*(?:[\u4e00-\u9fff]{1,8})?", value))
 
 
-def discover_subjects(store: WorkbookStore, forecast_targets: Iterable[str] = ()) -> list[Subject]:
+def discover_subjects(store: WorkbookStore) -> list[Subject]:
     names: dict[str, str] = {"鸿蒙智行": "鸿蒙智行"}
     records = generation_records()
     for _, sheet_name in store.all_sheet_names():
@@ -59,19 +59,9 @@ def discover_subjects(store: WorkbookStore, forecast_targets: Iterable[str] = ()
                     if key not in names or (" " in value and " " not in names[key]):
                         names[key] = value
 
-    # Forecast targets can exist before a raw by-day Sheet is available.
-    target_keys = set()
-    for value in forecast_targets:
-        name = clean_text(parent_generation(value, records))
-        if not re.match(r"^[\u4e00-\u9fff]{1,3}界.+", compact_text(name)):
-            continue
-        key = compact_text(name)
-        names[key] = name
-        target_keys.add(key)
-
     subjects = []
     for name in names.values():
-        kind = "generation" if compact_text(name) in target_keys else subject_type(name)
+        kind = subject_type(name)
         subjects.append(Subject(subject_id(name, kind), name, kind, subject_parent(name, kind)))
     rank = {"group": 0, "brand": 1, "generation": 2}
 

@@ -306,11 +306,11 @@ class LoggingPolicyTests(TestCase):
         self.assertEqual(_coordinate_ranges({'B2', 'B3', 'C2', 'C3'}), 'B2:C3')
         self.assertEqual(_coordinate_ranges({'B2', 'B3', 'C2'}), 'C2、B2:B3')
 
-    def test_filter_dedups_refresh_and_parent_but_not_other_issues_or_errors(self):
+    def test_filter_dedups_identical_diagnostics_but_not_other_issues_or_errors(self):
         diagnostic_filter = main.DuplicateDiagnosticFilter()
         def record(message, level=logging.WARNING):
             return logging.LogRecord('test', level, '', 0, message, (), None)
-        first = record('[销量预测刷新] [冲突] A文件 B2=3 / C文件 B2=5')
+        first = record('[冲突] A文件 B2=3 / C文件 B2=5')
         # Shared filter on three handlers must accept the same first record for all.
         self.assertEqual([diagnostic_filter.filter(first) for _ in range(3)], [True]*3)
         self.assertFalse(diagnostic_filter.filter(record('[冲突] A文件 B2=3 / C文件 B2=5')))
@@ -318,50 +318,3 @@ class LoggingPolicyTests(TestCase):
         self.assertTrue(diagnostic_filter.filter(record('[冲突] D文件 B2=3 / C文件 B2=5')))
         self.assertTrue(diagnostic_filter.filter(record('读取失败', logging.ERROR)))
         self.assertTrue(diagnostic_filter.filter(record('读取失败', logging.ERROR)))
-
-    def test_known_extension_warnings_are_info_and_context_line_is_not_printed(self):
-        with self.assertLogs('order_analysis', level='INFO') as logs:
-            level = main.relay_refresh_line('C:/lib/openpyxl/worksheet/_reader.py:329: UserWarning: Unknown extension is not supported and will be removed')
-            level = main.relay_refresh_line('  warn(msg)', level)
-            level = main.relay_refresh_line('C:/lib/openpyxl/worksheet/_reader.py:329: UserWarning: Conditional Formatting extension is not supported and will be removed', level)
-            level = main.relay_refresh_line('  warn(msg)', level)
-            main.relay_refresh_line('C:/lib/other.py:1: UserWarning: 数据类型未知', level)
-        self.assertEqual([r.levelno for r in logs.records], [20, 20, 30])
-        self.assertTrue(all('warn(msg)' not in line for line in logs.output))
-
-    def test_relay_preserves_severity_duplicates_and_one_traceback_issue(self):
-        collector = main.DiagnosticCollector()
-        before = list(main.BUILD_DIAGNOSTICS); counts = dict(main.DIAGNOSTIC_COUNTS)
-        self.addCleanup(lambda: main.BUILD_DIAGNOSTICS.__setitem__(slice(None), before))
-        self.addCleanup(lambda: main.DIAGNOSTIC_COUNTS.update(counts))
-        main.BUILD_DIAGNOSTICS.clear(); main.DIAGNOSTIC_COUNTS.update(WARNING=0, ERROR=0)
-        with self.assertLogs('order_analysis', level='DEBUG') as logs:
-            main.LOGGER.addHandler(collector)
-            try:
-                level = logging.INFO
-                for line in ['[WARNING] 缺D3', '[WARNING] 缺D3', '[ERROR] 刷新失败',
-                             'Traceback (most recent call last):', '  File "source.py", line 1',
-                             'ValueError: 输入格式错误', '[INFO] 收尾', '[DEBUG] 读取细节']:
-                    level = main.relay_refresh_line(line, level)
-            finally:
-                main.LOGGER.removeHandler(collector)
-        self.assertEqual([r.levelno for r in logs.records], [30,30,40,40,40,40,20,10])
-        self.assertTrue(all('[WARNING]' not in r.getMessage() and '[ERROR]' not in r.getMessage() for r in logs.records))
-        self.assertEqual(main.DIAGNOSTIC_COUNTS, {'WARNING': 2, 'ERROR': 1})
-        self.assertEqual(len(main.BUILD_DIAGNOSTICS), 2)
-
-    def test_refresh_relays_before_wait_and_propagates_failure(self):
-        process = MagicMock()
-        process.__enter__.return_value = process
-        observed = []
-        def output():
-            yield '[WARNING] 第一个问题\n'
-            self.assertTrue(observed)  # Already relayed while the child is still producing output.
-            yield '[ERROR] 第二个问题\n'
-        process.stdout = output(); process.wait.return_value = 1
-        with patch('main.subprocess.Popen', return_value=process) as popen, patch('main.relay_refresh_line', side_effect=lambda line, level: observed.append(line) or logging.WARNING):
-            with self.assertRaisesRegex(RuntimeError, '退出码 1'):
-                main.refresh_sales_forecast_data({'refresh_sales_forecast_data_before_build': True})
-        self.assertEqual(len(observed), 2)
-        self.assertIn('-u', popen.call_args.args[0])
-        self.assertEqual(popen.call_args.kwargs['stderr'], main.subprocess.STDOUT)

@@ -20,30 +20,9 @@ from modules.cancellation import CancellationModule, parse_select_retreat
 from modules.conversion import ConversionModule
 from modules.overview import OverviewModule, _drop_rankings, _group_model_series, _lock_share_rows, _log_lock_share_issues, _period_range_text, _rise_rankings
 from modules.sku import SkuModule, find_header_row
-from tools.refresh_sales_forecast_data import build_mapping_workbook, write_rows
 
 
 class SubjectParsingTests(unittest.TestCase):
-    def test_generated_mapping_workbook_does_not_embed_vehicle_facts(self):
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "车型基本信息.xlsx"
-            build_mapping_workbook(path, ["问界 M9 2026款纯电"])
-            workbook = load_workbook(path, read_only=True, data_only=True)
-            try:
-                headers = [cell.value for cell in workbook["车型基本信息"][1]]
-                row = list(workbook["车型基本信息"].iter_rows(min_row=2, max_row=2, values_only=True))[0]
-            finally:
-                workbook.close()
-
-        self.assertEqual(row[0], "问界 M9 2026款纯电")
-        self.assertIsNone(row[1])
-        self.assertEqual(row[2], "问界")
-        record = dict(zip(headers, row))
-        for field in ("产品档位", "能源类型", "发布类型", "小订发布时段", "首销发布时段"):
-            self.assertEqual(record[field], "待维护")
-        self.assertNotIn("发布时段", record)
-        self.assertEqual(record["映射状态"], "待人工确认")
-        self.assertIsNone(record["来源URL"])
 
     def test_multi_phase_launch_sheet_names_map_to_same_generation(self):
         self.assertEqual(sheet_subject("问界 M8 2025款by天第1期"), "问界 M8 2025款")
@@ -141,10 +120,10 @@ class SubjectParsingTests(unittest.TestCase):
         subject = Subject("group_test", "鸿蒙智行", "group", None)
         set_capabilities(
             [subject],
-            {"鸿蒙智行": {"overview", "sales_forecast"}},
-            ["sales_forecast", "overview", "raw"],
+            {"鸿蒙智行": {"overview", "channel_analysis"}},
+            ["channel_analysis", "overview", "raw"],
         )
-        self.assertEqual(subject.modules, ["sales_forecast", "overview", "raw"])
+        self.assertEqual(subject.modules, ["channel_analysis", "overview", "raw"])
 
     def test_launch_rhythm_keeps_multiple_phases_and_defaults_to_latest(self):
         workbook = Workbook()
@@ -293,15 +272,6 @@ class SubjectParsingTests(unittest.TestCase):
                 self.assertEqual(page['kpis'][0]['value'], 400)
                 self.assertEqual([row[6] for row in page['sections'][0]['data']['rows']], [170, 170])
 
-    def test_generated_forecast_range_uses_worksheet_filter_without_table(self):
-        workbook = Workbook()
-        workbook.remove(workbook.active)
-
-        write_rows(workbook, "测试", ["车型", "D1"], [["问界 F2N 2026款", 100]], "ForecastTest")
-
-        sheet = workbook["测试"]
-        self.assertEqual(sheet.auto_filter.ref, "A1:B2")
-        self.assertEqual(len(sheet.tables), 0)
 
     def test_metric_parser_keeps_source_total_column(self):
         workbook = Workbook()
@@ -873,16 +843,6 @@ class SubjectParsingTests(unittest.TestCase):
         self.assertEqual(brand_names, ["问界", "智界", "享界", "尊界", "尚界"])
         self.assertEqual(subjects[0].name, "鸿蒙智行")
 
-    def test_forecast_target_without_raw_sheet_is_in_generation_selector(self):
-        workbook = Workbook()
-        workbook.active.title = "尊界by周"
-        store = WorkbookStore(Path("."))
-        store.items = [WorkbookItem(Path("测试.xlsx"), workbook)]
-        subjects = discover_subjects(store, ["尊界 V680&V800", "享界 G9", "数据来源目录"])
-        generations = {item.name: item for item in subjects if item.type == "generation"}
-        self.assertEqual(generations["尊界 V680&V800"].parent, "尊界")
-        self.assertEqual(generations["享界 G9"].parent, "享界")
-        self.assertNotIn("数据来源目录", generations)
 
     def test_combined_code_and_edition_are_generations_not_metric_labels(self):
         for name in ("尊界 V680&V800", "尊界 S800典藏大观"):

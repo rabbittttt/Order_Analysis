@@ -12,18 +12,31 @@ from openpyxl.styles import Font
 
 from core.excel import WorkbookItem, WorkbookStore, load_data_workbook, parse_metric_sheet
 from core.models import Dashboard, SourceRef, Subject
-from modules.sales_forecast import _read_actual_profiles, _read_steady_history
 from modules.conversion import ConversionModule, STAGES
 from modules.order_mix import OrderMixModule
 from modules.option_fee import _period_groups, _option_layout, _version_rows_by_period
-from tools.refresh_sales_forecast_data import append_forecast_inputs
-from core.forecast_summary import summary_scope
 
 
 MODEL = "问界 M9 2026款"
 
 
 class MultiSourceTests(unittest.TestCase):
+    def test_aggregate_columns_neither_participate_nor_produce_merge_conflicts(self):
+        store=WorkbookStore(Path("."))
+        for year,total in [(2025,1000),(2026,200)]:
+            book=Workbook();sheet=book.active;sheet.title="直接大定车by天"
+            sheet.append(["指标","统计类型","分类","2026-09-01","总计","近28天"])
+            sheet.append(["大定","数量","数量",10,total,total])
+            store.items.append(WorkbookItem(Path(f"大定选配比例分析{year}.xlsx"),book))
+        try:
+            with patch("core.excel.LOGGER.warning") as warning:
+                item=store.find("大定选配比例")
+            warning.assert_not_called()
+            self.assertEqual(list(parse_metric_sheet(item.workbook.worksheets[0])),["2026-09-01"])
+            self.assertEqual(store.items[0].workbook.active.cell(1,5).value,"总计")
+        finally:
+            store.close()
+
     def store(self, books, keyword="大定选配比例分析"):
         store = WorkbookStore(Path("."))
         store.items = [WorkbookItem(Path(f"{keyword}{2021 + index}.xlsx"), book)
@@ -124,56 +137,6 @@ class MultiSourceTests(unittest.TestCase):
         self.assertEqual(data["totals"], [10, 20])
         self.assertEqual(store.find_chart_blocks("大定选配比例", MODEL, "day")[2][0]["totals"], [10, 20])
 
-    def test_launch_and_small_hourly_union_do_not_double_count(self):
-        books = []
-        for dates, counts in [
-            ([datetime(2026, 1, 1), datetime(2026, 1, 2)], [0, 20]),
-            ([datetime(2026, 1, 2), datetime(2026, 1, 3)], [20, 30]),
-        ]:
-            book = Workbook()
-            sheet = book.active
-            sheet.title = MODEL + "by天"
-            sheet.append(["周期", "D1", "D2"])
-            sheet.append(["时间", *dates])
-            sheet.append(["当日大定数量", *counts])
-            books.append(book)
-        store = self.store(books, "首销期订单节奏")
-        with patch("modules.sales_forecast._read_model_mapping", return_value={}):
-            profiles, _ = _read_actual_profiles(store)
-        self.assertEqual([row["gross"] for row in profiles[0]["days"]], [0, 20, 30])
-        self.assertEqual([row["date"] for row in profiles[0]["days"]],
-                         ["2026-01-01", "2026-01-02", "2026-01-03"])
-
-        books = []
-        for hour in [0, 1]:
-            book = Workbook()
-            sheet = book.active
-            sheet.title = MODEL + "_小订分时退订"
-            sheet.append(["小订分时退订统计"])
-            sheet.append(["小订日期", "小订小时", "小订数"])
-            sheet.append([datetime(2026, 1, 1), hour, 10])
-            books.append(book)
-        store = self.store(books, "小订退订分析")
-        with patch("modules.sales_forecast._read_model_mapping", return_value={}):
-            profiles, _ = _read_actual_profiles(store)
-        self.assertEqual(profiles[0]["small_hourly_days"][0]["orders"], 20)
-        self.assertEqual(len(profiles[0]["small_hourly_days"][0]["hours"]), 2)
-
-    def test_steady_history_merges_year_shards_into_one_reference(self):
-        first = self.metric(["26WK28"], [["交车锁单", "数量", "数量", 100]], MODEL + "by周")
-        second = self.metric(["26WK29"], [["交车锁单", "数量", "数量", 200]], MODEL + "by周")
-        for book, day, count in [(first, datetime(2026, 7, 7), 10), (second, datetime(2026, 7, 8), 20)]:
-            sheet = book.create_sheet(MODEL + "by天")
-            sheet.append(["指标", "统计类型", "分类", day])
-            sheet.append(["交车锁单", "数量", "数量", count])
-        store = self.store([first, second], "锁单选配比例分析")
-        with patch("modules.sales_forecast._read_model_mapping", return_value={}), patch(
-            "modules.sales_forecast._read_model_master", return_value={}
-        ):
-            rows, _ = _read_steady_history(store, {"m9": {"generation": MODEL, "end_date": "2026-06-30"}}, date(2026, 7, 27))
-        self.assertEqual(len(rows), 1)
-        self.assertEqual([week["lock"] for week in rows[0]["weeks"]], [100, 200])
-        self.assertEqual([day["lock"] for day in rows[0]["daily"]], [10, 20])
 
     def test_duplicate_values_are_not_logged_or_added(self):
         books = [self.metric(["2026-01-01"], [["大定", "数量", "数量", 25]]) for _ in range(2)]
@@ -269,13 +232,10 @@ class MultiSourceTests(unittest.TestCase):
         second = self.metric([datetime(2026, 1, 1)], [["小订", "数量", "数量", 20]],
                              MODEL.replace(" ", "") + "by天")
         store = self.store([first, second], "小订选配比例分析")
-        with self.assertLogs("core.excel", level="WARNING") as logs, patch(
-            "modules.sales_forecast._read_model_mapping", return_value={}
-        ):
-            profiles, sources = _read_actual_profiles(store)
+        with self.assertLogs("core.excel", level="WARNING") as logs:
+            item, sheet = store.find_subject_sheet("小订选配比例", MODEL, "day")
+        sources = [SourceRef(item.path.name, sheet.title)]
         self.assertEqual(len(logs.output), 1)
-        self.assertEqual(profiles[0]["small_daily_days"][0]["orders"], 10)
-        item, sheet = store.find_subject_sheet("小订选配比例", MODEL, "day")
         self.assertEqual(next(iter(parse_metric_sheet(sheet).values()))["metrics"]["小订"], 10)
         self.assertEqual([(s.file, s.sheet) for s in store.expand_sources(sources)], [
             ("小订选配比例分析2021.xlsx", first.active.title),
@@ -351,12 +311,15 @@ class MultiSourceTests(unittest.TestCase):
                 sheet.append([values[label] for label in headers])
             books.append(book)
         store = self.store(books, "小订退订分析")
-        with patch("modules.sales_forecast._read_model_mapping", return_value={}), patch("core.excel.LOGGER.warning") as warning:
-            profiles, _ = _read_actual_profiles(store)
+        with patch("core.excel.LOGGER.warning") as warning:
+            merged = store.find("小订退订分析").workbook.worksheets[0]
         warning.assert_not_called()
-        days = profiles[0]["small_hourly_days"]
-        self.assertEqual([day["date"] for day in days], ["2026-01-01", "2026-01-02", "2026-01-03"])
-        self.assertEqual([day["orders"] for day in days], [20, 20, 20])
+        values = list(merged.values)
+        header = next(row for row in values if "小订日期" in row)
+        date_index, orders_index = header.index("小订日期"), header.index("小订数")
+        days = [row for row in values if isinstance(row[date_index], datetime)]
+        self.assertEqual([row[date_index].strftime("%Y-%m-%d") for row in days], ["2026-01-01", "2026-01-02", "2026-01-03"])
+        self.assertEqual([row[orders_index] for row in days], [20, 20, 20])
 
     def test_daily_record_keys_follow_date_column(self):
         books = []

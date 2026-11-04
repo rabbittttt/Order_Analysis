@@ -4,7 +4,7 @@ const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFile
 const codeRoot=path.resolve(__dirname,'../..');
 const root=path.basename(codeRoot).toLowerCase()==='scripts'?path.dirname(codeRoot):codeRoot;
 const out=path.join(root,'analysis_outputs/ui_ux_audit_20260922');
-const {chromium}=require(path.join(root,'.test_runtime/node_modules/playwright'));
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(root,'.test_runtime/node_modules/playwright'));
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'}),report=[];
  try{
@@ -17,7 +17,7 @@ const {chromium}=require(path.join(root,'.test_runtime/node_modules/playwright')
    return {id,label:data.config.module_labels[id],subject:subject?.id};
   }));
   for(const module of modules){
-   if(['overview','sales_forecast','raw'].includes(module.id))continue;
+   if(['overview','raw'].includes(module.id))continue;
    if(!module.subject){report.push({...module,skipped:'当前样例无可用主体'});continue;}
    for(const [version,file] of [['before',path.join(out,'baseline.html')],['after',current]]){
     const url=pathToFileURL(file);url.search=new URLSearchParams({module:module.id,subject:module.subject});

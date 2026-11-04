@@ -2,7 +2,7 @@
 const fs=require('fs'),path=require('path'),os=require('os'),crypto=require('crypto');
 const {pathToFileURL}=require('url'),{execFileSync}=require('child_process');
 const project=path.resolve(__dirname,'../../..');
-const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwright'));
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const arg=(key,fallback)=>process.argv.find(s=>s.startsWith('--'+key+'='))?.split('=').slice(1).join('=')||fallback;
 const label=arg('label','baseline'),runs=Number(arg('runs','5')),profile=process.argv.includes('--profile');
 const file=path.join(project,'output_file/鸿蒙智行订单分析汇总.html');
@@ -51,28 +51,18 @@ function profileSummary(data){
   }
   try{
    await measure('cold_overview',async()=>{await page.goto(url({module:'overview'}));await ready()},{navigation:true,memory:true});
-   const model=await page.evaluate(()=>window.DASHBOARD_DATA.subjects.find(s=>s.name==='问界 M9 2026款')||window.DASHBOARD_DATA.subjects.find(s=>s.type==='generation'&&s.modules.includes('sales_forecast')));
+   const model=await page.evaluate(()=>window.DASHBOARD_DATA.subjects.find(s=>s.name==='问界 M9 2026款')||window.DASHBOARD_DATA.subjects.find(s=>s.type==='generation'&&s.modules.includes('overview')));
    report.model=model.name;
    await page.selectOption('#subjectSelect',model.id);await ready();
-   await measure('enter_forecast',async()=>{await page.locator('[data-module="sales_forecast"]').click();await ready();await page.waitForFunction(()=>document.querySelector('.forecast-workspace')?._forecastComparison)},{memory:true,profile:true});
-   await page.locator('[data-forecast-stage-switch="launch"]').click();await page.locator('[data-forecast-tab="result"]').click();
-   await measure('parameter_change',async()=>{await page.locator('[data-forecast-input="conversion"]').fill('42.7');await page.waitForFunction(()=>document.querySelector('[data-forecast-feedback]')?.dataset.state==='success')},{memory:true,profile:true});
-   await measure('evidence_tab',async()=>{await page.locator('[data-forecast-tab="evidence"]').click();await page.waitForFunction(()=>document.querySelector('[data-forecast-tab="evidence"]').getAttribute('aria-selected')==='true')},{profile:true});
-   await measure('stage_switch',async()=>{await page.locator('[data-forecast-stage-switch="steady"]').click();await page.waitForFunction(()=>document.querySelector('#periodContext').textContent.includes('平销'))});
    await measure('raw_open',async()=>{await page.locator('[data-module="raw"]').click();await ready();await page.waitForSelector('#rawSearch')},{memory:true});
    await measure('raw_search',async()=>{await page.locator('#rawSearch').fill('NO_MATCH_PERF');await page.waitForSelector('#rawEmpty:not([hidden])')});
-   await measure('return_forecast',async()=>{await page.locator('[data-module="sales_forecast"]').click();await ready()},{memory:true});
+   await measure('return_overview',async()=>{await page.locator('[data-module="overview"]').click();await ready()},{memory:true});
    await cdp.send('HeapProfiler.collectGarbage');
    const retained=await metrics();report.samples.push({run:run+1,name:'retained_after_gc',jsHeapMiB:retained.JSHeapUsedSize/1048576,domNodes:retained.Nodes,memory:memory(await processes())});
-   // Numeric snapshot excludes DOM and functions; identical data/input must yield identical values.
-   const values=await page.locator('.forecast-workspace').evaluate(n=>({launch:n._forecastComparison,small:n._smallForecastResult,steady:n._steadyForecastResult}));
-   report.samples.push({run:run+1,name:'numeric_snapshot',sha256:crypto.createHash('sha256').update(JSON.stringify(values)).digest('hex')});
-   await page.locator('[data-forecast-stage-switch="launch"]').click();
-   await measure('score_first_open',async()=>{await page.locator('[data-forecast-tab="score"]').click();await page.waitForSelector('[data-forecast-score-task]')});
    await page.close();
    const cold=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
-   const start=performance.now();await cold.goto(url({module:'sales_forecast',subject:model.id,forecastStage:'launch',forecastView:'result'}));await cold.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false');await cold.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
-   report.samples.push({run:run+1,name:'fresh_page_forecast',wallMs:performance.now()-start});await cold.close();
+   const start=performance.now();await cold.goto(url({module:'overview',subject:model.id}));await cold.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false');await cold.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+   report.samples.push({run:run+1,name:'fresh_page_overview',wallMs:performance.now()-start});await cold.close();
   }finally{await browser.close();fs.writeFileSync(path.join(out,label+'.json'),JSON.stringify(report,null,2))}
  }
  if(crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')!==report.environment.htmlSha256)throw Error('Formal HTML changed during benchmark; discard this run');

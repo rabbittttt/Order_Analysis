@@ -558,58 +558,6 @@ def _boundary_side(coverage, week):
     return None  # Already crosses the cut, overlaps it, has a gap, or is unrelated.
 
 
-def _source_date_ranges(item):
-    """Keep each physical export interval; a merged view must not invent gap days."""
-    origins = getattr(item, "_source_items", (item,))
-    return list(dict.fromkeys(span for origin in origins if (span := _source_date_range(origin))))
-
-
-def join_source_texts(*sources):
-    """Join selected physical sources, retaining each file/worksheet pairing."""
-    parts = []
-    for source in sources:
-        if isinstance(source, dict):
-            source = "｜".join(str(source.get(key) or "") for key in ("file", "sheet"))
-        for part in str(source or "").split("、"):
-            if part and part not in parts:
-                parts.append(part)
-    return "、".join(parts)
-
-
-def source_files_text(source):
-    return "、".join(dict.fromkeys(part.split("｜", 1)[0]
-                               for part in join_source_texts(source).split("、") if part))
-
-
-def cell_origin_points(sheet, row, column, filename=""):
-    """Read merge-time provenance; never infer an owner from an equal value."""
-    points = getattr(sheet, "_cell_origins", {}).get((row, column))
-    if points is not None:
-        return points
-    filename = getattr(sheet, "_source_file", None) or filename
-    return ((str(filename), sheet.title, f"{get_column_letter(column)}{row}"),) if filename else ()
-
-
-def cell_source_text(sheet, row, column, filename=""):
-    return join_source_texts(*(f"{file}｜{title}" for file, title, _ in
-                               cell_origin_points(sheet, row, column, filename)))
-
-
-def covered_date_source_text(item, sheet, day):
-    """Owner of an omitted-date zero, selected by physical export coverage."""
-    if isinstance(day, datetime):
-        day = day.date()
-    elif isinstance(day, str):
-        try:
-            day = date.fromisoformat(day[:10])
-        except ValueError:
-            return ""
-    for origin, original in getattr(sheet, "_source_matches", [(item, sheet)]):
-        if any(first <= day <= last for first, last in _source_date_ranges(origin)):
-            return f"{origin.path.name}｜{original.title}"
-    return ""
-
-
 def _add_boundary_week(previous, current, key, period, parts, reports, coverage):
     """Add only two confirmed adjoining file pieces, never an already complete week."""
     week = _week_period(period)
@@ -848,7 +796,6 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     Physical originals stay untouched and remain available in the raw-table centre.
     """
     rows, columns, values = {}, {}, {}
-    value_origins = {}
     conflicts = []
     conflict_count = 0
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
@@ -957,8 +904,6 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 key = row_key, col_key
                 period = column_periods[col]
                 current = (cell.value, cell.number_format, cell.data_type, item.path.name, cell)
-                current_origins = (cell_origin_points(sheet, row, col, item.path.name) if col > 0 else
-                                   ((item.path.name, sheet.title, cell.coordinate),))
                 if len(row_key) == 3 and _distinct_store_field(row_key) and col_key in store_period_sources:
                     # Resolve the two accepted formats within each physical
                     # source first. An actual new-format blank is unknown and
@@ -979,7 +924,6 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                 previous = values.get(key)
                 if previous is None:
                     values[key] = current
-                    value_origins[key] = current_origins
                 else:
                     merged = (_add_boundary_week(previous, current,
                                                  key, period, boundary_parts, boundary_reports, coverage)
@@ -987,8 +931,6 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
                               or (quantity_columns and _quantity_field(("数量",), cell.number_format)) else None)
                     if merged is not None:
                         values[key] = merged
-                        if merged is not previous:
-                            value_origins[key] = tuple(dict.fromkeys((*value_origins.get(key, ()), *current_origins)))
                     elif previous[0] != cell.value:
                         if key in ratio_sources:
                             ratio_conflicts.append((key, previous, current))
@@ -1116,7 +1058,6 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
     book = Workbook()
     target = book.active
     target.title = matches[0][1].title
-    target._cell_origins = {}
     first = matches[0][1]
     for row in range(1, header_rows + 1):
         for col in range(1, key_columns + 1):
@@ -1144,7 +1085,6 @@ def _merge_matrix(matches, header_rows, key_columns, *, forward_rows=(), forward
             if value is not None:
                 cell = target.cell(row, col, value[0])
                 cell.number_format, cell.data_type = value[1:3]
-                target._cell_origins[(row, col)] = value_origins.get((row_key, col_key), ())
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflicts
@@ -1171,7 +1111,6 @@ def _merge_records(matches, key_aliases, *, header_depth=1, key_parsers=()):
     """Union records by named date/hour/period fields, not physical positions."""
     aliases = [{compact_identifier(value) for value in group} for group in key_aliases]
     columns, records = {}, {}
-    record_origins = {}
     first_header = None
     conflict_count, conflicts = 0, []
     conflict_kinds = {"同文件重复键": 0, "跨文件冲突": 0}
@@ -1227,10 +1166,8 @@ def _merge_records(matches, key_aliases, *, header_depth=1, key_parsers=()):
                 previous = record.get(field)
                 value = (_source_key(cell.value) if col in key_cols and isinstance(cell.value, str)
                          and _week_period(clean_text(cell.value)) else cell.value)
-                current_origins = cell_origin_points(sheet, row, col, item.path.name)
                 if previous is None:
                     record[field] = (value, cell.number_format, cell.data_type, item.path.name, cell)
-                    record_origins[(row_key, field)] = current_origins
                 else:
                     period = next((part for part in row_key if _week_period(part)), "")
                     labels = tuple(_source_key(label) for label, _ in columns[field])
@@ -1240,9 +1177,6 @@ def _merge_records(matches, key_aliases, *, header_depth=1, key_parsers=()):
                               if _quantity_field(labels, cell.number_format) else None)
                     if merged is not None:
                         record[field] = merged
-                        if merged is not previous:
-                            record_origins[(row_key, field)] = tuple(dict.fromkeys(
-                                (*record_origins.get((row_key, field), ()), *current_origins)))
                     elif previous[0] != value:
                         issue = diagnostics.conflict(previous, current, field, row_key)
                         if issue:
@@ -1254,7 +1188,6 @@ def _merge_records(matches, key_aliases, *, header_depth=1, key_parsers=()):
     diagnostics.flush()
     target = Workbook().active
     target.title = matches[0][1].title
-    target._cell_origins = {}
     if first_header > 1:
         _copy_cells(matches[0][1], target, row_end=first_header - 1)
     for col, labels in enumerate(columns.values(), 1):
@@ -1267,7 +1200,6 @@ def _merge_records(matches, key_aliases, *, header_depth=1, key_parsers=()):
             if value is not None:
                 cell = target.cell(row, col, value[0])
                 cell.number_format, cell.data_type = value[1:3]
-                target._cell_origins[(row, col)] = record_origins.get((key, field), ())
     target._source_matches = matches
     target._merge_conflict_count = conflict_count
     target._merge_conflict_examples = conflicts
@@ -1493,7 +1425,6 @@ class WorkbookStore:
         groups = {}
         for item in items:
             for sheet in item.workbook.worksheets:
-                sheet._source_file = item.path.name
                 groups.setdefault(compact_text(sheet.title), []).append((item, sheet))
         sheets = []
         conflict_count, conflict_sheets, conflict_examples = 0, 0, []
@@ -1524,7 +1455,6 @@ class WorkbookStore:
                 self._source_aliases[(source_item.path.name, source_sheet.title)] = matches
                 self._source_aliases[(items[0].path.name, source_sheet.title)] = matches
         result = WorkbookItem(items[0].path, WorkbookView(sheets))
-        result._source_items = items
         self._combined_cache[keyword] = result
         self.multi_source_groups[keyword] = len(items)
         LOGGER.debug("多文件来源: %s | 共%d个文件全部纳入: %s", keyword, len(items), "、".join(item.path.name for item in items))
@@ -1559,9 +1489,7 @@ class WorkbookStore:
                 seen.add(id(value))
             if isinstance(value, dict):
                 matches = self._source_aliases.get((value.get("file"), value.get("sheet")))
-                # Field-level origins already identify the selected physical
-                # file. Only merged navigation references need alias expansion.
-                if matches and value.get("_physical_source") is not True:
+                if matches:
                     value["file"], value["sheet"] = matches[0][0].path.name, matches[0][1].title
                     if len(matches) > 1:
                         value["source_files"] = list(dict.fromkeys(item.path.name for item, _ in matches))
@@ -1917,8 +1845,8 @@ def parse_metric_sheet(sheet: Any) -> dict[str, dict[str, Any]]:
     period_label = _daily_period if grain_from_sheet(sheet.title) == "day" else display_period
     headers = [period_label(sheet.cell(1, col).value, sheet.cell(1, col).number_format) for col in range(4, sheet.max_column + 1)]
     # File-level total/rolling aggregates are not shared calendar observations.
-    # Keep originals in the raw-table center, but never use these for forecasts,
-    # dashboard metrics, or multi-file duplicate conflicts.
+    # Keep originals in the raw-table center, but never use these for dashboard
+    # metrics or multi-file duplicate conflicts.
     headers = ["" if re.fullmatch(r"(?:总计|合计|汇总|累计|近\d+(?:天|日|周|月))", clean_text(header))
                else header for header in headers]
     periods = [header for header in headers if header]

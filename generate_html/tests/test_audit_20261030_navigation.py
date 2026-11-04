@@ -19,9 +19,9 @@ const state={subject:'A',module:'overview',grain:'week',period:null};
 const pending=[];
 const getDashboard=()=>new Promise(resolve=>pending.push(resolve));
 const board=(grain,period)=>({views:{[grain]:{periods:[period],default_period:period}}});
-const ensure=new Function('DATA','state','subject','moduleAvailable','getDashboard','syncForecastStageToTarget',
+const ensure=new Function('DATA','state','subject','moduleAvailable','getDashboard',
  extract('  async function ensureState()','  function renderSubjectSelect()')+';return ensureState;')(
- {},state,()=>({modules:['overview','sku','raw']}),()=>true,getDashboard,async()=>{});
+ {},state,()=>({modules:['overview','sku','raw']}),()=>true,getDashboard);
 ''' + '\n(async()=>{\n' + body + '\n})().catch(e=>{console.error(e);process.exitCode=1});'
         result = subprocess.run(['node', '-e', script], cwd=ROOT, capture_output=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -65,8 +65,8 @@ console.log(JSON.stringify(state));
         result = self.run_js(r'''
 const control={},draws=[];let editor='';
 const line=source.split('\n').find(line=>line.includes('$("#subjectSelect").onchange='));
-new Function('$','captureForecastDraft','state','ensureState','renderAll','syncUrl',line)(
- ()=>control,()=>{},state,ensure,async()=>{draws.push(state.subject);editor='default';},()=>{});
+new Function('$','state','ensureState','renderAll','syncUrl',line)(
+ ()=>control,state,ensure,async()=>{draws.push(state.subject);editor='default';},()=>{});
 const old=control.onchange({target:{value:'A'}}),latest=control.onchange({target:{value:'B'}});
 pending[1](board('week','26WK43'));await latest;editor='new user input';
 pending[0](board('day','2025-05-01'));await old;
@@ -91,28 +91,6 @@ console.log(JSON.stringify({periods:$('#periodSelect').innerHTML,grain:$('#grain
 ''')
         self.assertIn('26WK43', result['periods'])
         self.assertNotIn('2025-05-01', result['periods'])
-
-    def test_pending_auto_stage_does_not_override_manual_selection(self):
-        result = self.run_js(r'''
-state.module='sales_forecast';state.forecastStageAuto=true;state.forecastStage='small';
-const sync=new Function('state','getDashboard','linkedForecastData','forecastDataFromBoard','forecastStageFromTarget',
- extract('  async function syncForecastStageToTarget()','  function syncUrl(')+';return syncForecastStageToTarget;')(
- state,getDashboard,x=>x,x=>x,()=> 'launch');
-const old=sync();state.forecastStageAuto=false;state.forecastStage='steady';
-pending[0]({target:{}});await old;console.log(JSON.stringify(state));
-''')
-        self.assertEqual(result['forecastStage'], 'steady')
-
-    def test_pending_auto_stage_does_not_change_new_subject(self):
-        result = self.run_js(r'''
-state.module='sales_forecast';state.forecastStageAuto=true;state.forecastStage='small';
-const sync=new Function('state','getDashboard','linkedForecastData','forecastDataFromBoard','forecastStageFromTarget',
- extract('  async function syncForecastStageToTarget()','  function syncUrl(')+';return syncForecastStageToTarget;')(
- state,getDashboard,x=>x,x=>x,()=> 'launch');
-const old=sync();state.subject='B';pending[0]({target:{}});await old;
-console.log(JSON.stringify(state));
-''')
-        self.assertEqual(result['forecastStage'], 'small')
 
 
 if __name__ == '__main__':

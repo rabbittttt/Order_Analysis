@@ -36,7 +36,7 @@ assert.strictEqual(fmt(null),'');
         script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
         runtime = script[script.index("  const displayText ="):script.index("  const RHYTHM_LAYOUT=")]
         runtime += script[script.index("  function renderSkuHeatmap("):script.index("  function renderComboHeatmap(")]
-        runtime += script[script.index("  function renderComboMatrix("):script.index("  function cumulative(")]
+        runtime += script[script.index("  function renderComboMatrix("):script.index("  function renderColumns(")]
         runtime += script[script.index("  function renderColumns("):script.index("  function renderCancelCards(")]
         checks = r'''
 const assert=require('assert'),values=[null,0,.25,NaN,Infinity,undefined],original=[...values],periods=values.map((_,index)=>'W'+index);
@@ -284,74 +284,7 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
 '''
         subprocess.run([node, "-e", runtime + checks], check=True, capture_output=True)
 
-    def test_sales_forecast_has_three_lifecycle_stages(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn('{id:"small",label:"小订预测"}', script)
-        self.assertIn('{id:"launch",label:"首销预测"}', script)
-        self.assertIn('{id:"steady",label:"平销预测"}', script)
-        self.assertNotIn("data-forecast-stage-nav", script)
-        self.assertNotIn("forecastNavExpanded", script)
-        self.assertIn('data-forecast-stage-switch="${stage.id}"', script)
-        self.assertIn('button.dataset.module===state.module', script)
-        self.assertIn('请选择具体车型（代际）后查看', script)
-        self.assertNotIn('class="module-subnav"', script)
-        self.assertNotIn('class="forecast-lifecycle-tabs"', script)
-        self.assertIn('if(target?.stage==="ended")return "steady"', script)
-        self.assertIn('if(target?.stage==="active")return "launch"', script)
-        self.assertIn('if(target?.stage==="before")return "small"', script)
-        self.assertIn("state.forecastStageAuto=false", script)
-        self.assertIn("activateForecastStage(button.dataset.forecastStageSwitch)", script)
-        self.assertIn("const root=document.querySelector('.forecast-workspace.forecast-v2');showForecastStageSummary(root,id);applyForecastView(root,state.forecastView||\"result\")", script)
-        self.assertIn("setForecastStageSummary(root,'small',stageLabel,source.textContent)", script)
-        self.assertIn("setForecastStageSummary(root,'launch',stageBadge,stageSource)", script)
-        self.assertIn("setForecastStageSummary(root,'steady',stageLabel,sourceText)", script)
-        self.assertIn("findStageActual(target.name,'before')", script)
-        self.assertIn("transitionTotal||(current?.total_complete!==false?current?.total:0)", script)
-        self.assertIn("整理表→小订选配比例→小订退订分时汇总", script)
-        self.assertNotIn("findStageActual(target.name,'ended')", script)
-        self.assertIn("const targetSteady=target=>history.find", script)
-        self.assertIn("actualWeeks=[...(own?.weeks||[])]", script)
-        self.assertIn('data-forecast-current-day aria-live="polite"', script)
-        self.assertNotIn("data-small-stage", script)
-        self.assertNotIn("data-steady-stage", script)
-        self.assertIn('class="forecast-tabs forecast-target-tabs"', script)
-        self.assertLess(script.index('class="forecast-tabs forecast-target-tabs"'), script.index('class="forecast-target-sources"'))
-        self.assertNotIn('class="forecast-tab-row"', script)
-        self.assertIn('data-forecast-target="smallStartDate"', script)
-        self.assertNotIn('data-forecast-target="weekday"', script)
-        self.assertIn("function applyForecastView", script)
-        self.assertIn("applyForecastView(root,state.forecastView||\"result\")", script)
-        self.assertIn("const forecastDrafts=new Map()", script)
-        self.assertIn("forecastDrafts.set(root._forecastSubjectId||state.subject", script)
-        self.assertIn("window.addEventListener(\"popstate\"", script)
-        self.assertIn('history[`${mode}State`]', script)
-        self.assertIn("scheduleForecastUpdate", script)
-        self.assertIn("scrollIntoView({block:'start'", script)
-        self.assertIn("button.setAttribute('aria-controls',`${prefix}-pane-${button.dataset.forecastTab}`)", script)
-        self.assertIn("交车锁单口径：按天预测、按周汇总", script)
-        self.assertNotIn("平销期大定 = 平销期直接大定", script)
-        self.assertIn("metric:valueKey==='lock'?'周交车锁单':'当日小订'", script)
-        self.assertIn("bindForecastLifecycleNavigation", script)
-        self.assertIn("ArrowRight", script)
-        self.assertIn(".module-bar .module-subnav", css)
-        self.assertIn("box-shadow:none;", css[css.index(".module-bar .module-nav .module-subnav button.active"):css.index(".workspace", css.index(".module-bar .module-nav .module-subnav button.active"))])
-        self.assertIn(".forecast-stage-pane.active", css)
-        self.assertIn(".forecast-steady .forecast-lifecycle-kpis article{border-top-color:#2f7fd2}", css)
-        self.assertIn(".forecast-steady .forecast-lifecycle-bars article.actual .forecast-lifecycle-bar i{background:#56a1e9}", css)
-        self.assertIn(".forecast-target-meta{grid-column:1/-1;display:grid", css)
-        self.assertIn("overflow:visible;padding-right:2px", css)
-        self.assertIn("height:auto;\n  min-height:100%;\n  overflow:visible;", css)
-        self.assertIn(".forecast-scroll-body{display:flex;flex:0 0 auto", css)
-        self.assertIn(".page-workspace.forecast-page{\n  height:auto;", css)
-        self.assertIn(".page-workspace.forecast-page>.page-workspace-body{\n  flex:0 0 auto;\n  overflow:visible;", css)
-        self.assertIn("min-height:44px", css)
 
-    def test_forecast_calendar_is_automatic(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertNotIn('data-forecast-allocation="holidays"', script)
-        self.assertIn("adjustedWorkdays", script)
-        self.assertIn("周末调休按工作日处理", script)
 
     def test_filters_are_the_last_control_group_in_the_topbar(self):
         template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
@@ -417,12 +350,11 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
         self.assertIn('$("#grainSelect").closest(".filter-group").style.display=""', script)
         self.assertNotIn('$("#grainSelect").closest("label")', script)
-        self.assertIn('["sales_forecast","generic","raw"].includes(state.module)', script)
+        self.assertIn('["generic","raw"].includes(state.module)', script)
         self.assertIn("Object.entries(DATA.config.grain_labels)", script)
-        self.assertIn("按预测阶段窗口", script)
         self.assertIn("按所选表格范围", script)
         self.assertIn('period.disabled=true', script)
-        self.assertIn('period.disabled=false', script)
+        self.assertIn('$("#periodSelect").disabled=false', script)
         self.assertIn(".topbar .filters select:disabled", css)
         self.assertIn("cursor:not-allowed", css)
 
@@ -558,465 +490,32 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
             renderer = script[script.index(start):script.index(end)]
             self.assertNotRegex(renderer, r"<rect[^>]*\brx=", msg=f"rounded corner in {start}")
 
-    def test_sales_forecast_uses_and_syncs_the_top_subject_selector(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn('moduleId==="sales_forecast"', script)
-        self.assertIn('item?.type==="generation"&&(item.modules.includes(moduleId)||DATA.subjects.some', script)
-        self.assertNotIn('state.module==="sales_forecast"&&item.type!=="generation"', script)
-        self.assertIn('const workspace=state.module==="sales_forecast"?{...page.workspace,data:linkedForecastData(page.workspace.data)}', script)
-        self.assertNotIn('data-forecast-target="name"', script)
-        self.assertIn("const targetState=()=>{const name=data.target?.name||''", script)
-        self.assertIn('$("#subjectSelect").onchange=async event=>{captureForecastDraft();state.subject=event.target.value;if(state.module==="sales_forecast")state.forecastStageAuto=true;if(await ensureState()===false)return;await renderAll();syncUrl("push")}', script)
-        self.assertNotIn('[["generation","预测代际"]]', script)
-        self.assertIn('[["group","集团"],["brand","品牌"],["generation","代际"]]', script)
 
-    def test_forecast_shared_payload_is_not_a_group_or_brand_forecast(self):
-        node = shutil.which('node')
-        if not node:
-            self.skipTest('Node unavailable')
-        script = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
-        availability = script[script.index('  const moduleAvailable='):script.index('  function forecastDataFromBoard')]
-        loader = script[script.index('  const boardCache={}'):script.index('  function subject()')]
-        navigation = script[script.index('  async function ensureState()'):script.index('  function renderSubjectSelect()')]
-        setup = """
-        const group={id:'group',type:'group',modules:['sales_forecast','overview','raw']},
-            brand={id:'brand',type:'brand',modules:['sales_forecast','raw']},
-            generation={id:'new-car',type:'generation',modules:['raw']};
-        const DATA={subjects:[group,brand,generation],dashboard_blocks:{'group|sales_forecast':'shared'}},
-            state={subject:'group',module:'sales_forecast',grain:'week'};
-        const decompressJson=async value=>({payload:value}),unpackDashboard=value=>value,
-            subject=()=>DATA.subjects.find(item=>item.id===state.subject),syncForecastStageToTarget=async()=>{};
-        """
-        checks = """
-        (async()=>{
-            if(moduleAvailable(group,'sales_forecast')||moduleAvailable(brand,'sales_forecast')||moduleAvailable(undefined,'sales_forecast'))throw Error('invalid forecast owner');
-            if(!moduleAvailable(generation,'sales_forecast'))throw Error('generation lost shared payload');
-            if(await getDashboard('group','sales_forecast')!==null)throw Error('group loaded a vehicle forecast');
-            if((await getDashboard('new-car','sales_forecast')).payload!=='shared')throw Error('shared payload lost');
-            await ensureState();if(state.module!=='overview')throw Error('group fallback invalid');
-            state.subject='brand';state.module='sales_forecast';await ensureState();
-            if(state.module!=='raw')throw Error('unavailable forecast selected as fallback');
-        })().catch(error=>{console.error(error);process.exitCode=1});
-        """
-        subprocess.run([node, '-e', setup + availability + loader + navigation + checks],
-                       text=True, encoding='utf-8', capture_output=True, check=True)
 
-    def test_sales_forecast_vehicle_and_launch_settings_are_always_visible(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertNotIn('forecast-target-editor', script)
-        self.assertIn('<div class="forecast-target-form">', script)
-        self.assertIn('.forecast-workspace.forecast-v2 .forecast-target>.forecast-target-form{grid-template-columns:repeat(7', css)
 
-    def test_sales_forecast_frontend_uses_backend_vehicle_mapping(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        self.assertIn("modelAliases=data.model_aliases||{}", script)
-        self.assertIn("const forecastModelAliases=()=>", script)
-        self.assertIn("forecastModelKey=(value,aliases=forecastModelAliases())", script)
-        self.assertIn("sameForecastModel(a,b,modelAliases)", script)
-        self.assertNotIn("const rawModelKey=value=>", script)
-        self.assertIn("model_mapping = _read_model_mapping()", module)
-        self.assertIn('"model_aliases": model_mapping', module)
-        self.assertNotIn("问界|智界|享界|尊界|尚界", script.split("const rawForecastModelKey=", 1)[1].split(";", 1)[0])
 
-    def test_sales_forecast_never_inherits_another_targets_parameters(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        linked = script.split("function linkedForecastData(data)", 1)[1].split("function linkedForecastSource", 1)[0]
-        self.assertNotIn("original.total_small", linked)
-        self.assertNotIn("original.conversion", linked)
-        self.assertNotIn("original.direct_share", linked)
-        self.assertIn("total_small:Number(option.small??0)", linked)
 
-    def test_sales_forecast_separates_observable_structure_from_reference_completion(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        refresh = (ROOT / "tools" / "refresh_sales_forecast_data.py").read_text(encoding="utf-8")
-        self.assertIn("结构、斜率和累计曲线只比较真实已发生部分", script)
-        self.assertIn("总小订量级可引用上一阶段小订预测，并明确标注", script)
-        self.assertIn("参考车型同期小转大完成率", script)
-        self.assertIn("不预先计算自身完成率", script)
-        self.assertIn("D2可观测小转大斜率", script)
-        self.assertIn("D2订单来源斜率", script)
-        self.assertIn("早期退订质量", script)
-        self.assertIn("D1小转大/D1大定", refresh)
-        self.assertIn("D1+D2小转大/D1+D2大定", refresh)
-        self.assertIn("未映射·暂按传播名", refresh)
-        self.assertIn("不计算未知的当前车型自身完成率", module)
-        self.assertIn("大定：${d1FieldSource('gross')}", script)
-        self.assertIn("D1大定按阶段顺序逐字段回退后仍缺失", script)
 
-    def test_sales_forecast_combines_progress_curves_and_uses_parameter_lines(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn("参考确认后的小转大预测完成度", script)
-        self.assertIn("参考确认后的直接大定预测完成度", script)
-        self.assertIn("截至各日真实累计量÷方法一预测终局", script)
-        self.assertIn("当前真实日不会提前归一到100%", script)
-        self.assertIn("只有首销结束日达到100%", script)
-        self.assertIn("const terminal=rows.reduce", script)
-        self.assertIn("return terminal>0?running/terminal:null", script)
-        self.assertIn("const rows=spec.observableShape?(comparison.progressRows||[]):(comparison.rows||[])", script)
-        self.assertNotIn("renderCompletionMini", script)
-        self.assertIn('ariaLabel:title,title,note,table:true,rangeMax,ratePrecision:1', script)
-        self.assertIn("方法二 · 小订转化率 by天", script)
-        self.assertIn("方法二 · 直接大定占比 by天", script)
-        self.assertIn("逐日累计小转大 ÷ 总小订", script)
-        self.assertIn("逐日累计直接大定 ÷ 逐日累计总大定", script)
 
-    def test_sales_forecast_attribute_dropdowns_only_use_vehicle_master_values(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        self.assertIn("const tierValues=[...new Set([target.tier,...(data.tiers||[])", script)
-        self.assertIn("const nodeValues=[...new Set([target.launch_node,...(data.nodes||[])", script)
-        self.assertNotIn("'标准发布','年度换代','年度改款','品牌首发','衍生款发布'", script)
-        self.assertIn('"tiers": _master_values(model_master, "产品档位")', module)
-        self.assertIn('"nodes": _master_values(model_master, "发布类型")', module)
 
-    def test_sales_forecast_has_a_scoring_tab_backed_by_the_real_score_function(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn('data-forecast-tab="score">预测打分</button>', script)
-        self.assertIn('data-forecast-pane="score"', script)
-        self.assertIn("const scoreSpecs=", script)
-        self.assertIn("const renderScoreDashboard=target=>", script)
-        self.assertIn("页面直接调用实际排序函数与同一份权重配置，不另算展示分", script)
-        self.assertIn("part.value*part.weight/effectiveWeight*100", script)
-        self.assertIn("单项相似度", script)
-        self.assertIn("折算贡献", script)
-        self.assertIn("const scoreRuleText=", script)
-        self.assertIn("const scoreRuleFor=", script)
-        self.assertIn("为什么这样打分", script)
-        self.assertIn("相似度计算规则", script)
-        self.assertIn("缺失处理", script)
-        self.assertIn("实际对比、评分规则与贡献", script)
-        self.assertIn('.forecast-pane[data-forecast-pane="score"].active', css)
-        self.assertIn(".forecast-score-rule-box", css)
-        self.assertIn(".forecast-score-detail-table th:nth-child(2),.forecast-score-detail-table td:nth-child(2){width:210px;min-width:210px;max-width:210px;white-space:normal;overflow-wrap:anywhere}", css)
 
-    def test_small_and_steady_score_pages_explain_the_actual_ranking(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        self.assertIn("function renderLifecycleScorePage", script)
-        self.assertIn("const smallScoreRules=", script)
-        self.assertIn("smallReferenceScore(item,target,current,minimumEvidence)", script)
-        self.assertIn("const steadyScoreRules=", script)
-        self.assertIn("steadyReferenceScore({...item,...right},target,left,minimumEvidence)", script)
-        self.assertIn("有效单项相似度之和", script)
-        self.assertIn("实际对比、评分规则与贡献", script)
-        self.assertIn("排序与本页明细直接调用同一个逐项评分结果", script)
-        self.assertIn("主辅权重不改变候选得分", script)
-        self.assertIn("以全首销直接大定归一化形状为主", script)
-        self.assertIn("证据不足的车型仍可人工选择", script)
-        self.assertIn("event_id||item.model", script)
-        self.assertNotIn("小订转化率、小转大占比仅参与相似度", script)
-        self.assertIn("基线优先本车型已有平销真实日", module)
-        self.assertIn("所有平销KPI、图表、周合计和来源说明均为交车锁单口径", module)
-        self.assertNotIn("最近2至4周稳健周均", module)
 
-    def test_lifecycle_result_and_evidence_share_launch_structure(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        lifecycle = script[script.index("function renderSmallOrderWorkspace"):script.index("function renderForecastWorkspaceV2")]
-        self.assertEqual(lifecycle.count("renderLifecycleConclusion("), 2)
-        self.assertEqual(lifecycle.count('class="forecast-result-main"'), 2)
-        self.assertEqual(lifecycle.count('class="forecast-method"'), 2)
-        self.assertNotIn('class="forecast-lifecycle-evidence"', lifecycle)
-        self.assertNotIn('class="forecast-lifecycle-kpis"', lifecycle)
-        self.assertIn("renderForecastEvidenceGroup('终局预测参考'", lifecycle)
-        self.assertIn("renderForecastEvidenceGroup('逐日分配与走势对照'", lifecycle)
-        self.assertIn("renderForecastEvidenceGroup('趋势参考'", lifecycle)
-        self.assertIn('renderForecastEvidenceGroup(group.title,group.note,cards,group.keys.length)', script)
-        self.assertIn('<p class="forecast-steady-chart-note">首销全周期直接大定形状决定参考；历史车型提供进入平销后的相对承接关系。本车型平销实际逐步校准规模和趋势，不套历史绝对量。</p><div class="forecast-task-chart" data-steady-reference-chart></div><div class="forecast-task-chart" data-steady-evidence', lifecycle)
-        self.assertEqual(script.count('首销全周期直接大定形状决定参考；历史车型提供进入平销后的相对承接关系。本车型平销实际逐步校准规模和趋势，不套历史绝对量。'), 1)
-        self.assertNotIn("data-steady-evidence]').innerHTML='<p>", script)
 
-    def test_small_and_steady_evidence_use_the_prediction_curves(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn("function renderLifecycleLineChart", script)
-        self.assertIn("data-small-reference-chart", script)
-        self.assertIn("data-steady-reference-chart", script)
-        self.assertIn("rebasedForecastCompletionCurve(item,field,days)", script)
-        self.assertIn("const lockValues=item=>", script)
-        self.assertIn("const recentRatio=item=>", script)
-        self.assertIn("全首销直接大定曲线规律", script)
-        self.assertIn("仅完整七天且锁单已收齐的平销周", script)
-        self.assertIn(".forecast-lifecycle-reference-chart{grid-column:1/-1", css)
-        self.assertIn(".forecast-lifecycle-line-scroll svg{height:auto;aspect-ratio:920/245}", css)
-        self.assertIn("function renderForecastEvidenceLines", script)
-        self.assertIn("target.innerHTML=renderForecastEvidenceLines({series", script)
-        self.assertIn("return renderForecastEvidenceLines({series:series.map", script)
-        self.assertIn("data-small-hourly-reference-chart", script)
-        self.assertIn("title:'D1 小订分时累计进度'", script)
-        self.assertIn("hour<=lastHour", script)
-        self.assertIn("ongoing&&!forecast.error?Number(forecast.d1)", script)
-        self.assertIn("d1Row?.orders:NaN", script)
-        self.assertIn("不使用整日数据冒充分时", script)
-        self.assertIn("role:'forecast',dashed:true", script)
-        self.assertNotIn("dashed:index>0", script)
-        self.assertIn(".forecast-task-chart .forecast-evidence-line-scroll{overflow-x:auto}", css)
 
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required for chart rendering checks")
-    def test_shared_evidence_chart_preserves_zero_missing_units_and_accessibility(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        helpers = script[script.index("  function renderForecastEvidenceLines("):script.index("  function renderLifecycleScorePage(")]
-        checks = r"""
-const assert=require('node:assert/strict');
-const esc=value=>String(value).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
-const args={series:[{label:'current <test>',values:[0,.5,null],color:'#1677FF',role:'actual'},
- {label:'reference',values:[0,.6,1],color:'#FF8A00',role:'reference'},
- {label:'future',values:[null,.5,1],color:'#00A878',role:'forecast',dashed:true}],labels:['0时','1时','2时'],hourly:true,ariaLabel:'D1 comparison'};
-const rate=renderLifecycleLineChart(args);
-assert(rate.includes('viewBox="0 0 920 245"'));
-assert(rate.includes('current &lt;test> · 最新50%'));
-assert(rate.includes('0时 · 0.0%'));
-assert(rate.includes('tabindex="0" role="img"'));
-assert.equal((rate.match(/tabindex="0" role="img"/g)||[]).length,1,'one tab stop per chart; arrows navigate data points');
-assert(rate.includes('data-chart-readout role="status"'));
-assert(rate.includes('<td>—</td>'));
-assert(rate.includes('stroke-dasharray="7 5"'));
-assert(rate.includes('查看图表数值'));
-const number=renderLifecycleLineChart({...args,unit:'number',series:[{label:'locks',values:[0,700,null],color:'#1677FF',role:'actual'}]});
-assert(number.includes('最新700单'));assert(!number.includes('100%'));assert(number.includes('0时 · 0单'));
-const gap=renderLifecycleLineChart({...args,series:[{label:'gapped',values:[0,null,1],color:'#1677FF',role:'actual'}]});
-assert.equal((gap.match(/<polyline /g)||[]).length,2,'missing values must break the line, not be interpolated');
-const close=renderLifecycleLineChart({...args,unit:'number',series:[{label:'main',values:[700,700,700],color:'#FF8A00',role:'reference'},
- {label:'aux',values:[500,500,500],color:'#7C3AED',role:'reference'}]});
-const labelPositions=[...close.matchAll(/<text x="48" y="([^"]+)"[^>]*>(?:700|500)单<\/text>/g)].map(match=>Number(match[1]));
-assert.equal(labelPositions.length,2);assert(Math.abs(labelPositions[0]-labelPositions[1])>=12,'nearby reference labels must not overlap');
-assert(renderLifecycleLineChart({...args,series:[],empty:'缺少D1分时'}).includes('缺少D1分时'));
-"""
-        result = subprocess.run([shutil.which("node"), "-e", helpers + checks], capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required for chart rendering checks")
-    def test_forecast_result_charts_keep_all_values_at_a_compact_natural_size(self):
-        script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
-        helpers = script[script.index("  const displayText ="):script.index("  const colors =")]
-        helpers += script[script.index("  function renderForecastQuantityChart("):script.index("  function renderForecastDecisionChartV2(")]
-        helpers += script[script.index("  function renderForecastEvidenceLines("):script.index("  function compactForecastScorePage(")]
-        checks = r'''
-const assert=require('node:assert/strict');
-for(const length of [1,7,35,120]){
- const rows=Array.from({length},(_,i)=>({label:'D'+(i+1),date:'2026-10-'+String(i+1).padStart(2,'0'),value:i===2?null:i===0?0:123456+i,actual:i<4,small_conversion:.2,direct_share:.3}));
- const before=JSON.stringify(rows),known=rows.filter(row=>Number.isFinite(row.value));
- for(const launch of [false,true]){
-  const html=renderForecastQuantityChart(rows,{valueKey:'value',launch}),box=html.match(/viewBox="0 0 ([\d.]+) ([\d.]+)"/),labels=[...html.matchAll(/<text data-forecast-quantity-label[^>]*>(.*?)<\/text>/g)];
-  assert.equal(Number(box[2]),220);assert.equal(labels.length,known.length);
-  assert.deepEqual(labels.map(match=>match[1]),known.map(row=>fmt(row.value)));
-  assert.equal((html.match(/<rect /g)||[]).length,known.length);
-  assert([...html.matchAll(/<rect [^>]*width="([\d.]+)"/g)].every(match=>Number(match[1])<=18));
-  assert(html.includes('tabindex="0" role="region"'));assert(html.includes('查看图表数值'));
-  if(length>12)assert(Number(box[1])>length*55,'wide quantity labels keep their own horizontal space');
- }
- const args={series:[{label:'actual',role:'actual',color:'#1677FF',values:rows.map(row=>row.value)},{label:'external',role:'reference',dashed:true,color:'#7C3AED',values:rows.map(row=>row.value)}],labels:rows.map(row=>row.date),ariaLabel:'external',unit:'number'};
- const compact=renderLifecycleLineChart({...args,compact:true});
- const grid=compact.match(/<line x1="([\d.]+)"[^>]*x2="([\d.]+)"/);
- for(const label of compact.matchAll(/<text data-forecast-external-label x="([\d.]+)"[^>]*>(.*?)<\/text>/g)){
-  assert(Number(label[1])-label[2].length*3.25>Number(grid[1]),'first value label must remain inside the plot, clear of the y-axis');
-  assert(Number(label[1])+label[2].length*3.25<Number(grid[2]),'last value label must keep space inside the plot');
- }
- assert.equal((compact.match(/data-forecast-external-label/g)||[]).length,known.length*2);
- assert.equal((compact.match(/<circle /g)||[]).length,known.length*2);
- assert(compact.includes('forecast-compact-line-scroll'));assert(compact.includes(' 220" role="img"'));
- assert(compact.includes('stroke-dasharray="7 5"'));assert(compact.includes('0单'));
- assert(renderLifecycleLineChart(args).includes('viewBox="0 0 920 245"'),'reference evidence geometry must remain unchanged');
- assert.equal(JSON.stringify(rows),before,'display must not mutate forecast rows');
-}
-'''
-        result = subprocess.run([shutil.which("node"), "-e", helpers + checks], capture_output=True, text=True, encoding="utf-8")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_sales_forecast_result_layout_stays_expanded_and_uses_horizontal_space(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        script = script[script.index('function renderForecastWorkspaceV2'):]
-        scenarios = script.index('data-forecast-region="summary"')
-        parameters = script.index('data-forecast-region="parameters"')
-        charts = script.index('data-forecast-region="curves"')
-        common = script.index('data-forecast-region="common"')
-        scale = script.index('<section class="forecast-scale-check">')
-        self.assertLess(scenarios, parameters)
-        self.assertLess(charts, parameters)
-        self.assertLess(parameters, common)
-        self.assertLess(scale, parameters)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))", css)
-        self.assertIn(".forecast-result-main>.forecast-common-controls{grid-column:1/-1", css)
-        self.assertIn(".forecast-decision-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px", css)
-        self.assertIn(".forecast-decision-card .forecast-svg-scroll svg{height:280px}", css)
-        self.assertIn(".forecast-decision-card .forecast-decision-svg{width:100%;max-width:100%;min-width:0}", css)
-        self.assertIn('class="forecast-decision-svg"', script)
-        self.assertNotIn('class="forecast-decision-svg" viewBox="0 0 ${W} ${H}" style="width:${W}px"', script)
-        self.assertIn("@media(max-width:1500px)", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-template-columns:repeat(2,minmax(0,1fr))}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-template-columns:1fr}", css)
-        self.assertNotIn('<details class="forecast-parameter-rail">', script)
 
-    def test_forecast_stage_errors_are_top_aligned_and_common_controls_precede_curves(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        small = script[script.index("function renderSmallOrderWorkspace"):script.index("function renderSteadyWorkspace")]
-        steady = script[script.index("function renderSteadyWorkspace"):script.index("function renderForecastWorkspaceV2")]
-        launch = script[script.index("data-forecast-data-error"):script.index("data-forecast-pane=\"score\"")]
-        self.assertLess(small.index('data-small-error'), small.index('id="small-forecast-pane-result"'))
-        self.assertLess(steady.index('data-steady-error'), steady.index('id="steady-forecast-pane-result"'))
-        self.assertLess(steady.index('data-steady-chart'), steady.index('data-forecast-import-anchor="steady"'))
-        self.assertLess(steady.index('data-steady-chart'), steady.index("renderStageCommonControls('steady')"))
-        self.assertLess(small.index('data-small-chart'), small.index("renderStageCommonControls('small')"))
-        self.assertLess(launch.index('data-forecast-data-error'), launch.index('id="forecast-pane-result"'))
-        self.assertLess(launch.index('data-forecast-decision-chart="parameter"'), launch.index('data-forecast-import-anchor="launch"'))
-        self.assertLess(launch.index('data-forecast-region="curves"'), launch.index('data-forecast-region="parameters"'))
-        self.assertLess(launch.index('data-forecast-region="parameters"'), launch.index('data-forecast-region="common"'))
-        self.assertLess(launch.index('data-forecast-allocation-note'), launch.index("renderBridgeControls('launch')"))
-        self.assertLess(launch.index('<section class="forecast-scale-check">'), launch.index("renderBridgeControls('launch')"))
 
-    def test_bridge_controls_use_a_compact_parameter_layout(self):
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn("[data-bridge-stage] .forecast-day-allocation{margin-top:0;padding:8px 10px", css)
-        self.assertIn("[data-bridge-stage] .forecast-allocation-inputs{grid-template-columns:repeat(3", css)
-        self.assertIn("[data-bridge-stage]>label{display:grid;grid-template-columns:minmax(150px,.38fr)", css)
-        self.assertIn(".forecast-common-controls [data-bridge-stage]{display:grid", css)
-        self.assertIn("function renderStageCommonControls(stage)", script)
-        self.assertIn("min-height:29px", css)
 
-    def test_steady_missing_lock_days_cover_the_full_steady_period(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn("expectedSteadyDates=steadyElapsedDays?Array.from", script)
-        self.assertIn("const compactMissingRanges=dates=>", script)
-        self.assertIn("已结束日交车锁单缺失或无效", script)
-        self.assertIn("交车锁单尚未更新", script)
-        self.assertIn("!daily.has(day)", script)
-        self.assertIn("steadyNotStarted=!!target.steadyStartDate&&target.steadyStartDate>today", script)
-        self.assertIn("if(!message){", script)
-        self.assertIn("const blocked=!!message", script)
-        self.assertIn("平销尚未开始", script)
-        self.assertNotIn("当前周已结束日锁单缺失或异常", script)
 
-    def test_daily_base_curve_explanation_matches_allocation_logic(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        self.assertIn("首销每日大定相对D1（基础曲线）", script)
-        self.assertIn("root._forecastDailyEvidence={adaptedDailyOrders,naturalDailyOrders,historicalFactor}", script)
-        self.assertIn("root._forecastDailyEvidence.historicalFactor(item,day)", script)
-        self.assertIn("root._forecastDailyEvidence.targetFactor=index=>", script)
-        self.assertIn("D1=100%，用于未来余量的基础形状", script)
-        self.assertIn("剔除原日期类型系数", module)
-        self.assertIn("两种方法均用主辅加权后的基础曲线衔接前一真实日", module)
 
-    def test_sales_forecast_evidence_uses_compact_reference_comparison_table(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn("参与打分参数", script)
-        self.assertIn("当前 · ${esc(target.name)}", script)
-        self.assertIn("主参考 · ${esc(name(selected[0],'未选择'))}", script)
-        self.assertIn("辅助参考 · ${esc(name(selected[1],'未选择'))}", script)
-        self.assertIn("单项打分", script)
-        self.assertIn("综合得分", script)
-        self.assertIn('<details class="forecast-ref-score-details"><summary>查看评分对比表</summary>', script)
-        self.assertNotIn('<details class="forecast-ref-score-details" open>', script)
-        self.assertIn(".forecast-ref-comparison table", css)
-        self.assertIn(".forecast-ref-score-details>.forecast-ref-comparison", css)
-        self.assertNotIn("reason.textContent=selected.length", script)
 
-    def test_sales_forecast_score_explanations_match_the_components_used(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn("D2小转大/D2大定", script)
-        self.assertIn("D1小转大占前两日", script)
-        self.assertIn("D1直接大占前两日", script)
-        self.assertIn("D2单日退订率", script)
-        self.assertIn("/2项可用（留存大定率、大定到锁单率）", script)
-        self.assertNotIn("lockData*3", script)
-        self.assertNotIn("得分${Math.round(part.value*100)}", script)
 
-    def test_sales_forecast_six_logic_fixes_are_observable(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        refresh = (ROOT / "tools" / "refresh_sales_forecast_data.py").read_text(encoding="utf-8")
-        self.assertIn("parameterRawSmall", script)
-        self.assertIn("KPI与未来剩余量已同步到真实下限", script)
-        self.assertIn("curveShapeCloseness", script)
-        self.assertIn("D1～当前Dn归一化斜率", script)
-        self.assertIn("不参与参考车型评分", script)
 
-    def test_sales_forecast_has_one_interactive_calculation_owner(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        self.assertNotIn("def _match_score", module)
-        self.assertNotIn("def _recommendations", module)
-        self.assertNotIn("window_profile", module)
-        self.assertNotIn("function renderForecastWorkspace(data)", script)
-        self.assertNotIn("function bindForecastWorkspace()", script)
-        self.assertEqual(script.count("const scoreParts="), 1)
 
-    def test_sales_forecast_rebases_horizon_and_separates_past_gaps(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        forecast_math = (ROOT / "templates" / "forecast-math.js").read_text(encoding="utf-8")
-        self.assertIn("const rebasedForecastCompletion=", script)
-        self.assertIn("const extendForecastCurve=", script)
-        self.assertIn("const rebasedForecastCompletionCurve=", script)
-        self.assertIn("comparison?.progressRows?.length", script)
-        self.assertNotIn("values=cumulativeNormalized(values.slice(0,count))", script)
-        self.assertIn("保留头两天、尾两天各日占比，中间按比例拉伸", script)
-        self.assertIn("const adaptedDailyOrders=", script)
-        self.assertIn("past_missing", script)
-        self.assertIn("过期缺失补估", script)
-        self.assertIn("quotas.map(Math.floor)", forecast_math)
-        self.assertIn("参数实时生效", script)
-        self.assertIn('data-forecast-feedback role="status" aria-live="polite"', script)
-        self.assertNotIn("data-forecast-confirm", script)
-        self.assertNotIn("confirmedReferenceSnapshot", script)
 
-    def test_sales_forecast_excludes_delivery_metrics(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        module = (ROOT / "modules" / "sales_forecast.py").read_text(encoding="utf-8")
-        refresh = (ROOT / "tools" / "refresh_sales_forecast_data.py").read_text(encoding="utf-8")
-        for text in (script, module, refresh):
-            self.assertNotIn("首销期交付", text)
-            self.assertNotIn("交付/锁单", text)
-            self.assertNotIn("delivery_rate", text)
-        self.assertIn("item?.d1_valid===false", script)
-        self.assertIn('calculated_lock_rate = safe_div(record.get("首销期锁单"), record.get("大定量"))', refresh)
-        self.assertNotIn('calculated_lock_rate = safe_div(lock, net)', refresh)
-        self.assertNotIn('write_rows(workbook, "人工校准参数"', refresh)
-        self.assertNotIn('record.get("参考锁单率")', module)
 
-    def test_sales_forecast_uses_shared_lock_parameter_and_compact_layout(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        refresh = (ROOT / "tools" / "refresh_sales_forecast_data.py").read_text(encoding="utf-8")
-        parameter_block = script.split('forecast-parameter-controls', 1)[1].split('data-forecast-region="common"', 1)[0]
-        self.assertNotIn('data-forecast-input="lock"', parameter_block)
-        self.assertIn('class="forecast-common-lock">大定到锁单率', script)
-        self.assertIn('首销期锁单 ÷ 总大定', script)
-        self.assertIn('"首销期锁单", "大定到锁单率"', refresh)
-        self.assertIn('.forecast-v2 .forecast-ref-grid{grid-template-columns:repeat(2,minmax(0,1fr))', css)
-        self.assertIn('.forecast-common-controls{grid-column:1/-1', css)
-        self.assertLess(script.index('forecast-progress-controls'), script.index('forecast-d1-card'))
 
-    def test_forecast_short_panels_keep_natural_height_and_reference_charts_use_half_width(self):
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn(".forecast-lifecycle-grid{display:grid;grid-template-columns:minmax(300px,.72fr) minmax(0,1.55fr);gap:12px;align-items:start}", css)
-        self.assertIn(".forecast-lifecycle-evidence{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,.7fr);gap:12px;align-items:start}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:start;min-width:0;min-height:0}", css)
-        self.assertIn(".forecast-result-main{display:grid;grid-template-columns:minmax(0,1fr);", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-control-grid .forecast-assumptions{min-width:0;", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-input-grid label{min-width:0;overflow-wrap:anywhere;", css)
-        self.assertIn("@media(min-width:1001px){.forecast-lifecycle-workspace .forecast-lifecycle-grid{grid-template-columns:minmax(0,1fr)}", css)
-        self.assertIn(".forecast-lifecycle-workspace .forecast-lifecycle-controls{display:grid;grid-template-columns:minmax(220px,.55fr) minmax(0,1.45fr);align-items:center", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-progress-controls .forecast-input-grid{grid-template-columns:repeat(2,minmax(0,1fr))}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-parameter-controls .forecast-input-grid{grid-template-columns:repeat(3,minmax(0,1fr))}", css)
-        self.assertIn('.forecast-v2 .forecast-pane[data-forecast-pane="score"].active{min-width:0;max-width:100%;box-sizing:border-box;overflow-x:hidden;overflow-y:auto}', css)
-        self.assertIn(".forecast-v2 .forecast-score-table{min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-ref-grid>.forecast-ref-card:only-child{grid-column:auto}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-small-order .forecast-ref-grid>.forecast-ref-card:nth-child(3):last-child{grid-column:auto}", css)
-        self.assertIn(".forecast-workspace.forecast-v2 .forecast-steady .forecast-ref-grid>.forecast-steady-shared-reference{grid-column:1/-1}", css)
-        self.assertIn('class="forecast-ref-card forecast-steady-shared-reference"', script)
-        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference{grid-template-columns:repeat(2,minmax(0,1fr))}", css)
-        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-steady-chart-note{grid-column:1/-1;", css)
-        self.assertIn(".forecast-workspace.forecast-studio .forecast-steady-shared-reference>.forecast-task-chart{grid-column:auto;margin-top:10px;padding-top:10px;border-color:var(--line)}", css)
-        self.assertIn('grid-row:span 6;grid-template-rows:subgrid;row-gap:0;align-content:start', css)
-        self.assertIn('grid-row:span 2;grid-template-rows:subgrid;align-items:start;row-gap:3px', css)
-        self.assertIn(".forecast-workspace.forecast-studio .forecast-controls-rail>.forecast-scale-check{grid-column:1/-1}", css)
 
     def test_history_tables_follow_the_top_grain_without_local_selector(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
@@ -1024,34 +523,8 @@ for(const length of [1,7,35,120]){
         self.assertNotIn("data-history-select", script)
         self.assertNotIn("history-toolbar", script)
 
-    def test_sales_forecast_blocks_both_methods_on_raw_data_errors(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn('data-forecast-data-error role="alert" aria-live="assertive"', script)
-        self.assertIn("rawDataError", script)
-        math_script = (ROOT / "templates" / "forecast-math.js").read_text(encoding="utf-8")
-        self.assertIn("const available=!rawDataError", math_script)
-        self.assertIn("const available=!rawDataError&&historyComplete", math_script)
-        self.assertIn("showForecastCondition", script)
-        self.assertIn("其他可用方法及已知实际数据保留", script)
-        self.assertIn("hasSmall?(Number.isSafeInteger(small)&&small>0&&baseConversion>0&&baseConversion<=1&&baseShare>=0&&baseShare<1)", math_script)
-        self.assertIn(".forecast-data-error", css)
 
 
-    def test_forecast_workflow_is_discoverable_and_details_remain_available(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn('class="forecast-target-settings"', script)
-        self.assertIn('class="forecast-source-details"', script)
-        self.assertIn('data-forecast-stage-switch=', script)
-        self.assertNotIn('data-forecast-jump="curve"', script)
-        self.assertNotIn('data-forecast-jump="import"', script)
-        self.assertNotIn('class="forecast-quick-actions forecast-result-actions"', script)
-        self.assertIn('data-forecast-import-file', script)
-        self.assertIn("role:'reference',dashed:true", script)
-        self.assertIn("hourly:!!spec.hourly,extra:'',table:true", script)
-        self.assertIn("D1、D2及最后两天的日占比保持不变", script)
-        header = script.split('<section class="forecast-target">', 1)[1].split('</section>', 1)[0]
-        self.assertNotIn("data-forecast-jump", header)
 
     def test_raw_search_has_live_count_empty_state_and_mobile_picker(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
@@ -1061,109 +534,20 @@ for(const length of [1,7,35,120]){
         self.assertIn('id="rawFile" aria-label="选择底表文件"', script)
         self.assertIn('$("#rawEmpty").hidden=filtered.length>1', script)
 
-    def test_import_boundary_dates_follow_the_selected_stage(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn('return windows[preferred]?preferred:', script)
-        self.assertIn("metric,quantity,stage:metric==='small'", script)
-        self.assertIn('stageFor(row.date,target,stage)===stage', script)
-        self.assertIn("status.dataset.state='error'", script)
 
     def test_navigation_discards_stale_pages_and_source_jump_preserves_back_path(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn('revision!==pageRevision||moduleId!==state.module', script)
         self.assertIn('revision!==rawRenderRevision||state.module!=="raw"', script)
         source_jump = script.split('async function jumpToSource(source)', 1)[1].split('function showToast', 1)[0]
-        self.assertIn('captureForecastDraft()', source_jump)
         self.assertIn('await renderAll();syncUrl("push")', source_jump)
 
-    def test_forecast_manual_drafts_and_imports_are_saved_locally(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn("const forecastStorageKey='harmony-forecast-v1:'+location.pathname", script)
-        self.assertIn("localStorage.setItem(forecastStorageKey", script)
-        self.assertIn("localStorage.getItem(forecastStorageKey)", script)
-        self.assertIn("root._forecastTouched?.has(forecastDraftControlKey(control))", script)
-        self.assertIn("root._forecastRestoreDraft?.(draft.meta||{})", script)
-        self.assertIn("data-forecast-reset", script)
-        self.assertIn("本机保存失败", script)
-
-    def test_import_merge_identity_includes_stage_and_explicit_replace_is_confirmed(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        self.assertIn('<option value="merge">合并（同指标同日更新）</option>', script)
-        self.assertIn("mode==='replace'&&previous?.rows.length&&!window.confirm(", script)
-        self.assertIn("const key=metricOf(row)+'|'+row.date", script)
-        self.assertIn("source:file.name", script)
-
-    def test_vehicle_parameters_stay_expanded_at_all_widths(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        self.assertIn('<div class="forecast-target-settings" role="group" aria-label="车型与时间参数">', script)
-        self.assertNotIn('<details class="forecast-target-settings">', script)
-        self.assertIn('grid-template-columns:repeat(7,minmax(0,1fr))', css)
-        self.assertIn('grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:5px 7px', css)
-        self.assertIn('grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:5px 6px', css)
 
 
-    def test_forecast_source_brief_stays_outside_collapsible_details(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        header = script.split('<section class="forecast-target">', 1)[1].split('</section>', 1)[0]
-        for marker in ('data-forecast-source-brief', 'data-forecast-time-brief'):
-            self.assertLess(header.index(marker), header.index('<details class="forecast-source-details">'))
-        self.assertIn('<summary>来源与时间详情</summary>', header)
-        self.assertIn('data-forecast-day-source', header)
-        self.assertIn('data-forecast-time-summary', header)
-        self.assertGreaterEqual(script.count('refreshForecastHeaderBrief(root)'), 3)
 
-    def test_forecast_secondary_tabs_are_lightweight_and_keyboard_visible(self):
-        css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
-        block = css.split('/* One stage entry point, followed by an aligned content-view switcher. */', 1)[1]
-        primary = re.search(r'\.forecast-stage-switcher button\[aria-pressed=true\]\{([^}]+)\}', block).group(1)
-        secondary = re.search(r'\.forecast-target-tabs button\[aria-selected=true\]\{([^}]+)\}', block).group(1)
-        self.assertIn('background:#0d63ce', primary)
-        self.assertIn('background:transparent', secondary)
-        self.assertIn('border-bottom-color:#0d63ce', secondary)
-        self.assertIn('border-left:1px solid #ccdae8', block)
-        self.assertIn('.forecast-target-tabs button:focus-visible', block)
-        self.assertIn('display:flex;flex-wrap:wrap;align-items:center', block)
 
-    @unittest.skipUnless(shutil.which("node"), "Node.js is required for display formatter checks")
-    def test_forecast_source_brief_preserves_mixed_sources_errors_and_judgement_date(self):
-        script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
-        helpers = script[script.index("  function forecastSourceBrief(text){"):
-                         script.index("  function showForecastStageSummary(")]
-        checks = r"""
-const assert=require('node:assert/strict');
-assert.equal(forecastSourceBrief('首销期已结束；主来源小订及首销数据整理（预测基准总表）；字段来源：首销日明细：小订及首销数据整理；总小订：小订及首销数据整理；分时进度：首销期订单节奏'),
-  '混合来源：整理表＋首销节奏');
-assert.equal(forecastSourceBrief('主来源小订及首销数据整理（预测基准总表）；字段来源：总小订：小订及首销数据整理'),
-  '来源：整理表');
-assert.equal(forecastSourceBrief('最终总小订取自小订及首销数据整理。逐日形状使用“小订by天”真实曲线。'),
-  '总小订：整理表');
-assert.equal(forecastSourceBrief('已发生4个完整日；分时累计仅作参考'), '实绩：4个完整日');
-assert.equal(forecastSourceBrief('主辅参考车型测算'), '参考测算');
-assert.equal(forecastSourceBrief('已结束日锁单缺失或异常（共490天）'), '数据缺失/异常');
-const source={textContent:'已结束日锁单缺失或异常（共490天）'},
-      time={textContent:'判定日期2026-09-23（数据生成于2026-09-22 09:57）；首销窗口2025-03-20 ~ 2025-05-06'},
-      brief={dataset:{}},date={};
-const nodes={'[data-forecast-day-source]':source,'[data-forecast-time-summary]':time,
- '[data-forecast-source-brief]':brief,'[data-forecast-time-brief]':date};
-const root={querySelector:selector=>nodes[selector]};
-refreshForecastHeaderBrief(root);
-assert.equal(date.textContent,'判定日 2026-09-23');
-assert.equal(date.title,time.textContent);
-assert.equal(brief.title,source.textContent);
-assert.equal(brief.dataset.warning,'true');
-source.textContent='主辅参考车型测算';
-refreshForecastHeaderBrief(root);
-assert.equal(brief.dataset.warning,'false');
-assert.equal(brief.textContent,'参考测算');
-assert.equal(source.textContent,'主辅参考车型测算');
-assert.doesNotThrow(()=>refreshForecastHeaderBrief({querySelector:()=>null}));
-"""
-        result = subprocess.run(
-            [shutil.which("node"), "-e", helpers + checks],
-            capture_output=True, text=True, encoding="utf-8", timeout=20,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
+
+
 
 if __name__ == "__main__":
     unittest.main()

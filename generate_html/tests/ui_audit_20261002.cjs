@@ -1,7 +1,7 @@
 // Audit the formal main.py output only; screenshots never modify its data.
 const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
 const project=path.resolve(__dirname,'../../..');
-const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwright'));
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const phase=process.argv.includes('--before')?'before':'after';
 const output=path.join(project,'.test_outputs/ui_audit_20261002',phase);
 const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
@@ -27,28 +27,20 @@ const results={phase,pages:[],errors:[]};
     content:document.querySelector('#page').innerText.slice(0,180)
    })));
   }
-  if(params.module==='sales_forecast')entry.values=await page.evaluate(()=>{const root=document.querySelector('.forecast-workspace');return {comparison:root._forecastComparison,small:root._smallForecastResult,steady:root._steadyForecastResult};});
   results.pages.push(entry);console.log('AUDIT',key);
  }
  try{
   await page.goto(base.href);await ready();
   const data=await page.evaluate(()=>({subjects:window.DASHBOARD_DATA.subjects,modules:window.DASHBOARD_DATA.config.module_order}));
-  const generation=data.subjects.find(s=>s.name==='问界 M9 2026款')||data.subjects.find(s=>s.type==='generation'&&s.modules.includes('sales_forecast'));
   for(const module of data.modules){
-   if(module==='sales_forecast')continue;
    const subject=module==='raw'?data.subjects[0]:data.subjects.find(s=>s.type==='generation'&&s.modules.includes(module))||data.subjects.find(s=>s.modules.includes(module));
    if(subject)await visit(module,{module,subject:subject.id});
    else results.pages.push({key:module,skipped:'当前本地数据无可用主体'});
   }
-  for(const stage of ['small','launch','steady'])for(const view of ['result','evidence','score'])
-   await visit('forecast-'+stage+'-'+view,{module:'sales_forecast',subject:generation.id,forecastStage:stage,forecastView:view});
   if(phase==='after'){
    assert.deepEqual(results.errors,[]);
-   const before=JSON.parse(fs.readFileSync(path.join(output,'../before/report.json'),'utf8'));
    for(const entry of results.pages){
     for(const size of entry.widths||[])assert(size.documentWidth<=size.width+1,entry.key+' horizontal overflow');
-    // Baseline JSON omits undefined object properties; compare the same serialized shape.
-    if(entry.values)assert.deepEqual(JSON.parse(JSON.stringify(entry.values)),before.pages.find(p=>p.key===entry.key).values,entry.key+' prediction values changed');
    }
   }
  }finally{await browser.close();fs.writeFileSync(path.join(output,'report.json'),JSON.stringify(results,null,2));}

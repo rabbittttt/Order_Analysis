@@ -4,27 +4,22 @@ import argparse
 import base64
 import json
 import logging
-import re
 import os
 import shutil
-import subprocess
 import sys
 import webbrowser
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from time import perf_counter
 from typing import Any
-from openpyxl import load_workbook
 
 from core.components import add_kpi_comparisons
-from core.china_calendar import PUBLISHED_YEARS
 from core.config import load_config
 from core.data_paths import orders_input_directory
 from core.discovery import discover_subjects, set_capabilities
-from core.excel import WorkbookItem, WorkbookStore, clean_text, format_excel_cell, load_data_workbook, reset_conflict_diagnostics
-from core.forecast_summary import SUMMARY_NAME, visible_target_names
-from core.model_identity import FORECAST_SOURCE_PATH
+from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
+from core.model_identity import STAGE_SOURCE_PATH
 from core.renderer import b64gzip, render_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
@@ -40,7 +35,7 @@ DIAGNOSTIC_COUNTS = {"WARNING": 0, "ERROR": 0}
 
 
 class DuplicateDiagnosticFilter(logging.Filter):
-    """Emit the same issue once across refresh and build, never hide new issues."""
+    """Emit the same issue once per build, never hide new issues."""
 
     def __init__(self):
         super().__init__()
@@ -55,7 +50,6 @@ class DuplicateDiagnosticFilter(logging.Filter):
                     or "[Excel格式兼容]" in message)
         result = True
         if eligible:
-            message = re.sub(r"^\[销量预测刷新\]\s*", "", message)
             key = record.levelno, message
             result = key not in self.seen
             self.seen.add(key)
@@ -77,85 +71,6 @@ class DiagnosticCollector(logging.Handler):
             if message not in self.seen:
                 self.seen.add(message)
                 BUILD_DIAGNOSTICS.append(message)  # Only the final inventory is unique; console/file output is untouched.
-
-
-def relay_refresh_line(line: str, previous_level: int = logging.INFO) -> int:
-    """Preserve severity, strip duplicate level prefixes, and keep tracebacks as errors."""
-    text = line.rstrip("\r\n")
-    if not text:
-        return previous_level
-    prefix = re.match(r"^\[(DEBUG|INFO|WARNING|ERROR|CRITICAL)\]\s*(.*)$", text)
-    continuation = False
-    if prefix:
-        level, text = getattr(logging, prefix[1]), prefix[2]
-    elif text.startswith("Traceback (most recent call last)"):
-        level, continuation = logging.ERROR, previous_level >= logging.ERROR
-    elif re.search(r":\s*\w*Warning:", text):
-        if ("openpyxl" in text and any(text.endswith(message) for message in (
-                "UserWarning: Unknown extension is not supported and will be removed",
-                "UserWarning: Conditional Formatting extension is not supported and will be removed"))):
-            extension = "条件格式扩展" if "Conditional Formatting" in text else "扩展格式"
-            LOGGER.info("[销量预测刷新] [Excel格式兼容] openpyxl不支持%s；通常不影响销量数值读取，重新保存时该扩展可能丢失，不表示原始文件已被删除或改写", extension)
-            return logging.INFO
-        level = logging.WARNING
-    else:
-        if previous_level == logging.INFO and text.strip() == "warn(msg)":
-            return previous_level  # Source-code context for the compatibility notice, not another issue.
-        level = previous_level if previous_level >= logging.WARNING else logging.INFO
-        continuation = previous_level >= logging.WARNING
-    LOGGER.log(level, "[销量预测刷新] %s", text, extra={"diagnostic_continuation": continuation})
-    return level
-
-
-def refresh_sales_forecast_data(config: dict[str, Any], input_dir: Path | None = None) -> None:
-    """Optionally rebuild the secondary forecast workbook with this Python runtime."""
-    if not config.get("refresh_sales_forecast_data_before_build", False):
-        LOGGER.info("销量预测二次处理刷新：已按 config.json 跳过")
-        return
-    script = ROOT / "tools" / "refresh_sales_forecast_data.py"
-    if not script.exists():
-        raise FileNotFoundError(f"已开启销量预测二次处理刷新，但找不到脚本：{script}")
-    LOGGER.info("销量预测二次处理刷新：开始运行 %s", script)
-    child_env = os.environ.copy()
-    child_env["PYTHONIOENCODING"] = "utf-8"
-    child_env["PYTHONUTF8"] = "1"
-    command = [sys.executable, "-u", str(script)]
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        command.append("--debug")
-    if input_dir is not None:
-        command.extend(["--orders", str(input_dir.resolve())])
-        command.extend(["--output", str((input_dir / SUMMARY_NAME).resolve())])
-    if config.get("forecast_as_of_date"):
-        command.extend(["--as-of-date", str(config["forecast_as_of_date"])])
-    with subprocess.Popen(
-        command,
-        cwd=script.parent,
-        env=child_env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        bufsize=1,
-        encoding="utf-8",
-        errors="replace",
-    ) as process:
-        level = logging.INFO
-        for line in process.stdout:
-            level = relay_refresh_line(line, level)
-        returncode = process.wait()
-    if returncode:
-        raise RuntimeError(f"销量预测二次处理刷新失败，退出码 {returncode}")
-    LOGGER.info("销量预测二次处理刷新：完成")
-
-
-def forecast_target_names(summary_path: Path) -> list[str]:
-    """Use the refreshed forecast's own target list for subject discovery."""
-    if not summary_path.exists():
-        return []
-    workbook = load_workbook(summary_path, read_only=True, data_only=True)
-    try:
-        return visible_target_names(workbook)
-    finally:
-        workbook.close()
 
 
 class LevelFormatter(logging.Formatter):
@@ -307,20 +222,12 @@ def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, st
     return files, blocks
 
 
-def build(
-    input_dir: Path, output_file: Path, *, disable_sales_forecast: bool = False
-) -> tuple[dict[str, Any], list[str]]:
+def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]]:
     build_started = perf_counter()
     LOGGER.info("开始生成订单分析看板")
     LOGGER.info("输入目录: %s", input_dir)
     LOGGER.info("输出文件: %s", output_file)
     config = load_config(ROOT / "config.json")
-    # Forecast now has its own project; legacy flags/config cannot re-enable it here.
-    config["module_order"] = [name for name in config.get("module_order", []) if name != "sales_forecast"]
-    config["module_labels"] = {name: label for name, label in config.get("module_labels", {}).items() if name != "sales_forecast"}
-    config.pop("refresh_sales_forecast_data_before_build", None)
-    config.pop("forecast_as_of_date", None)
-    order_modules = [module for module in MODULES if module.id != "sales_forecast"]
     if config.get("chart_render_mode") not in {"original", "generated"}:
         raise ValueError("config.json 的 chart_render_mode 必须是 original 或 generated")
     manifest_mode = config.get("build_manifest_mode", "compact")
@@ -328,8 +235,9 @@ def build(
         raise ValueError("config.json 的 build_manifest_mode 必须是 compact、full 或 off")
     store = WorkbookStore(input_dir, cache_dir=output_file.parent / ".cache" / "excel")
     stage_started = perf_counter()
-    raw_only_names = (SUMMARY_NAME, FORECAST_SOURCE_PATH.name)
-    store.load(exclude_names=set(raw_only_names), data_only_view=config.get("chart_render_mode") == "generated")
+    # These workbooks describe stage identities or a separate report, not order sheets.
+    excluded_names = {"鸿蒙智行销量数据汇总.xlsx", STAGE_SOURCE_PATH.name}
+    store.load(exclude_names=excluded_names, data_only_view=config.get("chart_render_mode") == "generated")
     load_seconds = perf_counter() - stage_started
     if not store.items:
         details = "；".join(store.load_errors) if store.load_errors else "目录中没有xlsx文件"
@@ -345,13 +253,13 @@ def build(
         runtime_warnings = list(store.load_errors)
         module_seconds: dict[str, float] = defaultdict(float)
         module_builds: dict[str, int] = defaultdict(int)
-        for module in order_modules:
+        for module in MODULES:
             set_config = getattr(module, "set_config", None)
             if set_config:
                 set_config(config)
         for subject in subjects:
             matched_modules = []
-            for module in order_modules:
+            for module in MODULES:
                 if hasattr(module, "set_dashboards"):
                     module.set_dashboards(dashboards)
                 module_started = perf_counter()
@@ -372,11 +280,11 @@ def build(
                 matched_modules.append(module.label)
             LOGGER.debug("主体映射完成: %s -> %s", subject.name, "、".join(matched_modules) if matched_modules else "仅底表")
         configured_order = config.get("module_order") or []
-        known_modules = {module.id for module in order_modules} | {"raw"}
+        known_modules = {module.id for module in MODULES} | {"raw"}
         unknown_modules = [module for module in configured_order if module not in known_modules]
         if unknown_modules:
             LOGGER.warning("[\u914d\u7f6e\u6821\u9a8c] module_order \u5305\u542b\u672a\u77e5\u6a21\u5757: %s", "\u3001".join(unknown_modules))
-        missing_modules = [module.id for module in order_modules if module.id not in configured_order]
+        missing_modules = [module.id for module in MODULES if module.id not in configured_order]
         if missing_modules:
             LOGGER.warning("[\u914d\u7f6e\u6821\u9a8c] module_order \u672a\u914d\u7f6e\u5df2\u6ce8\u518c\u6a21\u5757: %s", "\u3001".join(missing_modules))
         set_capabilities(subjects, capabilities, configured_order)
@@ -385,11 +293,9 @@ def build(
             LOGGER.info("多文件来源：%d类，共%d个文件匹配项参与合并；详细文件名可使用 --debug 查看",
                         len(store.multi_source_groups), sum(store.multi_source_groups.values()))
         stage_started = perf_counter()
-        # Forecast-only workbooks stay outside the order report and its raw center.
         raw_files, raw_blocks = raw_tables(store)
         raw_seconds = perf_counter() - stage_started
         manifest = {
-            "app_mode": "order",
             "meta": {
                 "title": config["title"],
                 "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -480,11 +386,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")
     parser.add_argument("--debug", action="store_true", help="输出调试日志，用于排查数据解析问题。")
-    parser.add_argument(
-        "--disable-sales-forecast",
-        action="store_true",
-        help=argparse.SUPPRESS,  # Accepted for old launchers; this project is always order-only.
-    )
     return parser.parse_args()
 
 
@@ -510,9 +411,7 @@ def main() -> int:
     args = parse_args()
     log_file = configure_runtime(args.output.parent, args.debug)
     try:
-        manifest, warnings = build(
-            args.input, args.output, disable_sales_forecast=args.disable_sales_forecast
-        )
+        manifest, warnings = build(args.input, args.output)
     except Exception:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)

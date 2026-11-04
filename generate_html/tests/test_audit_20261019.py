@@ -12,39 +12,9 @@ from openpyxl import Workbook
 from core.excel import WorkbookItem, WorkbookStore
 from core.models import Subject
 from core.renderer import render_dashboard
-from modules.sales_forecast import _history_item
 from modules.sku import SkuModule
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-class ConfirmedLockTerminalTests(TestCase):
-    def test_missing_lock_is_not_a_zero_terminal(self):
-        for value in (None, '', '#DIV/0!', True, -1, float('nan'), float('inf')):
-            with self.subTest(value=value):
-                self.assertIsNone(_history_item({'首销期锁单': value}, True)['lock'])
-
-    def test_confirmed_zero_and_positive_lock_are_retained(self):
-        for value, expected in ((0, 0), ('0', 0), (80, 80), ('1,234', 1234)):
-            with self.subTest(value=value):
-                self.assertEqual(_history_item({'首销期锁单': value}, True)['lock'], expected)
-
-    @skipUnless(shutil.which('node'), 'Node.js required')
-    def test_ended_fallback_distinguishes_zero_unknown_and_mismatched_values(self):
-        source = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
-        expression = re.search(r'endedLockReference=(.*?),actualLock=', source)[1]
-        script = r'''
-const choose=new Function('stageInfo','completeLock','historyList','target','actualGross','sameModel','return '+JSON.parse(process.argv[1]));
-const base={model:'测试车',launch_date:'2026-01-01',days:2,gross:200,lock:0};
-const cases=[base,{...base,lock:80},{...base,lock:null},{...base,lock:-1},
- {...base,lock:201},{...base,gross:201},{...base,days:3},{...base,model:'其他车'}];
-console.log(JSON.stringify(cases.map(item=>choose({key:'ended'},false,[item],
- {name:'测试车',launchDate:'2026-01-01',days:2},200,(a,b)=>a===b)?.lock??null)));
-'''
-        result = subprocess.run(['node', '-e', script, json.dumps(expression)],
-                                capture_output=True, text=True, encoding='utf-8', cwd=ROOT)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout), [0, 80, None, None, None, None, None, None])
 
 
 class SkuPeriodAlignmentTests(TestCase):
