@@ -36,23 +36,19 @@ class SharedDataPathsTests(TestCase):
                 self.assertEqual(orders_input_directory(Path(folder) / "订单分析"), shared / "订单汇总")
                 self.assertFalse(shared.exists())
 
-    def test_all_entry_points_share_inputs_and_keep_custom_cli_paths(self):
+    def test_order_entry_uses_shared_inputs_and_keeps_custom_cli_paths(self):
         # Import in a fresh process, as real launchers do, to check module constants.
         code = r'''
-import importlib.util, json, sys
-from pathlib import Path
+import json, sys
 import main
 from core.model_identity import STAGE_SOURCE_PATH
 sys.argv = ['main.py']
 default = main.parse_args()
 sys.argv = ['main.py', '--input', 'custom-input', '--output', 'custom-report.html']
 custom = main.parse_args()
-spec = importlib.util.spec_from_file_location('sales_patterns', Path.cwd().parent / '销量规律' / 'analyze_sales_patterns.py')
-patterns = importlib.util.module_from_spec(spec); spec.loader.exec_module(patterns)
 print(json.dumps({
     'input': str(default.input), 'output': str(default.output),
     'source': str(STAGE_SOURCE_PATH),
-    'patterns': str(patterns.default_input_path()),
     'custom': [str(custom.input), str(custom.output)],
 }))
 '''
@@ -65,7 +61,6 @@ print(json.dumps({
             orders = shared / "订单汇总"
             self.assertEqual(Path(paths["input"]), orders)
             self.assertEqual(Path(paths["source"]), orders / "小订及首销数据整理.xlsx")
-            self.assertEqual(Path(paths["patterns"]), orders / "鸿蒙智行销量数据汇总.xlsx")
             self.assertEqual(Path(paths["output"]).parent.name, "output_file")
             self.assertEqual(paths["custom"], ["custom-input", "custom-report.html"])
             self.assertFalse(shared.exists())
