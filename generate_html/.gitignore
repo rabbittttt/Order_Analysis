@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 output/
+
+# Local update helper.
+update_script.bat
