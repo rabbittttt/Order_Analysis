@@ -32,7 +32,20 @@
   const esc = value => displayText(value).replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
   const numberFormatter = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 1});
   const fmt = value => typeof value === "number" ? numberFormatter.format(value) : esc(value);
-  const colors = {blue:"#1677FF",green:"#00B578",orange:"#FF8A00",purple:"#7C3AED",coral:"#FF4D6D"};
+  const colors = {blue:"#2859f5",green:"#249463",orange:"#cd681a",purple:"#7655bb",coral:"#b72d59"};
+  const moduleIcons = {
+    overview:"M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
+    channel_analysis:"M4 20h16M7 16v-5m5 5V7m5 9V4",
+    cancellation:"M4 5v15h16M7 10l4 3 4-5 5 2",
+    launch_rhythm:"M3 13h4l2-7 4 13 3-9 2 3h3",
+    conversion:"M3 4h18l-7 8v7l-4 2v-9z",
+    sku:"M12 3l9 5-9 5-9-5zM3 8v8l9 5 9-5V8m-9 5v8",
+    option_fee:"M4 6h16v12H4zM8 12h1m6 0h1m-5 0a1 1 0 1 0 2 0 1 1 0 0 0-2 0",
+    generic:"M5 4h10l4 4v12H5zM14 4v5h5m-7 2v6m-3-3h6",
+    raw:"M3 5h18v14H3zM3 10h18M9 5v14"
+  };
+  const outlineIcon = (path, className="module-icon") =>
+    `<svg class="${className}" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${path}"/></svg>`;
   const LABEL_SCALE_HEADROOM=1.18;
   const chartMax=values=>Math.max(...values.map(value=>Number(value||0)),1)*LABEL_SCALE_HEADROOM;
   const stackedBarWidth=step=>Math.min(42,step*.58);
@@ -356,7 +369,8 @@
     $("#moduleNav").innerHTML=navigationModules.map(id=>{
       const available=moduleAvailable(item,id),active=state.module===id;
       const hint="当前主体没有对应Sheet";
-      return '<button data-module="'+id+'" class="'+(active?'active':'')+'" '+(active?'aria-current="page" ':'')+(available?'':'disabled ')+'title="'+(available?moduleLabels[id]:hint)+'">'+moduleLabels[id]+'</button>';
+      const icon=outlineIcon(moduleIcons[id]||"M4 6h16M4 12h16M4 18h16M9 6v12");
+      return '<button data-module="'+id+'" class="'+(active?'active':'')+'" '+(active?'aria-current="page" ':'')+(available?'':'disabled ')+'title="'+(available?moduleLabels[id]:hint)+'">'+icon+moduleLabels[id]+'</button>';
     }).join("");
     $("#moduleNav").onclick=async event=>{
       const button=event.target.closest("[data-module]");
@@ -430,7 +444,7 @@
     if(revision!==pageRevision||moduleId!==state.module||subjectId!==state.subject)return;
     if(!board||!page){$("#page").innerHTML=`<div class="empty-page">当前主体暂无该分析</div>`;return}
     channelPanelData.clear();
-    $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
+    $("#page").innerHTML=`<header class="page-section-heading"><h1>${esc(moduleLabels[moduleId])}</h1><p>${esc(subject()?.name)}</p></header>${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
     bindRhythmCharts();
     bindChannelPanels();
     bindSkuHeatmaps();
@@ -453,7 +467,7 @@
       bindRhythmCharts();
     });
   }
-  function renderKpis(items){return `<div class="kpis ${items.length===5?"five":""}">${items.map(item=>`<article class="kpi" style="--accent:${colors[item.color]||colors.blue}"><span>${esc(item.label)}</span><strong>${item.value==null?"—":fmt(item.value)}</strong><em>${esc(item.unit)}</em><small class="kpi-note">${esc(item.note)}</small>${renderKpiComparison(item)}</article>`).join("")}</div>`}
+  function renderKpis(items){return `<div class="kpis ${items.length===5?"five":""}">${items.map(item=>`<article class="kpi"><span>${esc(item.label)}</span>${outlineIcon("M4 20h16M7 16v-4m5 4V8m5 8V4","kpi-icon")}<strong>${item.value==null?"—":fmt(item.value)}</strong><em>${esc(item.unit)}</em><small class="kpi-note">${esc(item.note)}</small>${renderKpiComparison(item)}</article>`).join("")}</div>`}
   function renderKpiComparison(item){
     const comparison=item.comparison;
     if(!comparison||comparison.status!=="available")return '<div class="kpi-compare neutral"><span>较上周期</span><b>暂无可比数据</b></div>';
@@ -654,7 +668,7 @@
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';
     const originalImage=DATA.chart_assets?.[data.image_key];
     if(window.CHART_RENDER_MODE==="original"&&originalImage)return `<div class="original-chart"><img src="${originalImage}" alt="${esc(data.headline||"Excel原始图表")}"/></div>`;
-    const trendLine="#0070C0",seriesFill=index=>stackedTrendPalette[index%stackedTrendPalette.length],periods=data.periods,series=data.series||[],totals=data.totals||[],maxTotal=chartMax(totals),labelMax=Math.max(...periods.map(period=>String(period||"").length),1),left=52,bottom=252,plotH=218,step=Math.max(42,Math.min(labelMax*4.8,90)),W=Math.max(380,periods.length*step+50),H=Math.max(310,bottom+Math.min(labelMax*4.2,80)+14),barW=stackedBarWidth(step);
+    const trendLine=colors.blue,seriesFill=index=>stackedTrendPalette[index%stackedTrendPalette.length],periods=data.periods,series=data.series||[],totals=data.totals||[],maxTotal=chartMax(totals),labelMax=Math.max(...periods.map(period=>String(period||"").length),1),left=52,bottom=252,plotH=218,step=Math.max(42,Math.min(labelMax*4.8,90)),W=Math.max(380,periods.length*step+50),H=Math.max(310,bottom+Math.min(labelMax*4.2,80)+14),barW=stackedBarWidth(step);
     const segmentLabelYs=periods.map(()=>[]);
     const bars=periods.map((period,index)=>{const rates=series.map(item=>Math.max(0,Number(item.values[index]||0))),stackHeight=rates.reduce((sum,rate)=>sum+rate,0)*plotH;let y=bottom-stackHeight;const stacks=series.map((item,sIndex)=>{const rate=rates[sIndex],height=rate*plotH,segmentY=y;y+=height;if(!rate)return "";const labelY=avoidLabelY(segmentY+height/2,segmentLabelYs[index],12,bottom-4,12);segmentLabelYs[index].push(labelY);return `<rect x="${left+index*step+(step-barW)/2}" y="${segmentY}" width="${barW}" height="${height}" fill="${seriesFill(sIndex)}"/><text class="chart-data-label stack-segment-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${(rate*100).toFixed(0)}%</text>`}).join("");const lx=left+index*step+step-2,ly=bottom+13;return `${stacks}<text x="${lx}" y="${ly}" text-anchor="end" transform="rotate(-40 ${lx} ${ly})" font-size="9" fill="#718396">${esc(period)}</text>`}).join("");
     const points=totals.map((value,index)=>`${left+index*step+step/2},${bottom-Number(value)/maxTotal*plotH}`).join(" ");
@@ -706,7 +720,7 @@
   function renderRankCards(cards,kind){const directional=kind==='rise'||kind==='drop',directionalClass=directional?` rank-grid-${kind}`:'';return `<div class="rank-grid${directionalClass}">${Object.entries(cards||{}).map(([name,entry])=>{const rows=Array.isArray(entry)?entry:entry.rows||[];if(!rows.length)return `<article class="rank-card"><h3>${esc(name)} · 暂无上榜车型</h3><p class="empty">${esc(entry.empty_reason||"暂无可比排名")}</p></article>`;const maxRate=Math.max(...rows.map(row=>Math.abs(Number(row.rate)||0)),0);return `<article class="rank-card"><h3>${esc(name)} · TOP${rows.length}</h3><ol>${rows.map(row=>{const meta=[row.rate!=null?`${(Number(row.rate)*100).toFixed(1)}%`:"",row.amount!=null?`${fmt(row.amount)}元`:""].filter(Boolean).join(" · ");if(!directional)return `<li><b>${row.rank}</b><span>${esc(row.label)}${meta?`<small>${esc(meta)}</small>`:""}</span></li>`;const rate=Number(row.rate),rateLabel=row.rate!=null&&Number.isFinite(rate)?`${(rate*100).toFixed(1)}%`:'—',width=maxRate>0&&Number.isFinite(rate)?Math.min(Math.abs(rate)/maxRate*100,100):0,amount=row.amount!=null?`${fmt(row.amount)}元`:'';return `<li><b class="rank-index">${row.rank}</b><span class="rank-name">${esc(row.label)}${amount?`<small>${esc(amount)}</small>`:''}</span><div class="rank-bar" aria-hidden="true"><i style="width:${width.toFixed(1)}%"></i></div><strong class="rank-rate">${rateLabel}</strong></li>`}).join("")}</ol></article>`}).join("")}</div>`}
   function renderRights(data){return `<div class="rights"><strong>权益金额 ${fmt(data.amount)} 元</strong><p>${esc(data.text)}</p></div>`}
   function renderFeeBandStructure(data){
-    const bands=data?.bands||[],rows=data?.rows||[],palette=["#1677FF","#00C2FF","#00B578","#FFB020","#FF4D6D","#7C3AED","#ED7D31","#70AD47","#4472C4"];
+    const bands=data?.bands||[],rows=data?.rows||[],palette=["#2859f5","#00C2FF","#00B578","#FFB020","#FF4D6D","#7C3AED","#ED7D31","#70AD47","#4472C4"];
     const legend=`<div class="legend fee-legend">${bands.map((band,index)=>`<span><i style="background:${palette[index%palette.length]}"></i>${esc(band)}</span>`).join("")}</div>`;
     const body=rows.map(row=>{const total=row.values.reduce((sum,value)=>sum+Number(value||0),0),denominator=total||1;return `<div class="fee-band-row"><label title="${esc(row.label)}">${esc(row.label)}</label><div class="fee-band-chart"><div class="fee-band-track">${row.values.map((value,index)=>{const share=Number(value||0)/denominator*100;return `<i style="width:${share}%;background:${palette[index%palette.length]}" title="${esc(bands[index])} ${share.toFixed(1)}%"></i>`}).join("")}</div><div class="segment-data-labels">${row.values.map((value,index)=>{const share=Number(value||0)/denominator*100;return `<span><i style="background:${palette[index%palette.length]}"></i>${share.toFixed(1)}%</span>`}).join("")}</div></div><b>${fmt(total)}单</b></div>`}).join("");
     return `${legend}<div class="fee-band-list">${body}</div>`;
