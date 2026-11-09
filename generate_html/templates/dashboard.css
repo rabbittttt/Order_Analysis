@@ -3131,6 +3131,58 @@ body {
 .sections {margin-top:18px}
 .panel {padding:18px}
 .stacked-chart svg {background:none}
+.trend-annotation-actions {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  gap:6px;
+  margin-bottom:6px;
+}
+.trend-annotation-button {
+  min-height:34px;
+  padding:4px 10px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--card);
+  color:var(--ink);
+  font:inherit;
+  font-size:12px;
+  cursor:pointer;
+}
+.trend-annotation-button:hover,
+.trend-annotation-button[aria-expanded="true"] {border-color:var(--primary);color:var(--primary)}
+.trend-annotation-button:focus-visible {outline:2px solid var(--primary);outline-offset:2px}
+.trend-annotation-button.primary {background:var(--primary);border-color:var(--primary);color:white}
+.trend-annotation-box {fill:#fff4e7;stroke:#c27b38}
+.trend-annotation-label {fill:#74380d;font-size:11px;font-weight:650}
+.trend-annotation-stem {stroke:#a45115;stroke-width:1;stroke-dasharray:3 2}
+.trend-annotation-tip {fill:#a45115}
+.trend-annotation:focus .trend-annotation-box {stroke:var(--primary);stroke-width:2}
+.trend-annotation-editor {
+  width:min(560px, calc(100% - 24px));
+  max-height:85vh;
+  padding:20px;
+  border:1px solid var(--line);
+  border-radius:14px;
+  color:var(--ink);
+  background:var(--card);
+}
+.trend-annotation-editor::backdrop {background:#0f172a70}
+.trend-annotation-editor header {display:flex;align-items:center;justify-content:space-between;gap:10px}
+.trend-annotation-editor h2 {font-size:17px;margin:0}
+#trendAnnotationForm {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+#trendAnnotationForm label {display:grid;gap:5px;font-size:13px;font-weight:600}
+#trendAnnotationForm input,#trendAnnotationForm select {width:100%;min-width:0;min-height:38px;font:inherit;padding:6px;border:1px solid var(--line);border-radius:6px;color:var(--ink);background:var(--card)}
+.trend-annotation-text-field,.trend-annotation-form-actions,#trendAnnotationError {grid-column:1/-1}
+.trend-annotation-form-actions {display:flex;justify-content:flex-end;gap:6px}
+#trendAnnotationError {margin:0;color:#a21515;font-size:13px}
+.trend-annotation-list {padding:0;margin:12px 0 0;list-style:none}
+.trend-annotation-list li {display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 8px;align-items:center;border-top:1px solid var(--line);padding:8px 0}
+.trend-annotation-list small {grid-column:1/-1;color:var(--muted)}
+.trend-annotation-list strong {overflow-wrap:anywhere;font-size:13px}
+@media (pointer:coarse) {
+  .trend-annotation-button {min-height:44px}
+}
 .trend-legend i.line-key {background:var(--primary)}
 @media (min-width:981px) {
   .module-bar {padding-inline:20px}

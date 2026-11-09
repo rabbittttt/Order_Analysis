@@ -33,11 +33,29 @@
       <section id="page" tabindex="-1"></section>
     </main>
   </div>
+  <dialog class="trend-annotation-editor" id="trendAnnotationEditor" aria-labelledby="trendAnnotationTitle">
+    <header>
+      <h2 id="trendAnnotationTitle">趋势批注</h2>
+      <form method="dialog"><button class="trend-annotation-button" type="submit">关闭</button></form>
+    </header>
+    <form id="trendAnnotationForm">
+      <label>事件日期<input name="date" type="date" required></label>
+      <label>适用范围<select name="subject"></select></label>
+      <label class="trend-annotation-text-field">批注内容<input name="text" type="text" maxlength="80" required></label>
+      <div class="trend-annotation-form-actions">
+        <button class="trend-annotation-button" type="button" id="cancelTrendAnnotationEdit" hidden>取消编辑</button>
+        <button class="trend-annotation-button primary" type="submit">添加批注</button>
+      </div>
+      <p id="trendAnnotationError" role="alert" hidden></p>
+    </form>
+    <ul class="trend-annotation-list" id="trendAnnotationList" aria-label="已保存的批注"></ul>
+  </dialog>
   <div class="toast" id="toast" role="status"></div>
   <div class="page-loading" id="pageStatus" role="status" aria-live="polite"></div>
   <script>window.DASHBOARD_DATA_B64="__DASHBOARD_DATA__";</script>
   <script>window.DASHBOARD_BLOCKS_B64=__DASHBOARD_BLOCKS__;</script>
   <script>window.DASHBOARD_RAW_B64=__DASHBOARD_RAW__;</script>
+  <script>__TREND_ANNOTATIONS_JS__</script>
   <script>__DASHBOARD_JS__</script>
 </body>
 </html>

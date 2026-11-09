@@ -240,6 +240,146 @@
     return boardCache[key];
   }
   function subject(){return DATA.subjects.find(item=>item.id===state.subject)}
+  const annotationStorageKey = 'order-dashboard.trend-annotations.v1';
+  let trendAnnotationState = readTrendAnnotations();
+
+  function readTrendAnnotations(){
+    try {
+      const saved = JSON.parse(localStorage.getItem(annotationStorageKey));
+      if (Array.isArray(saved?.entries)) {
+        return {
+          visible: saved.visible === true,
+          entries: saved.entries.filter(note => note && typeof note.id === 'string' &&
+            typeof note.subject === 'string' && typeof note.text === 'string' &&
+            window.TrendAnnotations.dateKey(note.date, 'day')),
+        };
+      }
+    } catch {}
+    return {visible: false, entries: []};
+  }
+
+  function saveTrendAnnotations(next){
+    try { localStorage.setItem(annotationStorageKey, JSON.stringify(next)); }
+    catch { return false; }
+    trendAnnotationState = next;
+    return true;
+  }
+
+  function trendAnnotationsFor(subjectId){
+    return trendAnnotationState.entries.filter(note => note.subject === '*' || note.subject === subjectId);
+  }
+
+  function openTrendAnnotationEditor(refreshCharts){
+    const dialog = $('#trendAnnotationEditor'), form = $('#trendAnnotationForm');
+    const list = $('#trendAnnotationList'), error = $('#trendAnnotationError');
+    const cancel = $('#cancelTrendAnnotationEdit'), submit = form.querySelector('button[type="submit"]');
+    const subjectId = state.subject, subjectName = subject()?.name || '';
+    const date = form.elements.namedItem('date'), scope = form.elements.namedItem('subject');
+    const text = form.elements.namedItem('text');
+    let editingId = null;
+    scope.replaceChildren(new Option(subjectName, subjectId), new Option('所有主体', '*'));
+
+    function resetForm(){
+      form.reset();
+      text.setCustomValidity('');
+      error.hidden = true;
+      editingId = null;
+      cancel.hidden = true;
+      submit.textContent = '添加批注';
+    }
+    function renderList(){
+      const notes = trendAnnotationsFor(subjectId).sort((a, b) => b.date.localeCompare(a.date));
+      list.replaceChildren(...notes.map(note => {
+        const item = document.createElement('li');
+        const heading = document.createElement('small');
+        heading.textContent = note.date + ' · ' + (note.subject === '*' ? '所有主体' : subjectName);
+        const content = document.createElement('strong');
+        content.textContent = note.text;
+        const edit = document.createElement('button'), remove = document.createElement('button');
+        edit.className = remove.className = 'trend-annotation-button';
+        edit.type = remove.type = 'button';
+        edit.textContent = '编辑';
+        remove.textContent = '删除';
+        edit.onclick = () => {
+          resetForm();
+          editingId = note.id;
+          date.value = note.date;
+          scope.value = note.subject;
+          text.value = note.text;
+          submit.textContent = '保存修改';
+          cancel.hidden = false;
+          text.focus();
+        };
+        remove.onclick = () => {
+          if (!window.confirm('删除这条批注？')) return;
+          const latest = readTrendAnnotations();
+          if (apply({ ...latest, entries: latest.entries.filter(entry => entry.id !== note.id) }) && editingId === note.id) resetForm();
+        };
+        item.append(heading, content, edit, remove);
+        return item;
+      }));
+    }
+    function apply(next){
+      if (!saveTrendAnnotations(next)) {
+        error.textContent = '无法保存批注，请检查浏览器存储权限。';
+        error.hidden = false;
+        return false;
+      }
+      error.hidden = true;
+      renderList();
+      refreshCharts();
+      return true;
+    }
+
+    resetForm();
+    renderList();
+    text.oninput = () => text.setCustomValidity('');
+    cancel.onclick = () => { resetForm(); date.focus(); };
+    form.onsubmit = event => {
+      event.preventDefault();
+      const value = text.value.trim();
+      if (!value) {
+        text.setCustomValidity('请输入批注内容。');
+        text.reportValidity();
+        return;
+      }
+      if (!window.TrendAnnotations.dateKey(date.value, 'day')) return;
+      const latest = readTrendAnnotations();
+      const id = editingId || window.crypto.randomUUID?.() || Date.now() + '-' + Math.random().toString(36).slice(2);
+      const note = {id, date: date.value, subject: scope.value, text: value};
+      if (apply({visible: true, entries: [...latest.entries.filter(entry => entry.id !== id), note]})) resetForm();
+    };
+    dialog.showModal();
+    date.focus();
+  }
+
+  function bindTrendAnnotations(sections){
+    const charts = [...document.querySelectorAll('[data-trend-chart]')];
+    const toggles = [...document.querySelectorAll('[data-trend-annotation-toggle]')];
+    const refreshCharts = () => {
+      for (const chart of charts) {
+        if (!chart.isConnected) continue;
+        const previous = chart.querySelector('.stacked-chart,.original-chart');
+        const scroll = previous?.scrollLeft || 0;
+        const atEnd = previous && previous.scrollWidth - previous.clientWidth - scroll < 2;
+        chart.innerHTML = renderStackedTrend(sections[Number(chart.dataset.trendChart)].data);
+        const current = chart.querySelector('.stacked-chart,.original-chart');
+        if (current) current.scrollLeft = atEnd ? current.scrollWidth - current.clientWidth : scroll;
+      }
+      for (const button of toggles) {
+        button.textContent = trendAnnotationState.visible ? '隐藏批注' : '显示批注';
+        button.setAttribute('aria-expanded', String(trendAnnotationState.visible));
+      }
+    };
+    for (const button of toggles) button.onclick = () => {
+      const next = {...readTrendAnnotations(), visible: !trendAnnotationState.visible};
+      if (!saveTrendAnnotations(next)) trendAnnotationState = next;
+      refreshCharts();
+    };
+    document.querySelectorAll('[data-trend-annotation-manage]').forEach(button => {
+      button.onclick = () => openTrendAnnotationEditor(refreshCharts);
+    });
+  }
   const quickBrandOrder=['问界','智界','享界','尊界','尚界'];
   const generationYear=name=>Math.max(...[...String(name||'').matchAll(/(20\d{2})\s*款/g)].map(match=>Number(match[1])),0);
   const generationAggregate=name=>String(name||'').match(/(总计|汇总|合计)\s*$/)?.[1]||'';
@@ -449,6 +589,7 @@
     bindRhythmCharts();
     bindChannelPanels();
     bindSkuHeatmaps();
+    bindTrendAnnotations(page.sections);
     alignOverviewChartScrollbars();
     document.querySelectorAll("[data-panel-source]").forEach(button=>button.onclick=()=>jumpToSource(page.sections[Number(button.dataset.panelSource)]?.source));
     document.querySelectorAll("[data-combo-switch]").forEach(button=>button.onclick=()=>{
@@ -492,7 +633,14 @@
   function renderSection(item,index,appendix=''){
     const pieBars=item.kind==='bars'&&item.title==='门店渠道订单量';
     const renderer=pieBars?renderPieChart:({channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_heatmap:renderComboHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
-    const body=renderer(item.data);
+    const annotationControls=item.kind==="stacked_trend" && item.data?.periods?.length;
+    const chartId="trendChart"+index;
+    const actions=annotationControls ? `<div class="trend-annotation-actions">
+      <button type="button" class="trend-annotation-button" data-trend-annotation-toggle aria-controls="${chartId}" aria-expanded="${trendAnnotationState.visible}">${trendAnnotationState.visible ? "隐藏批注" : "显示批注"}</button>
+      <button type="button" class="trend-annotation-button" data-trend-annotation-manage>管理批注</button>
+    </div>` : "";
+    const content=renderer(item.data);
+    const body=annotationControls ? `${actions}<div id="${chartId}" data-trend-chart="${index}">${content}</div>` : content;
     return `<article class="panel ${item.width==="half"?"":"full"}${appendix?' has-cancel-ranking':''}" data-section-kind="${esc(item.kind||"")}"><div class="panel-head"><div><h2>${esc(item.title)}</h2><span>${esc(item.meta)}</span></div>${renderPanelSource(item,index)}</div><div class="panel-body">${body}${appendix}</div></article>`;
   }
   const channelPanelData=new Map();
@@ -668,14 +816,19 @@
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';
     const originalImage=DATA.chart_assets?.[data.image_key];
-    if(window.CHART_RENDER_MODE==="original"&&originalImage)return `<div class="original-chart"><img src="${originalImage}" alt="${esc(data.headline||"Excel原始图表")}"/></div>`;
+
     const trendLine=colors.blue,seriesFill=index=>stackedTrendPalette[index%stackedTrendPalette.length],periods=data.periods,series=data.series||[],totals=data.totals||[],maxTotal=chartMax(totals),labelMax=Math.max(...periods.map(period=>String(period||"").length),1),left=52,bottom=252,plotH=218,step=Math.max(42,Math.min(labelMax*4.8,90)),W=Math.max(380,periods.length*step+50),H=Math.max(310,bottom+Math.min(labelMax*4.2,80)+14),barW=stackedBarWidth(step);
+    const annotations=trendAnnotationState.visible
+      ? window.TrendAnnotations.render(trendAnnotationsFor(state.subject),periods,state.grain,{left,step,width:W})
+      : {height:0,markup:""};
+    if(!annotations.height&&window.CHART_RENDER_MODE==="original"&&originalImage)return `<div class="original-chart"><img src="${originalImage}" alt="${esc(data.headline||"Excel原始图表")}"/></div>`;
     const segmentLabelYs=periods.map(()=>[]);
     const bars=periods.map((period,index)=>{const rates=series.map(item=>Math.max(0,Number(item.values[index]||0))),stackHeight=rates.reduce((sum,rate)=>sum+rate,0)*plotH;let y=bottom-stackHeight;const stacks=series.map((item,sIndex)=>{const rate=rates[sIndex],height=rate*plotH,segmentY=y;y+=height;if(!rate)return "";const labelY=avoidLabelY(segmentY+height/2,segmentLabelYs[index],12,bottom-4,12);segmentLabelYs[index].push(labelY);return `<rect x="${left+index*step+(step-barW)/2}" y="${segmentY}" width="${barW}" height="${height}" fill="${seriesFill(sIndex)}"/><text class="chart-data-label stack-segment-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${(rate*100).toFixed(0)}%</text>`}).join("");const lx=left+index*step+step-2,ly=bottom+13;return `${stacks}<text x="${lx}" y="${ly}" text-anchor="end" transform="rotate(-40 ${lx} ${ly})" font-size="9" fill="#718396">${esc(period)}</text>`}).join("");
     const points=totals.map((value,index)=>`${left+index*step+step/2},${bottom-Number(value)/maxTotal*plotH}`).join(" ");
     const values=totals.map((value,index)=>{const baseY=bottom-Number(value)/maxTotal*plotH-8,labelY=avoidLabelY(baseY,segmentLabelYs[index],12,bottom-8);return `<text class="chart-data-label total-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${fmt(value)}</text>`}).join("");
     const legend=series.map((item,index)=>`<span><i style="background:${seriesFill(index)}"></i>${esc(item.name)}</span>`).join("")+`<span><i class="line-key"></i>总计</span>`;
-    return `<div class="stacked-chart"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px"><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</svg></div><div class="legend trend-legend">${legend}</div>`;
+    const height=H+annotations.height;
+    return `<div class="stacked-chart"><svg viewBox="0 0 ${W} ${height}" style="width:${W}px;height:${height}px">${annotations.markup}<g transform="translate(0 ${annotations.height})"><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
   }
   function renderTable(data){
     if(!data?.columns)return '<div class="empty-image">暂无表格数据</div>';

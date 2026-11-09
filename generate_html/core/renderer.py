@@ -76,6 +76,7 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
     html = (template_dir / "dashboard.html").read_text(encoding="utf-8")
     css = (template_dir / "dashboard.css").read_text(encoding="utf-8")
     javascript = (template_dir / "dashboard.js").read_text(encoding="utf-8")
+    trend_annotations = (template_dir / "trend_annotations.js").read_text(encoding="utf-8")
     logo_path = template_dir / "brand-logo.png"
     logo_data = base64.b64encode(logo_path.read_bytes()).decode("ascii")
     # 主数据(主体/配置/底表元信息)整体压缩;看板按主体|模块分块压缩、底表行数据按表分块压缩,前端按需解压
@@ -117,6 +118,7 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
     html = html.replace("__DASHBOARD_DATA__", main_payload)
     html = html.replace("__DASHBOARD_RAW__", raw_payload)
     html = html.replace("__DASHBOARD_BLOCKS__", board_payload)
+    html = html.replace("__TREND_ANNOTATIONS_JS__", trend_annotations)
     html = html.replace("__DASHBOARD_JS__", javascript)
     html = html.replace("__BRAND_LOGO__", f"data:image/png;base64,{logo_data}")
     # Write on the same volume, and close before replacing (Windows). A disk
