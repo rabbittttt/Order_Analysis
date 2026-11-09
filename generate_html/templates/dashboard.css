@@ -3131,7 +3131,6 @@ body {
 .sections {margin-top:18px}
 .panel {padding:18px}
 .stacked-chart svg {background:none}
-.stacked-chart .total-label {fill:var(--ink)}
 .trend-legend i.line-key {background:var(--primary)}
 @media (min-width:981px) {
   .module-bar {padding-inline:20px}
