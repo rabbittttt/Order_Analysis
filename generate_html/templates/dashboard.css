@@ -2383,8 +2383,6 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   height:var(--rhythm-frame-height);
   overflow-x:auto;
   overflow-y:hidden;
-  border:1px solid #e5edf5;
-  border-radius:10px;
   background:#fff;
 }
 
