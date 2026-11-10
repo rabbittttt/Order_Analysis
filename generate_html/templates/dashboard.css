@@ -3205,3 +3205,10 @@ body {
   .panel {padding:12px}
   .page-section-heading {margin-bottom:10px}
 }
+
+.raw-pagination{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:10px 0;flex-wrap:wrap}
+.raw-pagination button,.raw-search-error button{border:1px solid var(--border,#dbe3ee);border-radius:8px;background:#fff;color:var(--ink,#172338);padding:8px 14px;cursor:pointer;min-height:36px}
+.raw-pagination button:disabled{opacity:.45;cursor:default}
+.raw-pagination button:focus-visible,.raw-search-error button:focus-visible{outline:2px solid #2859f5;outline-offset:2px}
+.raw-search-error{display:flex;align-items:center;gap:12px;padding:8px 0;color:#a63030}
+.raw-table[aria-busy="true"]{opacity:.65}

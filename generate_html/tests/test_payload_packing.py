@@ -87,7 +87,7 @@ class PayloadPackingTests(unittest.TestCase):
         if not node:
             self.skipTest("Node unavailable")
         script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
-        decoder = script[script.index("  function unpackDashboard"):script.index("  const DATA =")]
+        decoder = script[script.index("  function unpackDashboard"):script.index("  const DYNAMIC =")]
         board = self.fixture()
         result = subprocess.run([node, "-e", decoder + "\nprocess.stdout.write(JSON.stringify(unpackDashboard(JSON.parse(require('fs').readFileSync(0,'utf8')))));"],
                                 input=json.dumps(pack_dashboard(board)), text=True, capture_output=True, check=True)

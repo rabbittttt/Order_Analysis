@@ -22,7 +22,41 @@
     }
     return restore(value.root);
   }
-  const DATA = await decompressJson(window.DASHBOARD_DATA_B64);
+  const DYNAMIC = Boolean(window.ORDER_DASHBOARD_API_BASE);
+  let DATA;
+  function apiUrl(path, params = {}) {
+    const base = new URL(window.ORDER_DASHBOARD_API_BASE || 'api/', document.baseURI);
+    const url = new URL(path, base);
+    const query = {...(DATA?.dataset_id ? {dataset: DATA.dataset_id} : {}), ...params};
+    for (const [key, value] of Object.entries(query)) if (value != null) url.searchParams.set(key, value);
+    return url;
+  }
+  async function apiRequest(path, params = {}, options = {}) {
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 30000);
+    try {
+      const response = await fetch(apiUrl(path, params), {credentials:'same-origin', cache:'no-store', ...options, signal:controller.signal});
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        const error = new Error(typeof detail.detail === 'string' ? detail.detail : `请求失败（${response.status}）`);
+        error.status = response.status;
+        throw error;
+      }
+      return response;
+    } catch (error) {
+      if (error.name === 'AbortError') throw new Error('请求超时，请重试。');
+      if (error instanceof TypeError) throw new Error('无法连接订单服务，请重试。');
+      throw error;
+    } finally { clearTimeout(timer); }
+  }
+  async function apiJson(path, params = {}, options = {}) {
+    return (await apiRequest(path, params, options)).json();
+  }
+  try { DATA = DYNAMIC ? await apiJson('catalog') : await decompressJson(window.DASHBOARD_DATA_B64); }
+  catch (error) {
+    const page=document.querySelector('#page'), message=document.createElement('p'), retry=document.createElement('button');
+    page.setAttribute('role','alert'); message.textContent=error.message; retry.textContent='重新加载'; retry.type='button';
+    retry.onclick=()=>location.reload(); page.replaceChildren(message,retry); return;
+  }
   DATA.dashboard_blocks=window.DASHBOARD_BLOCKS_B64||DATA.dashboard_blocks||{};
   window.DASHBOARD_DATA = DATA;
   const RAW_BLOCKS = window.DASHBOARD_RAW_B64 = window.DASHBOARD_RAW_B64 || {};
@@ -229,156 +263,154 @@
   // 留存大定/锁单堆叠趋势图按系列出现顺序取色，不按能源类型固定颜色。
   const stackedTrendPalette=["#FFF2CC","#E2F0D9","#C8E8E8","#A8D8EA","#A0C1E8","#DCC5ED","#F0C8C8","#F8D8B0"];
   const moduleLabels = DATA.config.module_labels;
-  const state = {subject:null,module:"overview",grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawFreezeRow:true,rawFreezeColumn:false,rawFreezeFirstColumn:true};
+  const state = {subject:null,module:"overview",grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawOffset:0,rawFreezeRow:true,rawFreezeColumn:false,rawFreezeFirstColumn:true};
   const boardCache={};
   async function getDashboard(subjectId=state.subject,moduleId=state.module){
     const key=`${subjectId}|${moduleId}`;
     if(!(key in boardCache)){
-      const b64=(DATA.dashboard_blocks||{})[key];
-      boardCache[key]=b64?unpackDashboard(await decompressJson(b64)):null;
+      const load=async()=>{
+        if(DYNAMIC)return unpackDashboard(await apiJson('dashboard',{subject:subjectId,module:moduleId}));
+        const b64=(DATA.dashboard_blocks||{})[key];
+        return b64?unpackDashboard(await decompressJson(b64)):null;
+      };
+      boardCache[key]=load().catch(error=>{delete boardCache[key];throw error});
     }
     return boardCache[key];
   }
   function subject(){return DATA.subjects.find(item=>item.id===state.subject)}
   const annotationStorageKey = 'order-dashboard.trend-annotations.v1';
-  let trendAnnotationState = readTrendAnnotations();
-
-  function readTrendAnnotations(){
+  const annotationVisibilityKey = 'order-dashboard.trend-annotations.visible';
+  let trendAnnotationState = readTrendAnnotations(), refreshAnnotationCharts=()=>{}, refreshAnnotationList=()=>{};
+  let annotationReadRevision=0;
+  function localTrendAnnotations(){
     try {
-      const saved = JSON.parse(localStorage.getItem(annotationStorageKey));
-      if (Array.isArray(saved?.entries)) {
-        return {
-          visible: saved.visible === true,
-          entries: saved.entries.filter(note => note && typeof note.id === 'string' &&
-            typeof note.subject === 'string' && typeof note.text === 'string' &&
-            window.TrendAnnotations.dateKey(note.date, 'day')),
-        };
-      }
+      const saved=JSON.parse(localStorage.getItem(annotationStorageKey));
+      if(Array.isArray(saved?.entries))return {visible:saved.visible===true,entries:saved.entries.filter(note=>note&&typeof note.id==='string'&&typeof note.subject==='string'&&typeof note.text==='string'&&window.TrendAnnotations.dateKey(note.date,'day'))};
     } catch {}
-    return {visible: false, entries: []};
+    return {visible:false,entries:[]};
   }
-
+  function readTrendAnnotations(){
+    const local=localTrendAnnotations();
+    if(!DYNAMIC)return local;
+    let visible=local.visible;
+    try { const saved=localStorage.getItem(annotationVisibilityKey); if(saved!==null)visible=saved==='true'; } catch {}
+    return {visible,entries:[]};
+  }
   function saveTrendAnnotations(next){
-    try { localStorage.setItem(annotationStorageKey, JSON.stringify(next)); }
-    catch { return false; }
-    trendAnnotationState = next;
-    return true;
+    try { localStorage.setItem(DYNAMIC?annotationVisibilityKey:annotationStorageKey,DYNAMIC?String(next.visible):JSON.stringify(next)); }
+    catch { if(!DYNAMIC)return false; }
+    trendAnnotationState=next; return true;
   }
-
-  function trendAnnotationsFor(subjectId){
-    return trendAnnotationState.entries.filter(note => note.subject === '*' || note.subject === subjectId);
-  }
-
-  function openTrendAnnotationEditor(refreshCharts){
-    const dialog = $('#trendAnnotationEditor'), form = $('#trendAnnotationForm');
-    const list = $('#trendAnnotationList'), error = $('#trendAnnotationError');
-    const cancel = $('#cancelTrendAnnotationEdit'), submit = form.querySelector('button[type="submit"]');
-    const subjectId = state.subject, subjectName = subject()?.name || '';
-    const date = form.elements.namedItem('date'), scope = form.elements.namedItem('subject');
-    const text = form.elements.namedItem('text');
-    let editingId = null;
-    scope.replaceChildren(new Option(subjectName, subjectId), new Option('所有主体', '*'));
-
-    function resetForm(){
-      form.reset();
-      text.setCustomValidity('');
-      error.hidden = true;
-      editingId = null;
-      cancel.hidden = true;
-      submit.textContent = '添加批注';
+  function annotationScopes(subjectId){
+    const allowed=new Set(['*',...DATA.subjects.filter(item=>item.type==='group').map(item=>item.id)]),seen=new Set();
+    let current=DATA.subjects.find(item=>item.id===subjectId);
+    while(current&&!seen.has(current.id)){
+      seen.add(current.id);allowed.add(current.id);
+      current=DATA.subjects.find(item=>item.id===current.parent||item.name===current.parent);
     }
+    return allowed;
+  }
+  function trendAnnotationsFor(subjectId){
+    const scopes=annotationScopes(subjectId);
+    return trendAnnotationState.entries.filter(note=>scopes.has(note.subject));
+  }
+  async function refreshSharedAnnotations(){
+    if(!DYNAMIC)return;
+    const revision=++annotationReadRevision,result=await apiJson('annotations');
+    if(revision!==annotationReadRevision)return;
+    const changed=JSON.stringify(result.entries)!==JSON.stringify(trendAnnotationState.entries);
+    trendAnnotationState.entries=result.entries||[];
+    if(changed){refreshAnnotationCharts();refreshAnnotationList();}
+  }
+  function annotationOptions(){
+    return [new Option('所有主体','*'),...DATA.subjects.map(item=>new Option(item.name,item.id))];
+  }
+  async function openTrendAnnotationEditor(refreshCharts){
+    const dialog=$('#trendAnnotationEditor'),form=$('#trendAnnotationForm'),list=$('#trendAnnotationList'),error=$('#trendAnnotationError');
+    const cancel=$('#cancelTrendAnnotationEdit'),submit=form.querySelector('button[type="submit"]');
+    const subjectId=state.subject,date=form.elements.namedItem('date'),scope=form.elements.namedItem('subject'),text=form.elements.namedItem('text');
+    let editingId=null,editingVersion=null,busy=false;
+    scope.replaceChildren(...annotationOptions());
+    const fail=problem=>{error.textContent=problem.message;error.hidden=false};
+    function resetForm(){form.reset();scope.value=subjectId;text.setCustomValidity('');error.hidden=true;editingId=null;editingVersion=null;cancel.hidden=true;submit.textContent='添加批注';}
     function renderList(){
-      const notes = trendAnnotationsFor(subjectId).sort((a, b) => b.date.localeCompare(a.date));
-      list.replaceChildren(...notes.map(note => {
-        const item = document.createElement('li');
-        const heading = document.createElement('small');
-        heading.textContent = note.date + ' · ' + (note.subject === '*' ? '所有主体' : subjectName);
-        const content = document.createElement('strong');
-        content.textContent = note.text;
-        const edit = document.createElement('button'), remove = document.createElement('button');
-        edit.className = remove.className = 'trend-annotation-button';
-        edit.type = remove.type = 'button';
-        edit.textContent = '编辑';
-        remove.textContent = '删除';
-        edit.onclick = () => {
-          resetForm();
-          editingId = note.id;
-          date.value = note.date;
-          scope.value = note.subject;
-          text.value = note.text;
-          submit.textContent = '保存修改';
-          cancel.hidden = false;
-          text.focus();
+      const notes=trendAnnotationsFor(subjectId).sort((a,b)=>b.date.localeCompare(a.date));
+      list.replaceChildren(...notes.map(note=>{
+        const item=document.createElement('li'),heading=document.createElement('small'),content=document.createElement('strong');
+        heading.textContent=note.date+' · '+(note.subject==='*'?'所有主体':DATA.subjects.find(item=>item.id===note.subject)?.name||note.subject);
+        content.textContent=note.text;
+        const edit=document.createElement('button'),remove=document.createElement('button');
+        edit.className=remove.className='trend-annotation-button';edit.type=remove.type='button';edit.textContent='编辑';remove.textContent='删除';
+        edit.disabled=remove.disabled=busy;
+        edit.onclick=()=>{resetForm();editingId=note.id;editingVersion=note.version;date.value=note.date;scope.value=note.subject;text.value=note.text;submit.textContent='保存修改';cancel.hidden=false;text.focus()};
+        remove.onclick=async()=>{
+          if(busy||!window.confirm('删除这条批注？'))return;
+          await mutate(async()=>{
+            if(DYNAMIC)await apiJson('annotations/'+encodeURIComponent(note.id),{version:note.version},{method:'DELETE'});
+            else if(!saveTrendAnnotations({...localTrendAnnotations(),entries:localTrendAnnotations().entries.filter(entry=>entry.id!==note.id)}))throw new Error('无法保存批注，请检查浏览器存储权限。');
+            if(editingId===note.id)resetForm();
+          });
         };
-        remove.onclick = () => {
-          if (!window.confirm('删除这条批注？')) return;
-          const latest = readTrendAnnotations();
-          if (apply({ ...latest, entries: latest.entries.filter(entry => entry.id !== note.id) }) && editingId === note.id) resetForm();
-        };
-        item.append(heading, content, edit, remove);
-        return item;
+        item.append(heading,content,edit,remove);return item;
       }));
     }
-    function apply(next){
-      if (!saveTrendAnnotations(next)) {
-        error.textContent = '无法保存批注，请检查浏览器存储权限。';
-        error.hidden = false;
-        return false;
-      }
-      error.hidden = true;
-      renderList();
-      refreshCharts();
-      return true;
+    async function mutate(operation){
+      if(busy)return;busy=true;submit.disabled=cancel.disabled=date.disabled=scope.disabled=text.disabled=true;renderList();error.hidden=true;
+      try{await operation();if(DYNAMIC)await refreshSharedAnnotations();refreshCharts();}
+      catch(problem){if(problem.status===409){await refreshSharedAnnotations().catch(()=>{});problem.message='批注已被他人修改，请重新选择后编辑。';}fail(problem);}
+      finally{busy=false;submit.disabled=cancel.disabled=date.disabled=scope.disabled=text.disabled=false;renderList();}
     }
-
-    resetForm();
-    renderList();
-    text.oninput = () => text.setCustomValidity('');
-    cancel.onclick = () => { resetForm(); date.focus(); };
-    form.onsubmit = event => {
-      event.preventDefault();
-      const value = text.value.trim();
-      if (!value) {
-        text.setCustomValidity('请输入批注内容。');
-        text.reportValidity();
-        return;
-      }
-      if (!window.TrendAnnotations.dateKey(date.value, 'day')) return;
-      const latest = readTrendAnnotations();
-      const id = editingId || window.crypto.randomUUID?.() || Date.now() + '-' + Math.random().toString(36).slice(2);
-      const note = {id, date: date.value, subject: scope.value, text: value};
-      if (apply({visible: true, entries: [...latest.entries.filter(entry => entry.id !== id), note]})) resetForm();
+    resetForm();renderList();refreshAnnotationList=()=>{if(dialog.open)renderList()};
+    text.oninput=()=>text.setCustomValidity('');cancel.onclick=()=>{resetForm();date.focus()};
+    form.onsubmit=async event=>{
+      event.preventDefault();if(busy)return;
+      const value=text.value.trim();if(!value){text.setCustomValidity('请输入批注内容。');text.reportValidity();return;}
+      if(!window.TrendAnnotations.dateKey(date.value,'day'))return;
+      const note={date:date.value,subject:scope.value,text:value};
+      await mutate(async()=>{
+        if(DYNAMIC){
+          const options={method:editingId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(editingId?{...note,version:editingVersion}:note)};
+          await apiJson(editingId?'annotations/'+encodeURIComponent(editingId):'annotations',{},options);
+        }else{
+          const latest=localTrendAnnotations(),id=editingId||window.crypto.randomUUID?.()||Date.now()+'-'+Math.random().toString(36).slice(2);
+          if(!saveTrendAnnotations({visible:true,entries:[...latest.entries.filter(entry=>entry.id!==id),{...note,id}]}))throw new Error('无法保存批注，请检查浏览器存储权限。');
+        }
+        saveTrendAnnotations({...trendAnnotationState,visible:true});resetForm();
+      });
     };
-    dialog.showModal();
-    date.focus();
+    let importButton=$('#importLocalTrendAnnotations');
+    if(DYNAMIC&&!importButton){
+      importButton=document.createElement('button');importButton.id='importLocalTrendAnnotations';importButton.className='trend-annotation-button';importButton.type='button';importButton.textContent='导入本机批注';form.after(importButton);
+    }
+    if(importButton){
+      importButton.hidden=!localTrendAnnotations().entries.length;
+      importButton.onclick=()=>mutate(async()=>{
+        await refreshSharedAnnotations();
+        for(const note of localTrendAnnotations().entries){
+          if(trendAnnotationState.entries.some(saved=>saved.date===note.date&&saved.subject===note.subject&&saved.text===note.text))continue;
+          const saved=await apiJson('annotations',{}, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:note.date,subject:note.subject,text:note.text})});
+          trendAnnotationState.entries.push(saved);
+        }
+        importButton.hidden=true;
+      });
+    }
+    dialog.showModal();date.focus();
+    if(DYNAMIC)await refreshSharedAnnotations().catch(fail);
   }
-
   function bindTrendAnnotations(sections){
-    const charts = [...document.querySelectorAll('[data-trend-chart]')];
-    const toggles = [...document.querySelectorAll('[data-trend-annotation-toggle]')];
-    const refreshCharts = () => {
-      for (const chart of charts) {
-        if (!chart.isConnected) continue;
-        const previous = chart.querySelector('.stacked-chart,.original-chart');
-        const scroll = previous?.scrollLeft || 0;
-        const atEnd = previous && previous.scrollWidth - previous.clientWidth - scroll < 2;
-        chart.innerHTML = renderStackedTrend(sections[Number(chart.dataset.trendChart)].data);
-        const current = chart.querySelector('.stacked-chart,.original-chart');
-        if (current) current.scrollLeft = atEnd ? current.scrollWidth - current.clientWidth : scroll;
+    const charts=[...document.querySelectorAll('[data-trend-chart]')],toggles=[...document.querySelectorAll('[data-trend-annotation-toggle]')];
+    const refreshCharts=()=>{
+      for(const chart of charts){
+        if(!chart.isConnected)continue;
+        const previous=chart.querySelector('.stacked-chart,.original-chart'),scroll=previous?.scrollLeft||0,atEnd=previous&&previous.scrollWidth-previous.clientWidth-scroll<2;
+        chart.innerHTML=renderStackedTrend(sections[Number(chart.dataset.trendChart)].data);
+        const current=chart.querySelector('.stacked-chart,.original-chart');if(current)current.scrollLeft=atEnd?current.scrollWidth-current.clientWidth:scroll;
       }
-      for (const button of toggles) {
-        button.textContent = trendAnnotationState.visible ? '隐藏批注' : '显示批注';
-        button.setAttribute('aria-expanded', String(trendAnnotationState.visible));
-      }
+      for(const button of toggles){button.textContent=trendAnnotationState.visible?'隐藏批注':'显示批注';button.setAttribute('aria-expanded',String(trendAnnotationState.visible));}
     };
-    for (const button of toggles) button.onclick = () => {
-      const next = {...readTrendAnnotations(), visible: !trendAnnotationState.visible};
-      if (!saveTrendAnnotations(next)) trendAnnotationState = next;
-      refreshCharts();
-    };
-    document.querySelectorAll('[data-trend-annotation-manage]').forEach(button => {
-      button.onclick = () => openTrendAnnotationEditor(refreshCharts);
-    });
+    refreshAnnotationCharts=refreshCharts;
+    for(const button of toggles)button.onclick=()=>{const next={...trendAnnotationState,visible:!trendAnnotationState.visible};if(!saveTrendAnnotations(next))trendAnnotationState=next;refreshCharts();};
+    document.querySelectorAll('[data-trend-annotation-manage]').forEach(button=>{button.onclick=()=>openTrendAnnotationEditor(refreshCharts)});
   }
   const quickBrandOrder=['问界','智界','享界','尊界','尚界'];
   const generationYear=name=>Math.max(...[...String(name||'').matchAll(/(20\d{2})\s*款/g)].map(match=>Number(match[1])),0);
@@ -415,7 +447,8 @@
         params.set('rawFile',DATA.raw_files[state.rawFile]?.name||'');
         params.set('rawSheet',DATA.raw_files[state.rawFile]?.sheets[state.rawSheet]?.name||'');
         if(state.rawQuery)params.set('rawQuery',state.rawQuery);else params.delete('rawQuery');
-      }else for(const key of ['rawFile','rawSheet','rawQuery'])params.delete(key);
+        if(state.rawOffset)params.set('rawOffset',state.rawOffset);else params.delete('rawOffset');
+      }else for(const key of ['rawFile','rawSheet','rawQuery','rawOffset'])params.delete(key);
       history[`${mode}State`]({...(mode==='replace'?history.state:{}),dashboard:true},"",url);
       rememberReadingPosition();
     }catch(error){console.debug("[导航状态] 当前环境不支持写入网址",error)}
@@ -431,7 +464,7 @@
     const file=DATA.raw_files.findIndex(item=>item.name===params.get('rawFile'));
     state.rawFile=Math.max(file,0);
     state.rawSheet=Math.max(DATA.raw_files[state.rawFile]?.sheets.findIndex(item=>item.name===params.get('rawSheet'))??0,0);
-    state.rawQuery=params.get('rawQuery')||'';
+    state.rawQuery=params.get('rawQuery')||'';state.rawOffset=Math.max(0,Number(params.get('rawOffset'))||0);
   }
   async function restoreLocationState(){
     const reading=history.state?.reading;restoringReadingPosition=true;
@@ -475,7 +508,14 @@
     if(!moduleAvailable(item,state.module))state.module=item.modules.find(id=>id!=="raw"&&moduleAvailable(item,id))||"raw";
     if(state.module==="raw")return true;
     const subjectId=state.subject,moduleId=state.module;
-    const board=await getDashboard();
+    let board;
+    const status=$('#pageStatus'),pageNode=$('#page');
+    if(DYNAMIC)pageNode.setAttribute('aria-busy','true');
+    const timer=DYNAMIC?setTimeout(()=>{if(revision===ensureState.revision){status.textContent='正在加载…';status.classList.add('show')}},180):null;
+    try{board=await getDashboard();}catch(error){
+      if(revision===ensureState.revision&&subjectId===state.subject&&moduleId===state.module)showPageError(error);
+      return false;
+    }finally{clearTimeout(timer);if(DYNAMIC&&revision===ensureState.revision){pageNode.setAttribute('aria-busy','false');status.classList.remove('show')}}
     // A previous subject/module may finish decompressing after the next one.
     // Check request identity too: switching A -> B -> A invalidates the first A.
     if(revision!==ensureState.revision||subjectId!==state.subject||moduleId!==state.module)return false;
@@ -498,7 +538,12 @@
     page.setAttribute("aria-busy","true");
     const timer=setTimeout(()=>{if(revision===navigationRevision&&status){status.textContent=`正在加载${subject()?.name||''} · ${moduleLabels[state.module]||'分析'}…`;status.classList.add("show")}},180);
     try{renderSubjectSelect();renderQuickGenerationLinks();renderNav();if(await renderFilters()===false)return;if(revision===navigationRevision){await renderPage();page.dataset.viewKey=viewKey;if(changed&&!restoringReadingPosition)page.scrollTop=0;}}
+    catch(error){if(revision===navigationRevision)showPageError(error);}
     finally{clearTimeout(timer);if(revision===navigationRevision){page.setAttribute("aria-busy","false");status?.classList.remove("show");page.getAnimations().forEach(animation=>animation.cancel());if(!matchMedia('(prefers-reduced-motion: reduce)').matches)page.animate([{opacity:.78},{opacity:1}],{duration:160,easing:'ease-out'});}}
+  }
+  function showPageError(error){
+    $('#page').innerHTML=`<div class="empty-page" role="alert"><p>${esc(error.message)}</p><button type="button" data-page-retry>重新加载</button></div>`;
+    $('[data-page-retry]').onclick=async()=>{if(await ensureState()!==false)await renderAll()};
   }
   function renderNav(){
     const item=subject();
@@ -1003,7 +1048,9 @@
   function renderCancelCards(groups){return `<div class="cancel-grid">${groups.map((group,index)=>`<section class="structure-card"><h3>${esc(group.name)}</h3>${renderBars({color:["orange","coral","purple","blue","coral","green","orange"][index%7],rows:group.rows})}</section>`).join("")}</div>`}
   function renderUnknown(){return '<div class="empty-image">暂不支持该组件</div>'}
 
-  let rawRowsCache=[],rawRowsKey=null,rawRenderRevision=0;
+  let rawRowsCache=[],rawRowsKey=null,rawRenderRevision=0,rawSearchTimer=null;
+  const rawPageLimit=200;
+  function rawParams(fileIndex=state.rawFile,sheetIndex=state.rawSheet,query=state.rawQuery,offset=state.rawOffset){return {file:fileIndex,sheet:sheetIndex,q:query,offset,limit:rawPageLimit}}
   async function loadRawRows(fileIndex,sheetIndex){
     const key=`${fileIndex}|${sheetIndex}`;
     if(rawRowsKey===key)return rawRowsCache;
@@ -1013,8 +1060,14 @@
   function visibleRawRows(rows,query){const header=rows.length?[rows[0]]:[];return[...header,...filterRawRows(rows.slice(1),query)]}
   async function renderRaw(){
     const revision=++rawRenderRevision,fileIndex=state.rawFile,sheetIndex=state.rawSheet,file=DATA.raw_files[fileIndex]||DATA.raw_files[0],sheet=file?.sheets[sheetIndex]||file?.sheets[0];
-    let rows;
-    try{rows=await loadRawRows(fileIndex,sheetIndex)}catch(error){
+    clearTimeout(rawSearchTimer);
+    if(DYNAMIC&&$('#rawSearch'))$('#rawSearch').disabled=true;
+    const query=state.rawQuery,offset=state.rawOffset;
+    let rows,result;
+    try{
+      if(DYNAMIC){result=await apiJson('raw',rawParams(fileIndex,sheetIndex,query,offset));rows=result.rows;}
+      else rows=await loadRawRows(fileIndex,sheetIndex);
+    }catch(error){
       if(revision!==rawRenderRevision||state.module!=='raw'||fileIndex!==state.rawFile||sheetIndex!==state.rawSheet)return;
       $('#page').innerHTML=`<div class="empty-page" role="alert"><p>${esc(error.message)}</p><button type="button" data-raw-retry>重新加载底表</button></div>`;
       $('[data-raw-retry]').onclick=()=>renderRaw();return;
@@ -1023,19 +1076,62 @@
     // Commit export data only with the matching visible sheet. A stale async
     // read must not replace the current page's cache after its revision check.
     rawRowsCache=rows;rawRowsKey=`${fileIndex}|${sheetIndex}`;
-    const visibleRows=visibleRawRows(rows,state.rawQuery);
-    $("#page").innerHTML=`<div class="raw-layout"><label class="raw-file-picker"><span>选择底表文件</span><select id="rawFile" aria-label="选择底表文件">${DATA.raw_files.map((item,index)=>`<option value="${index}"${index===state.rawFile?" selected":""}>${esc(item.name)}</option>`).join("")}</select></label><aside class="file-list">${DATA.raw_files.map((item,index)=>`<button data-file="${index}" class="${index===state.rawFile?"active":""}" title="${esc(item.name)}">${esc(item.name)}</button>`).join("")}</aside><section class="raw-main"><div class="raw-toolbar"><div class="raw-title"><strong>${esc(file?.name||"")}</strong><small>${sheet?.total_rows||0} 行 × ${sheet?.total_cols||0} 列 · <span id="rawMatchCount" role="status" aria-live="polite">${Math.max(visibleRows.length-1,0)} 条数据（不含表头）</span> · 横向滚动查看其余列</small></div><label><span>Sheet</span><select id="rawSheet">${(file?.sheets||[]).map((item,index)=>`<option value="${index}">${esc(item.name)}</option>`).join("")}</select></label><label><span>表内搜索</span><input id="rawSearch" type="search" value="${esc(state.rawQuery)}" placeholder="在当前 Sheet 中搜索" aria-controls="rawTable" aria-describedby="rawMatchCount"></label><button type="button" id="clearRawSearch" ${state.rawQuery?"":"disabled"}>清空搜索</button><div class="raw-freeze-controls" role="group" aria-label="锁窗格"><label class="raw-freeze-toggle"><input id="rawFreezeRow" type="checkbox" ${state.rawFreezeRow?"checked":""}><span>锁定首行</span></label><label class="raw-freeze-toggle" title="只锁定第一列；与锁定标题列互斥"><input id="rawFreezeFirstColumn" type="checkbox" ${state.rawFreezeFirstColumn?"checked":""}><span>锁定首列</span></label><label class="raw-freeze-toggle" title="自动锁定左侧连续的文字标题列；与锁定首列互斥"><input id="rawFreezeColumn" type="checkbox" ${state.rawFreezeColumn?"checked":""}><span>锁定标题列</span></label></div><button class="export-button" id="exportRaw">导出当前数据</button><button type="button" class="export-button" id="exportRawWorkbook" ${file?.workbook_key?'':'disabled'} title="${file?.workbook_key?'导出该文件的全部 Sheet，保留原文件格式，不受搜索影响':'原始 Excel 文件不可用，请重新生成看板'}">导出整个 Excel</button></div><div class="raw-table ${state.rawFreezeRow?"freeze-row":""} ${state.rawFreezeColumn||state.rawFreezeFirstColumn?"freeze-column":""}" id="rawTable">${renderRawTable(visibleRows)}</div><div class="raw-empty" id="rawEmpty" ${visibleRows.length>1?"hidden":""}><strong>没有匹配的数据</strong><p>请尝试其他关键词，或清空搜索查看当前 Sheet。</p></div></section></div>`;
-    document.querySelectorAll("[data-file]").forEach(button=>button.onclick=async()=>{state.rawFile=Number(button.dataset.file);state.rawSheet=0;state.rawQuery="";await renderRaw();syncUrl('push')});
-    $("#rawFile").onchange=async event=>{state.rawFile=Number(event.target.value);state.rawSheet=0;state.rawQuery="";await renderRaw();syncUrl('push')};
-    $("#rawSheet").value=state.rawSheet;$("#rawSheet").onchange=async event=>{state.rawSheet=Number(event.target.value);state.rawQuery="";await renderRaw();syncUrl('push')};
+    let visibleRows=DYNAMIC?rows:visibleRawRows(rows,state.rawQuery);
+    $("#page").innerHTML=`<div class="raw-layout"><label class="raw-file-picker"><span>选择底表文件</span><select id="rawFile" aria-label="选择底表文件">${DATA.raw_files.map((item,index)=>`<option value="${index}"${index===state.rawFile?" selected":""}>${esc(item.name)}</option>`).join("")}</select></label><aside class="file-list">${DATA.raw_files.map((item,index)=>`<button data-file="${index}" class="${index===state.rawFile?"active":""}" title="${esc(item.name)}">${esc(item.name)}</button>`).join("")}</aside><section class="raw-main"><div class="raw-toolbar"><div class="raw-title"><strong>${esc(file?.name||"")}</strong><small>${sheet?.total_rows||0} 行 × ${sheet?.total_cols||0} 列 · <span id="rawMatchCount" role="status" aria-live="polite">${DYNAMIC?result.total:Math.max(visibleRows.length-1,0)} 条数据（不含表头）</span> · 横向滚动查看其余列</small></div><label><span>Sheet</span><select id="rawSheet">${(file?.sheets||[]).map((item,index)=>`<option value="${index}">${esc(item.name)}</option>`).join("")}</select></label><label><span>表内搜索</span><input id="rawSearch" type="search" value="${esc(state.rawQuery)}" placeholder="在当前 Sheet 中搜索" aria-controls="rawTable" aria-describedby="rawMatchCount"></label><button type="button" id="clearRawSearch" ${state.rawQuery?"":"disabled"}>清空搜索</button><div class="raw-freeze-controls" role="group" aria-label="锁窗格"><label class="raw-freeze-toggle"><input id="rawFreezeRow" type="checkbox" ${state.rawFreezeRow?"checked":""}><span>锁定首行</span></label><label class="raw-freeze-toggle" title="只锁定第一列；与锁定标题列互斥"><input id="rawFreezeFirstColumn" type="checkbox" ${state.rawFreezeFirstColumn?"checked":""}><span>锁定首列</span></label><label class="raw-freeze-toggle" title="自动锁定左侧连续的文字标题列；与锁定首列互斥"><input id="rawFreezeColumn" type="checkbox" ${state.rawFreezeColumn?"checked":""}><span>锁定标题列</span></label></div><button class="export-button" id="exportRaw">导出当前数据</button><button type="button" class="export-button" id="exportRawWorkbook" ${file?.workbook_key?'':'disabled'} title="${file?.workbook_key?'导出该文件的全部 Sheet，保留原文件格式，不受搜索影响':'原始 Excel 文件不可用，请重新生成看板'}">导出整个 Excel</button></div><div class="raw-table ${state.rawFreezeRow?"freeze-row":""} ${state.rawFreezeColumn||state.rawFreezeFirstColumn?"freeze-column":""}" id="rawTable">${renderRawTable(visibleRows)}</div>${DYNAMIC?`<nav class="raw-pagination" aria-label="底表分页"><button type="button" id="rawPrevious">上一页</button><span id="rawPageInfo" role="status"></span><button type="button" id="rawNext">下一页</button></nav>`:""}<div class="raw-empty" id="rawEmpty" ${visibleRows.length>1?"hidden":""}><strong>没有匹配的数据</strong><p>请尝试其他关键词，或清空搜索查看当前 Sheet。</p></div></section></div>`;
+    document.querySelectorAll("[data-file]").forEach(button=>button.onclick=async()=>{state.rawFile=Number(button.dataset.file);state.rawSheet=0;state.rawQuery="";state.rawOffset=0;await renderRaw();syncUrl('push')});
+    $("#rawFile").onchange=async event=>{state.rawFile=Number(event.target.value);state.rawSheet=0;state.rawQuery="";state.rawOffset=0;await renderRaw();syncUrl('push')};
+    $("#rawSheet").value=state.rawSheet;$("#rawSheet").onchange=async event=>{state.rawSheet=Number(event.target.value);state.rawQuery="";state.rawOffset=0;await renderRaw();syncUrl('push')};
     applyRawFrozenColumns(visibleRows);
-    const updateRawSearch=()=>{const filtered=visibleRawRows(rows,state.rawQuery);$("#rawTable").innerHTML=renderRawTable(filtered);$("#rawMatchCount").textContent=`${Math.max(filtered.length-1,0)} 条数据（不含表头）`;$("#rawEmpty").hidden=filtered.length>1;$("#clearRawSearch").disabled=!state.rawQuery;applyRawFrozenColumns(filtered)};
-    $("#rawSearch").oninput=event=>{state.rawQuery=event.target.value;updateRawSearch();syncUrl('replace')};
-    $("#clearRawSearch").onclick=()=>{state.rawQuery="";$("#rawSearch").value="";updateRawSearch();syncUrl('replace');$("#rawSearch").focus()};
+    const rawRoot=$('#rawTable');
+    function pagination(){
+      if(!DYNAMIC)return;
+      $('#rawPrevious').disabled=state.rawOffset<=0;
+      $('#rawNext').disabled=state.rawOffset+rawPageLimit>=result.total;
+      $('#rawPageInfo').textContent=`${Math.floor(state.rawOffset/rawPageLimit)+1} / ${Math.max(1,Math.ceil(result.total/rawPageLimit))}`;
+    }
+    let searchRevision=0;
+    function updateRawSearch(){
+      const filtered=visibleRawRows(rows,state.rawQuery);visibleRows=filtered;
+      $('#rawTable').innerHTML=renderRawTable(filtered);$('#rawMatchCount').textContent=`${Math.max(filtered.length-1,0)} 条数据（不含表头）`;
+      $('#rawEmpty').hidden=filtered.length>1;$('#clearRawSearch').disabled=!state.rawQuery;applyRawFrozenColumns(filtered);
+    }
+    async function fetchRawPage(revision){
+      const query=state.rawQuery,offset=state.rawOffset;
+      const current=()=>rawRoot.isConnected&&state.module==='raw'&&state.rawFile===fileIndex&&state.rawSheet===sheetIndex&&revision===searchRevision;
+      if(!current())return;
+      rawRoot.setAttribute('aria-busy','true');$('#exportRaw').disabled=true;$('#rawPrevious').disabled=true;$('#rawNext').disabled=true;
+      try{
+        const next=await apiJson('raw',rawParams(fileIndex,sheetIndex,query,offset));
+        if(!current()||query!==state.rawQuery||offset!==state.rawOffset)return;
+        result=next;rows=next.rows;visibleRows=rows;rawRowsCache=rows;$('#exportRaw').disabled=false;
+        rawRoot.innerHTML=renderRawTable(rows);rawRoot.scrollTop=0;
+        $('#rawMatchCount').textContent=`${next.total} 条数据（不含表头）`;$('#rawEmpty').hidden=next.total>0;
+        $('#rawSearchError')?.remove();applyRawFrozenColumns(rows);pagination();syncUrl('replace');
+      }catch(error){
+        if(!current())return;
+        rawRoot.replaceChildren();$('#rawMatchCount').textContent='加载失败';$('#rawEmpty').hidden=true;
+        let node=$('#rawSearchError');if(!node){node=document.createElement('div');node.id='rawSearchError';node.className='raw-search-error';node.setAttribute('role','alert');rawRoot.before(node);}
+        const message=document.createElement('span'),retry=document.createElement('button');message.textContent=error.message;retry.type='button';retry.textContent='重试';retry.onclick=()=>fetchRawPage(++searchRevision);node.replaceChildren(message,retry);
+      }finally{if(current())rawRoot.setAttribute('aria-busy','false');}
+    }
+    function search(debounce=true){
+      state.rawOffset=0;$('#clearRawSearch').disabled=!state.rawQuery;syncUrl('replace');
+      if(!DYNAMIC){updateRawSearch();return;}
+      $('#exportRaw').disabled=true;
+      const revision=++searchRevision;clearTimeout(rawSearchTimer);
+      rawSearchTimer=setTimeout(()=>fetchRawPage(revision),debounce?220:0);
+    }
+    $('#rawSearch').oninput=event=>{state.rawQuery=event.target.value;search()};
+    $('#clearRawSearch').onclick=()=>{state.rawQuery='';$('#rawSearch').value='';search(false);$('#rawSearch').focus()};
+    if(DYNAMIC){
+      pagination();
+      $('#rawPrevious').onclick=()=>{state.rawOffset=Math.max(0,state.rawOffset-rawPageLimit);fetchRawPage(++searchRevision)};
+      $('#rawNext').onclick=()=>{state.rawOffset+=rawPageLimit;fetchRawPage(++searchRevision)};
+    }
     $("#rawFreezeRow").onchange=event=>{state.rawFreezeRow=event.target.checked;$("#rawTable").classList.toggle("freeze-row",state.rawFreezeRow)};
-    $("#rawFreezeColumn").onchange=event=>{state.rawFreezeColumn=event.target.checked;if(state.rawFreezeColumn)state.rawFreezeFirstColumn=false;$("#rawFreezeFirstColumn").checked=state.rawFreezeFirstColumn;applyRawFrozenColumns(visibleRawRows(rows,state.rawQuery))};
-    $("#rawFreezeFirstColumn").onchange=event=>{state.rawFreezeFirstColumn=event.target.checked;if(state.rawFreezeFirstColumn)state.rawFreezeColumn=false;$("#rawFreezeColumn").checked=state.rawFreezeColumn;applyRawFrozenColumns(visibleRawRows(rows,state.rawQuery))};
-    $("#exportRaw").onclick=()=>exportRaw(file,sheet);
+    $("#rawFreezeColumn").onchange=event=>{state.rawFreezeColumn=event.target.checked;if(state.rawFreezeColumn)state.rawFreezeFirstColumn=false;$("#rawFreezeFirstColumn").checked=state.rawFreezeFirstColumn;applyRawFrozenColumns(DYNAMIC?visibleRows:visibleRawRows(rows,state.rawQuery))};
+    $("#rawFreezeFirstColumn").onchange=event=>{state.rawFreezeFirstColumn=event.target.checked;if(state.rawFreezeFirstColumn)state.rawFreezeColumn=false;$("#rawFreezeColumn").checked=state.rawFreezeColumn;applyRawFrozenColumns(DYNAMIC?visibleRows:visibleRawRows(rows,state.rawQuery))};
+    $("#exportRaw").onclick=event=>exportRaw(file,sheet,event?.currentTarget);
     $("#exportRawWorkbook").onclick=event=>exportRawWorkbook(file,event.currentTarget);
   }
   function filterRawRows(rows,query){const keyword=(query||"").trim().toLowerCase();return keyword?rows.filter(row=>row.some(value=>String(value??"").toLowerCase().includes(keyword))):rows}
@@ -1074,13 +1170,23 @@
     });
   }
   function renderRawTable(rows){const width=rawTableWidth(rows);return `<table class="data-table"><tbody>${rows.map((row,index)=>`<tr>${Array.from({length:width},(_,col)=>{const cell=row[col]??"";const title=String(cell)!==""?` title="${esc(cell)}"`:"";return `<${index===0?"th":"td"} data-raw-col="${col}"${title}>${fmt(cell)}</${index===0?"th":"td"}>`}).join("")}</tr>`).join("")}</tbody></table>`}
-  function exportRaw(file,sheet){
+  async function exportRaw(file,sheet,button){
+    if(DYNAMIC){
+      button.disabled=true;
+      try{
+        const response=await apiRequest('export/csv',rawParams()),blob=await response.blob();
+        const base=(file?.name||'底表').replace(/\.xlsx?$/i,'').replace(/[\\/:*?"<>|]/g,'_');
+        downloadBlob(blob,`${base}_${(sheet?.name||'Sheet').replace(/[\\/:*?"<>|]/g,'_')}.csv`);showToast('已导出筛选结果');
+      }catch(error){showToast(error.message)}finally{button.disabled=false}
+      return;
+    }
     const rows=visibleRawRows(rawRowsCache,state.rawQuery),csv="\ufeff"+rows.map(row=>row.map(csvCell).join(",")).join("\r\n"),blob=new Blob([csv],{type:"text/csv;charset=utf-8"}),base=(file?.name||"底表").replace(/\.xlsx?$/i,"").replace(/[\\/:*?\"<>|]/g,"_");
     downloadBlob(blob,`${base}_${(sheet?.name||"Sheet").replace(/[\\/:*?\"<>|]/g,"_")}.csv`);showToast(`已导出 ${rows.length} 行 CSV`);
   }
   async function exportRawWorkbook(file,button){
     button.disabled=true;button.textContent='正在导出…';
     try{
+      if(DYNAMIC){const response=await apiRequest('workbook',{file:state.rawFile});downloadBlob(await response.blob(),file.name);showToast('已导出整个 Excel，包含全部 Sheet');return;}
       const b64=RAW_BLOCKS[file?.workbook_key];
       if(!b64)throw new Error('整表文件不可用');
       // Yield before decoding so the loading state is painted. Chunking avoids
@@ -1096,7 +1202,7 @@
       const blob=new Blob(chunks,{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
       downloadBlob(blob,(file.name||'底表.xlsx').replace(/[\\/:*?\"<>|]/g,'_'));
       showToast('已导出整个 Excel，包含全部 Sheet');
-    }catch(error){showToast('整表导出失败，请重新生成看板后重试')}
+    }catch(error){showToast('整表导出失败：'+(error.message||'请重试'))}
     finally{button.disabled=false;button.textContent='导出整个 Excel'}
   }
   function downloadBlob(blob,name){
@@ -1108,8 +1214,20 @@
   async function jumpToSource(source){
     if(!source){showToast("当前看板没有独立来源");return}
     const fileIndex=DATA.raw_files.findIndex(item=>item.name===source.file);if(fileIndex<0){showToast("未找到对应底表文件");return}
-    const sheetIndex=DATA.raw_files[fileIndex].sheets.findIndex(item=>item.name===source.sheet||item.source_sheet===source.sheet);state.module="raw";state.rawFile=fileIndex;state.rawSheet=Math.max(sheetIndex,0);state.rawQuery="";await renderAll();syncUrl("push");$("#rawSearch")?.focus({preventScroll:true});$("#page")?.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});showToast(`已定位到 ${source.sheet}；浏览器后退可返回分析`)
+    const sheetIndex=DATA.raw_files[fileIndex].sheets.findIndex(item=>item.name===source.sheet||item.source_sheet===source.sheet);state.module="raw";state.rawFile=fileIndex;state.rawSheet=Math.max(sheetIndex,0);state.rawQuery="";state.rawOffset=0;await renderAll();syncUrl("push");$("#rawSearch")?.focus({preventScroll:true});$("#page")?.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});showToast(`已定位到 ${source.sheet}；浏览器后退可返回分析`)
   }
   function showToast(message){const node=$("#toast");if(!node)return;node.textContent=message;node.classList.add("show");clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>node.classList.remove("show"),4000)}
-  init();
-})();
+  await init();
+  if(DYNAMIC){
+    const refresh=()=>refreshSharedAnnotations().catch(()=>{});
+    refresh();
+    setInterval(()=>{if(!document.hidden)refresh()},30000);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
+    window.addEventListener('focus',refresh);
+  }
+})().catch(error=>{
+  const page=document.querySelector('#page');if(!page)return;
+  const message=document.createElement('p'),button=document.createElement('button');
+  message.textContent=error.message;button.textContent='重新加载';button.type='button';button.onclick=()=>location.reload();
+  page.setAttribute('role','alert');page.replaceChildren(message,button);
+});

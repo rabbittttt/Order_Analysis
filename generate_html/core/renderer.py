@@ -130,3 +130,85 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
         pack_seconds, serialize_seconds, compress_seconds,
         perf_counter() - started - pack_seconds - serialize_seconds - compress_seconds,
     )
+
+
+def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: Path) -> None:
+    """Publish an immutable dataset, then atomically switch the current pointer.
+
+    Runtime is private: only the HTTP service exposes selected data and assets.
+    Older datasets remain available to pages which already pinned their version.
+    """
+    import hashlib
+    import uuid
+    from urllib.parse import urlencode
+
+    runtime = output_file.parent / "runtime"
+    assets = runtime / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    dataset_id = uuid.uuid4().hex
+    datasets = runtime / "datasets"
+    datasets.mkdir(exist_ok=True)
+    staging = datasets / (".building-" + dataset_id)
+    staging.mkdir()
+
+    def asset(data: bytes, suffix: str) -> str:
+        name = hashlib.sha256(data).hexdigest() + suffix
+        target = assets / name
+        if not target.exists():
+            temporary = assets / ("." + uuid.uuid4().hex + ".tmp")
+            temporary.write_bytes(data)
+            temporary.replace(target)
+        return "assets/" + name
+
+    def json_text(value):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+    for directory in ("boards", "raw", "workbooks", "charts"):
+        (staging / directory).mkdir()
+    for key, board in manifest.get("dashboards", {}).items():
+        name = hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json.gz"
+        (staging / "boards" / name).write_bytes(gzip.compress(json_text(pack_dashboard(board)).encode("utf-8"), mtime=0))
+    for key, value in manifest.get("raw_blocks", {}).items():
+        file_id, sheet_id = key.split("|")
+        if not file_id.isdigit() or (sheet_id != "xlsx" and not sheet_id.isdigit()):
+            raise ValueError("Invalid raw block key")
+        target = (staging / "workbooks" / (file_id + ".xlsx") if sheet_id == "xlsx"
+                  else staging / "raw" / (file_id + "_" + sheet_id + ".json.gz"))
+        target.write_bytes(base64.b64decode(value, validate=True))
+    catalog = {key: value for key, value in manifest.items() if key not in ("dashboards", "raw_blocks")}
+    catalog["dataset_id"] = dataset_id
+    catalog["meta"] = {key: value for key, value in catalog.get("meta", {}).items() if key != "input_dir"}
+    catalog["chart_assets"] = {}
+    for key, value in manifest.get("chart_assets", {}).items():
+        if isinstance(value, str) and value.startswith("data:image/") and ";base64," in value:
+            header, encoded = value.split(",", 1)
+            suffix = {"data:image/png;base64": ".png", "data:image/jpeg;base64": ".jpg", "data:image/svg+xml;base64": ".svg"}.get(header)
+            if suffix:
+                image_name = hashlib.sha256(key.encode("utf-8")).hexdigest() + suffix
+                (staging / "charts" / image_name).write_bytes(base64.b64decode(encoded))
+                catalog["chart_assets"][key] = "api/chart?" + urlencode({"dataset": dataset_id, "key": key})
+                continue
+        catalog["chart_assets"][key] = value
+    (staging / "catalog.json").write_text(json_text(catalog), encoding="utf-8")
+
+    html = (template_dir / "dashboard.html").read_text(encoding="utf-8")
+    css = asset((template_dir / "dashboard.css").read_bytes(), ".css")
+    javascript = asset((template_dir / "dashboard.js").read_bytes(), ".js")
+    annotations = asset((template_dir / "trend_annotations.js").read_bytes(), ".js")
+    logo = asset((template_dir / "brand-logo.png").read_bytes(), ".png")
+    html = html.replace('<style>__DASHBOARD_CSS__</style>', f'<link rel="stylesheet" href="{css}">')
+    html = html.replace('<script>window.DASHBOARD_DATA_B64="__DASHBOARD_DATA__";</script>', '<script>window.ORDER_DASHBOARD_API_BASE="api/";</script>')
+    html = html.replace('<script>window.DASHBOARD_BLOCKS_B64=__DASHBOARD_BLOCKS__;</script>', '')
+    html = html.replace('<script>window.DASHBOARD_RAW_B64=__DASHBOARD_RAW__;</script>', '')
+    html = html.replace('<script>__TREND_ANNOTATIONS_JS__</script>', f'<script src="{annotations}"></script>')
+    html = html.replace('<script>__DASHBOARD_JS__</script>', f'<script src="{javascript}"></script>')
+    html = html.replace('__BRAND_LOGO__', logo)
+    if '__DASHBOARD_' in html:
+        raise ValueError("Unresolved dynamic template placeholder")
+    staging.rename(datasets / dataset_id)
+    build_hashes = {name: hashlib.sha256((template_dir / name).read_bytes()).hexdigest() for name in ("dashboard.html", "dashboard.css", "dashboard.js", "trend_annotations.js", "brand-logo.png")}
+    _write_text_atomic(runtime / "web-build.json", json_text(build_hashes))
+    _write_text_atomic(runtime / "index.html", html)
+    _write_text_atomic(output_file, html)
+    _write_text_atomic(runtime / "current.json", json_text({"dataset_id": dataset_id}))
+    logging.getLogger(__name__).info("动态看板已发布：批次 %s，页面 %.1f KB，看板 %d 个；数据目录 %s", dataset_id, len(html.encode("utf-8")) / 1024, len(manifest.get("dashboards", {})), runtime)

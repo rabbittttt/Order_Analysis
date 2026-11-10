@@ -5,7 +5,7 @@ const out=process.env.RHYTHM_ARTIFACT_DIR||path.join(project,'.test_outputs/rhyt
 // Baseline comparison is opt-in: never compare new business data with a stale run.
 const baselinePath=process.env.RHYTHM_BASELINE,baseline=baselinePath?JSON.parse(fs.readFileSync(baselinePath,'utf8')):null;
 function readBoard(block){
- const value=JSON.parse(gunzipSync(Buffer.from(block,'base64')).toString('utf8'));
+ const value=typeof block==='string'?JSON.parse(gunzipSync(Buffer.from(block,'base64')).toString('utf8')):block;
  const restore=item=>{
   if(!item||typeof item!=='object')return item;
   if(Array.isArray(item))return item.map(restore);
@@ -19,17 +19,17 @@ function readBoard(block){
  let boards=0,charts=0,snapshots=0,selections=0,rankings=0,toolbars=0,ratePanels=0;
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});page.on('pageerror',error=>errors.push(error.message));
-  const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+  const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8766/');
   const ready=()=>page.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false'&&[...document.querySelectorAll('[data-rhythm-config]')].every(n=>n._rhythmWidth===Math.floor(n.clientWidth)));
   await page.goto(base.href);await ready();
-  const blocks=await page.evaluate(()=>window.DASHBOARD_BLOCKS_B64),keys=Object.keys(blocks).filter(key=>/\|(cancellation|launch_rhythm)$/.test(key));
+  const blocks=await page.evaluate(async()=>{if(window.DASHBOARD_BLOCKS_B64)return window.DASHBOARD_BLOCKS_B64;const data=window.DASHBOARD_DATA,result={};for(const subject of data.subjects)for(const module of ['cancellation','launch_rhythm']){if(!subject.modules.includes(module))continue;const url=new URL('api/dashboard',location.href);url.search=new URLSearchParams({dataset:data.dataset_id,subject:subject.id,module});const response=await fetch(url);if(!response.ok)throw new Error('board request failed');result[subject.id+'|'+module]=await response.json();}return result;}),keys=Object.keys(blocks).filter(key=>/\|(cancellation|launch_rhythm)$/.test(key));
   const boardData=Object.fromEntries(keys.map(key=>[key,readBoard(blocks[key])]));
   assert(keys.length,'no rhythm dashboards in formal output');
   if(baseline)assert.deepEqual([...keys].sort(),Object.keys(baseline.boards).sort(),'rhythm dashboard availability changed');
   const rankingKey=keys.find(key=>key.endsWith('|cancellation')&&Object.values(boardData[key].views.day.pages).some(item=>item.sections.some(section=>section.kind==='bars'&&section.title==='选配退订率排行')));
   const representative=process.env.RHYTHM_SCREENSHOT_SUBJECT||(rankingKey||keys[0]).split('|')[0];
   assert(keys.some(key=>key.startsWith(representative+'|')),'screenshot subject has no rhythm dashboards');
-  for(const key of keys){if(baseline?.boards[key])assert.equal(crypto.createHash('sha256').update(blocks[key]).digest('hex'),baseline.boards[key],key+' business payload changed');boards++;}
+  for(const key of keys){if(baseline?.boards[key])assert.equal(crypto.createHash('sha256').update(typeof blocks[key]==='string'?blocks[key]:JSON.stringify(blocks[key])).digest('hex'),baseline.boards[key],key+' business payload changed');boards++;}
   for(const width of [1920,1440,768,390]){
    await page.setViewportSize({width,height:1000});
    for(const key of keys){

@@ -532,7 +532,8 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         self.assertIn('id="rawEmpty"', script)
         self.assertIn('id="clearRawSearch"', script)
         self.assertIn('id="rawFile" aria-label="选择底表文件"', script)
-        self.assertIn('$("#rawEmpty").hidden=filtered.length>1', script)
+        self.assertIn("$('#rawEmpty').hidden=filtered.length>1", script)
+        self.assertIn("$('#rawEmpty').hidden=next.total>0", script)
 
 
     def test_navigation_discards_stale_pages_and_source_jump_preserves_back_path(self):

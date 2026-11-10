@@ -2,7 +2,7 @@
 const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
 const project=path.resolve(__dirname,'../../..'),{chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const out=path.join(project,'.test_outputs/ui_audit_20261002/after');
-const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8766/');
 (async()=>{
  fs.mkdirSync(out,{recursive:true});const browser=await chromium.launch({headless:true,channel:'msedge'});
  const page=await browser.newPage({viewport:{width:1440,height:1000},timezoneId:'Asia/Shanghai',reducedMotion:'reduce'}),checks=[],errors=[];
@@ -48,8 +48,9 @@ const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析
   await page.locator('#rawSearch').fill('NO_MATCH_EXCEL_EXPORT');
   const workbookDownload=page.waitForEvent('download');await page.locator('#exportRawWorkbook').click();const workbook=await workbookDownload;
   check('完整Excel下载保留文件名',workbook.suggestedFilename()===file.name);
-  const embedded=await page.evaluate(key=>window.DASHBOARD_RAW_B64[key],file.workbook_key);
-  check('全部Sheet和原格式原样导出且不受筛选影响',fs.readFileSync(await workbook.path()).equals(Buffer.from(embedded,'base64')));
+  const dataset=await page.evaluate(()=>window.DASHBOARD_DATA.dataset_id);
+  const expected=fs.readFileSync(path.join(project,'output_file/runtime/datasets',dataset,'workbooks',file.workbook_key.split('|')[0]+'.xlsx'));
+  check('全部Sheet和原格式原样导出且不受筛选影响',fs.readFileSync(await workbook.path()).equals(expected));
   await page.locator('#clearRawSearch').click();
   await page.setViewportSize({width:390,height:844});
   check('手机显示模块选择器',await page.locator('#moduleSelect').isVisible());

@@ -50,7 +50,7 @@ class XxxModule:
 - 底表统一在“底表中心”查看；看板来源抽屉只负责跳转定位，底表中心负责搜索与 CSV 导出。
 - 原始数值、百分数和日期的显示必须读取单元格 `number_format`，不要在底表渲染中写死小数位或日期格式。
 - SKU 的 TOP200 周度累计锁单占比、配置组合热力图保留全部历史列，首次显示时滚动到最右侧；切换组合后保留用户已拖动的位置。热力图本身负责横、竖滚动，横向滚动条始终位于卡片可见内容底部，不能放到200行之后再由外层裁切。主销 SKU 排行分列展示原表的版本中文名称、外饰、内饰和轮毂套件。
-- 底表中心“导出当前数据”导出当前筛选结果的 CSV；“导出整个 Excel”下载生成看板时嵌入的完整原始 XLSX（所有 Sheet、格式和公式），不受筛选影响，也不依赖原文件路径或网络。`raw_blocks` 的数字 Sheet 键存储 gzip 行数据，`文件序号|xlsx` 键存储原文件的 base64 字节，仅供下载。
+- 底表中心“导出当前数据”由后台导出当前筛选的全部 CSV；“导出整个 Excel”下载当前页面所属批次的原始 XLSX，保留全部 Sheet、格式和公式。生成阶段 raw_blocks 为中间表示，不再内嵌最终网页。动态运行、外置数据和发布契约见 SERVER.md。
 
 ## 修改后必做
 
@@ -59,9 +59,9 @@ class XxxModule:
 所有 Git 网络操作（包括 fetch、pull、push、ls-remote）必须使用与 Codex 软件当前连接相同的代理。执行前核对有效代理；代理不可用时停止并报告，禁止清空代理、通过 NO_PROXY 绕过或回退直连。本地 commit 不需要联网；代理地址按当前运行环境配置，不在共享代码中写死。
 
 ```powershell
-python -m compileall core modules main.py
+python -m compileall core modules main.py server.py package_release.py
 node --check templates\dashboard.js
-python main.py --check
+python main.py --check --no-open
 python -m unittest discover -s tests
 ```
 

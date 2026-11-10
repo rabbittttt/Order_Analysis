@@ -20,7 +20,7 @@ from core.data_paths import orders_input_directory
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
 from core.model_identity import STAGE_SOURCE_PATH
-from core.renderer import b64gzip, render_dashboard
+from core.renderer import b64gzip, render_dynamic_dashboard as render_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
 
@@ -315,6 +315,8 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
         validation_seconds = perf_counter() - validation_started
         LOGGER.info("开始写入 HTML（主体 %d 个，看板 %d 个）", len(subjects), len(dashboards))
         stage_started = perf_counter()
+        if DIAGNOSTIC_COUNTS["ERROR"]:
+            raise RuntimeError("本批次存在生成错误，保留上一批已发布数据")
         render_dashboard(manifest, ROOT / "templates", output_file)
         render_seconds = perf_counter() - stage_started
         output_size = output_file.stat().st_size
@@ -385,6 +387,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")
+    parser.add_argument("--port", type=int, default=8766, help="本地订单服务端口。")
     parser.add_argument("--debug", action="store_true", help="输出调试日志，用于排查数据解析问题。")
     return parser.parse_args()
 
@@ -405,6 +408,48 @@ def cleanup_input_cache(input_dir: Path) -> None:
         LOGGER.info("已清理运行缓存: %s", cache_dir)
     except OSError as exc:
         LOGGER.warning("运行缓存未能清理: %s（%s）；可在文件占用结束后手动删除", cache_dir, exc)
+
+
+def open_dynamic_dashboard(data_dir: Path, port: int) -> None:
+    import hashlib
+    import subprocess
+    import time
+    import urllib.error
+    import urllib.request
+
+    base = f"http://127.0.0.1:{port}"
+    expected_service = hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in ("server.py", "core/server.py", "core/annotations.py", "requirements-server.txt"))).hexdigest()[:16]
+    expected_directory = hashlib.sha256(os.path.normcase(str(data_dir.resolve())).encode("utf-8")).hexdigest()[:16]
+    expected_dataset = json.loads((data_dir / "current.json").read_text(encoding="utf-8"))["dataset_id"]
+    def ready():
+        try:
+            with urllib.request.urlopen(base + "/health", timeout=1) as response:
+                health = json.load(response)
+            if health.get("application") != "order-dashboard" or health.get("dataset_id") != expected_dataset:
+                raise RuntimeError(f"端口 {port} 已用于其他服务或数据目录，请使用 --port 指定空闲端口")
+            if health.get("data_fingerprint") != expected_directory:
+                raise RuntimeError("该端口的订单服务使用不同数据目录，请使用 --port 指定空闲端口")
+            if health.get("service_fingerprint") != expected_service:
+                raise RuntimeError("订单后台代码已更新，请停止旧订单服务后重新运行；或使用 --port 指定空闲端口")
+            return True
+        except (urllib.error.URLError, TimeoutError):
+            return False
+    if not ready():
+        flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        log_path = data_dir.parent / "log" / "order_server.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("ab") as stream:
+            process = subprocess.Popen([sys.executable, str(ROOT / "server.py"), "--data-dir", str(data_dir.resolve()), "--port", str(port)], cwd=ROOT, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream, creationflags=flags)
+        for _ in range(40):
+            if process.poll() is not None:
+                raise RuntimeError(f"服务启动失败，请查看 {log_path}")
+            if ready():
+                break
+            time.sleep(0.25)
+        else:
+            raise RuntimeError(f"服务启动超时，请查看 {log_path}")
+    webbrowser.open(base + "/")
+    LOGGER.info("订单看板访问地址: %s/", base)
 
 
 def main() -> int:
@@ -430,17 +475,10 @@ def main() -> int:
         return 1
     if AUTO_OPEN_HTML and not args.no_open:
         try:
-            if sys.platform == "win32":
-                os.startfile(args.output)  # 用系统默认应用打开
-                opened = True
-            else:
-                opened = webbrowser.open(args.output.resolve().as_uri())
-            if opened:
-                LOGGER.info("已调用系统默认应用打开看板")
-            else:
-                LOGGER.warning("系统没有确认看板已打开，请手动打开: %s", args.output)
+            open_dynamic_dashboard(args.output.parent / "runtime", args.port)
         except Exception:
-            LOGGER.exception("自动打开看板失败，请手动打开HTML")
+            LOGGER.exception("自动启动失败；请运行 server.py 后通过网址访问看板")
+            return 1
     return 1 if args.check and warnings else 0
 
 

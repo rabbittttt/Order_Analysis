@@ -24,7 +24,7 @@ class BrowserDataWorkflowTests(unittest.TestCase):
         return self.js(r'''
 const begin=source.indexOf('  let rawRowsCache='),end=source.indexOf('  function filterRawRows',begin);
 const filter=source.split('\n').find(line=>line.startsWith('  function filterRawRows'));
-const exportBegin=source.indexOf('  function exportRaw('),exportEnd=source.indexOf('  async function jumpToSource',exportBegin);
+const exportBegin=source.indexOf('  async function exportRaw('),exportEnd=source.indexOf('  async function jumpToSource',exportBegin);
 const elements={},downloads=[],blobs=new Map(),pending={};
 const $=selector=>elements[selector]??=({innerHTML:'',classList:{toggle(){}},value:'',focus(){}});
 const state={module:'raw',rawFile:0,rawSheet:0,rawQuery:''};
@@ -34,7 +34,7 @@ class FakeBlob{constructor(parts){this.parts=parts}}
 const urls={createObjectURL:blob=>{const key='url'+blobs.size;blobs.set(key,blob);return key},revokeObjectURL(){}};
 const api=new Function('$','document','state','DATA','RAW_BLOCKS','decompressJson','esc','renderRawTable',
  'applyRawFrozenColumns','syncUrl','Blob','URL','showToast','setTimeout',
- source.slice(begin,end)+filter+'\n'+source.slice(exportBegin,exportEnd)+
+ 'const DYNAMIC=false;'+source.slice(begin,end)+filter+'\n'+source.slice(exportBegin,exportEnd)+
  ';return {renderRaw,cache:()=>({rows:rawRowsCache,key:rawRowsKey})};')($,doc,state,DATA,
  {'0|0':'old','1|0':'new'},name=>new Promise(resolve=>pending[name]=resolve),String,JSON.stringify,
  ()=>{},()=>{},FakeBlob,urls,()=>{},()=>{});

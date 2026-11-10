@@ -65,10 +65,10 @@ class RawWorkbookSnapshotTests(TestCase):
 class RawWorkbookDownloadTests(TestCase):
     def run_download(self, invalid=False):
         source = (ROOT / 'templates/dashboard.js').read_text(encoding='utf-8')
-        begin = source.index('  function exportRaw(')
+        begin = source.index('  async function exportRaw(')
         end = source.index('  async function jumpToSource', begin)
         script = r'''
-const exportsSource=JSON.parse(process.argv[1]),invalid=process.argv[2]==='true';
+const exportsSource='const DYNAMIC=false;'+JSON.parse(process.argv[1]),invalid=process.argv[2]==='true';
 const original=Buffer.from(Array.from({length:170003},(_,i)=>i%251)),downloads=[],messages=[],blobs=new Map();
 const files={original:{name:'中文原表.xlsx',workbook_key:'0|xlsx'},other:{name:'其他.xlsx',workbook_key:'1|xlsx'}};
 const blocks={'0|xlsx':invalid?'?bad-base64?':original.toString('base64'),'1|xlsx':Buffer.from('wrong file').toString('base64')};

@@ -19,9 +19,17 @@ const state={subject:'A',module:'overview',grain:'week',period:null};
 const pending=[];
 const getDashboard=()=>new Promise(resolve=>pending.push(resolve));
 const board=(grain,period)=>({views:{[grain]:{periods:[period],default_period:period}}});
-const ensure=new Function('DATA','state','subject','moduleAvailable','getDashboard',
+const ensureElements=new Map();
+const ensureDom=selector=>{
+ if(!ensureElements.has(selector))ensureElements.set(selector,{
+  textContent:'',attributes:{},setAttribute(name,value){this.attributes[name]=value},
+  classList:{add(){},remove(){}}
+ });
+ return ensureElements.get(selector);
+};
+const ensure=new Function('DATA','state','subject','moduleAvailable','getDashboard','$','DYNAMIC','showPageError',
  extract('  async function ensureState()','  function renderSubjectSelect()')+';return ensureState;')(
- {},state,()=>({modules:['overview','sku','raw']}),()=>true,getDashboard);
+ {},state,()=>({modules:['overview','sku','raw']}),()=>true,getDashboard,ensureDom,true,error=>{throw error});
 ''' + '\n(async()=>{\n' + body + '\n})().catch(e=>{console.error(e);process.exitCode=1});'
         result = subprocess.run(['node', '-e', script], cwd=ROOT, capture_output=True, encoding='utf-8')
         self.assertEqual(result.returncode, 0, result.stderr)
