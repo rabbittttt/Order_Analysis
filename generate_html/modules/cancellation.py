@@ -225,13 +225,21 @@ class CancellationModule:
             return None
         default_period = next(reversed(pages))
         if len(pages) > 1:
+            hidden_sections = {
+                ("daily_cancel", "日度退订趋势"),
+                ("bars", "选配退订率排行"),
+            } if len(pages) == 2 else set()
             phase_rows, sections = [], []
             orders = retained = cancelled = 0
             for label, page in pages.items():
                 values = [card["value"] for card in page["kpis"]]
                 orders += values[0]; retained += values[1]; cancelled += values[2]
                 phase_rows.append([label, *values[:3], f"{values[3]:.1f}%"])
-                sections.extend({**part, "title": f"{label.split(' · ')[0]} · {part['title']}"} for part in page["sections"])
+                sections.extend(
+                    {**part, "title": f"{label.split(' · ')[0]} · {part['title']}"}
+                    for part in page["sections"]
+                    if (part["kind"], part["title"]) not in hidden_sections
+                )
             combined = {"kpis": [
                 kpi("小订期累计", orders, "单", "各阶段合计", "blue"),
                 kpi("累计留存小订", retained, "单", "各阶段合计", "green"),

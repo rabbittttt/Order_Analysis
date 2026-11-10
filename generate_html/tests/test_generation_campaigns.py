@@ -78,6 +78,10 @@ class GenerationCampaignTests(TestCase):
             sheet = cancel.create_sheet(name+'_日度退订')
             sheet.append(['日期','当日小订退','累计小订退','当日退订数','小转大率','小订退订率','大定退订率'])
             sheet.append([date(2024,month,1),quantity,quantity,0,0,quantity/1000,0])
+            selection = cancel.create_sheet(name + '_选配退订')
+            selection.append(['版本退订比例'])
+            selection.append(['版本', '小订数', '总退订数', '小订后退订比例', '大定后退订比例', '总退订比例'])
+            selection.append(['标准版', 1000, quantity, quantity / 1000, 0, quantity / 1000])
         store = WorkbookStore(Path('.'))
         store.items = [WorkbookItem(Path('小订选配比例分析.xlsx'),mix),WorkbookItem(Path('小订退订分析.xlsx'),cancel)]
         with patch('modules.cancellation.generation_records',return_value=records()), \
@@ -87,8 +91,16 @@ class GenerationCampaignTests(TestCase):
         view = board.views['day']
         self.assertEqual(len(view['pages']),3)
         self.assertEqual([k['value'] for k in view['pages']['全部阶段']['kpis']],[400,240,160,60])
-        self.assertTrue(any(s['title'].startswith('Ultra版 · ') for s in view['pages']['全部阶段']['sections']))
-        self.assertTrue(any(s['title'].startswith('Pro版 · ') for s in view['pages']['全部阶段']['sections']))
+        self.assertEqual(
+            [s['title'] for s in view['pages']['全部阶段']['sections']],
+            ['小订阶段对比', 'Ultra版 · 小订期订单节奏', 'Pro版 · 小订期订单节奏'],
+        )
+        for period in view['periods'][1:]:
+            with self.subTest(period=period):
+                self.assertEqual(
+                    [s['title'] for s in view['pages'][period]['sections']],
+                    ['小订期订单节奏', '日度退订趋势', '选配退订率排行'],
+                )
         mix.close();cancel.close()
 
 
