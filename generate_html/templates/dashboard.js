@@ -51,12 +51,17 @@
   async function apiJson(path, params = {}, options = {}) {
     return (await apiRequest(path, params, options)).json();
   }
-  try { DATA = DYNAMIC ? await apiJson('catalog') : await decompressJson(window.DASHBOARD_DATA_B64); }
-  catch (error) {
-    const page=document.querySelector('#page'), message=document.createElement('p'), retry=document.createElement('button');
-    page.setAttribute('role','alert'); message.textContent=error.message; retry.textContent='重新加载'; retry.type='button';
-    retry.onclick=()=>location.reload(); page.replaceChildren(message,retry); return;
+  for (;;) {
+    try { DATA = DYNAMIC ? await apiJson('catalog') : await decompressJson(window.DASHBOARD_DATA_B64); break; }
+    catch (error) {
+      const page=document.querySelector('#page'),message=document.createElement('p');
+      message.textContent=DYNAMIC&&error.status===503?'等待订单数据更新…':error.message;
+      page.setAttribute('role','status');page.replaceChildren(message);
+      if(!DYNAMIC)throw error;
+      await new Promise(resolve=>setTimeout(resolve,15000));
+    }
   }
+  document.querySelector('#page').removeAttribute('role');
   DATA.dashboard_blocks=window.DASHBOARD_BLOCKS_B64||DATA.dashboard_blocks||{};
   window.DASHBOARD_DATA = DATA;
   const RAW_BLOCKS = window.DASHBOARD_RAW_B64 = window.DASHBOARD_RAW_B64 || {};
@@ -262,15 +267,15 @@
   const chartPalette = {blue:"#BDD7EE",cyan:"#B5DDE5",green:"#C6E0B4",yellow:"#FFE699",orange:"#F8CBAD",rose:"#F0CCCC",violet:"#CCC0DA"};
   // 留存大定/锁单堆叠趋势图按系列出现顺序取色，不按能源类型固定颜色。
   const stackedTrendPalette=["#FFF2CC","#E2F0D9","#C8E8E8","#A8D8EA","#A0C1E8","#DCC5ED","#F0C8C8","#F8D8B0"];
-  const moduleLabels = DATA.config.module_labels;
+  let moduleLabels = DATA.config.module_labels;
   const state = {subject:null,module:"overview",grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawOffset:0,rawFreezeRow:true,rawFreezeColumn:false,rawFreezeFirstColumn:true};
   const boardCache={};
   async function getDashboard(subjectId=state.subject,moduleId=state.module){
-    const key=`${subjectId}|${moduleId}`;
+    const key=`${DYNAMIC?DATA.dataset_id+"|":""}${subjectId}|${moduleId}`;
     if(!(key in boardCache)){
       const load=async()=>{
         if(DYNAMIC)return unpackDashboard(await apiJson('dashboard',{subject:subjectId,module:moduleId}));
-        const b64=(DATA.dashboard_blocks||{})[key];
+        const b64=(DATA.dashboard_blocks||{})[`${subjectId}|${moduleId}`];
         return b64?unpackDashboard(await decompressJson(b64)):null;
       };
       boardCache[key]=load().catch(error=>{delete boardCache[key];throw error});
@@ -486,7 +491,6 @@
     state.grain=params.get("grain")||state.grain;state.period=params.get("period")||state.period;
     readRawLocation(params);
     if(state.module==="launch_rhythm"&&!params.get("grain"))state.grain="day";
-    $("#updatedAt").textContent=`生成时间 ${DATA.meta.generated_at.replace("T"," ")}`;
     bindStatic();renderSubjectSelect();if(await ensureState()===false)return;await renderAll();syncUrl("replace");
   }
   function bindStatic(){
@@ -1049,6 +1053,7 @@
   function renderUnknown(){return '<div class="empty-image">暂不支持该组件</div>'}
 
   let rawRowsCache=[],rawRowsKey=null,rawRenderRevision=0,rawSearchTimer=null;
+  let pendingRawPage=null;
   const rawPageLimit=200;
   function rawParams(fileIndex=state.rawFile,sheetIndex=state.rawSheet,query=state.rawQuery,offset=state.rawOffset){return {file:fileIndex,sheet:sheetIndex,q:query,offset,limit:rawPageLimit}}
   async function loadRawRows(fileIndex,sheetIndex){
@@ -1065,7 +1070,7 @@
     const query=state.rawQuery,offset=state.rawOffset;
     let rows,result;
     try{
-      if(DYNAMIC){result=await apiJson('raw',rawParams(fileIndex,sheetIndex,query,offset));rows=result.rows;}
+      if(DYNAMIC){result=pendingRawPage||await apiJson('raw',rawParams(fileIndex,sheetIndex,query,offset));pendingRawPage=null;rows=result.rows;}
       else rows=await loadRawRows(fileIndex,sheetIndex);
     }catch(error){
       if(revision!==rawRenderRevision||state.module!=='raw'||fileIndex!==state.rawFile||sheetIndex!==state.rawSheet)return;
@@ -1217,6 +1222,65 @@
     const sheetIndex=DATA.raw_files[fileIndex].sheets.findIndex(item=>item.name===source.sheet||item.source_sheet===source.sheet);state.module="raw";state.rawFile=fileIndex;state.rawSheet=Math.max(sheetIndex,0);state.rawQuery="";state.rawOffset=0;await renderAll();syncUrl("push");$("#rawSearch")?.focus({preventScroll:true});$("#page")?.scrollTo({top:0,behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"});showToast(`已定位到 ${source.sheet}；浏览器后退可返回分析`)
   }
   function showToast(message){const node=$("#toast");if(!node)return;node.textContent=message;node.classList.add("show");clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>node.classList.remove("show"),4000)}
+  let syncBusy=false, interactionRevision=0, lastInteraction=0;
+  for(const event of ['click','input','change'])document.addEventListener(event,()=>{interactionRevision++;lastInteraction=performance.now()},true);
+  function syncBlocked(){
+    return document.hidden||$('#trendAnnotationEditor')?.open||$('#page')?.getAttribute('aria-busy')==='true'
+      ||Boolean(document.activeElement?.matches('input,textarea')&&performance.now()-lastInteraction<1500);
+  }
+  function setSyncStatus(message){
+    const node=$('#syncStatus');if(!node)return;
+    node.textContent=message;node.hidden=!message;
+  }
+  async function synchronizeDataset(){
+    if(!DYNAMIC||syncBusy||document.hidden)return;
+    syncBusy=true;
+    try{
+      const status=await apiJson('sync');
+      setSyncStatus(status.error?'更新失败，当前显示上次数据':'');
+      if(!status.dataset_id||status.dataset_id===DATA.dataset_id||syncBlocked())return;
+      const original=DATA,previousState=JSON.stringify(state),interaction=interactionRevision;
+      const catalog=await apiJson('catalog');
+      if(catalog.dataset_id===DATA.dataset_id)return;
+      const nextState={...state};
+      const nextSubject=catalog.subjects.find(item=>item.id===state.subject)||catalog.subjects[0];
+      if(!nextSubject)throw new Error('新数据没有可用主体');
+      nextState.subject=nextSubject.id;
+      if(!nextSubject.modules.includes(nextState.module))nextState.module=nextSubject.modules[0]||'raw';
+      const fileName=DATA.raw_files[state.rawFile]?.name,sheetName=DATA.raw_files[state.rawFile]?.sheets[state.rawSheet]?.name;
+      nextState.rawFile=Math.max(0,catalog.raw_files.findIndex(item=>item.name===fileName));
+      nextState.rawSheet=Math.max(0,catalog.raw_files[nextState.rawFile]?.sheets.findIndex(item=>item.name===sheetName)??0);
+      let board,raw;
+      if(nextState.module==='raw'){
+        const params={dataset:catalog.dataset_id,file:nextState.rawFile,sheet:nextState.rawSheet,q:nextState.rawQuery,offset:nextState.rawOffset,limit:rawPageLimit};
+        raw=await apiJson('raw',params);
+        if(params.offset>=raw.total&&params.offset>0){nextState.rawOffset=Math.max(0,Math.ceil(raw.total/rawPageLimit)-1)*rawPageLimit;raw=await apiJson('raw',{...params,offset:nextState.rawOffset});}
+      }else{
+        board=unpackDashboard(await apiJson('dashboard',{dataset:catalog.dataset_id,subject:nextState.subject,module:nextState.module}));
+      }
+      // Prepare the complete visible view before changing version. Never erase
+      // a usable view because a new request failed or the reader navigated.
+      if(DATA!==original||JSON.stringify(state)!==previousState||interactionRevision!==interaction||syncBlocked())return;
+      const page=$('#page'),top=page.scrollTop,table=$('#rawTable'),tableTop=table?.scrollTop,tableLeft=table?.scrollLeft;
+      const hourly=[...page.querySelectorAll('[data-hourly-select],[data-launch-hourly-select]')].map(node=>node.value);
+      const combos=[...page.querySelectorAll('.combo-matrix')].map(node=>node.querySelector('[data-combo-switch].active')?.dataset.comboSwitch);
+      ++navigationRevision;++pageRevision;++rawRenderRevision;ensureState.revision=(ensureState.revision||0)+1;
+      clearTimeout(rawSearchTimer);rawRowsCache=[];rawRowsKey=null;
+      for(const key of Object.keys(boardCache))delete boardCache[key];
+      DATA=catalog;window.DASHBOARD_DATA=DATA;moduleLabels=DATA.config.module_labels;
+      window.CHART_RENDER_MODE=DATA.config.chart_render_mode||'generated';
+      Object.assign(state,nextState);pendingRawPage=raw||null;
+      if(board)boardCache[`${DATA.dataset_id}|${state.subject}|${state.module}`]=Promise.resolve(board);
+      if(await ensureState()!==false){
+        await renderAll();
+        page.querySelectorAll('[data-hourly-select],[data-launch-hourly-select]').forEach((node,index)=>{if([...node.options].some(option=>option.value===hourly[index])){node.value=hourly[index];node.dispatchEvent(new Event('change'));}});
+        page.querySelectorAll('.combo-matrix').forEach((node,index)=>{[...node.querySelectorAll('[data-combo-switch]')].find(button=>button.dataset.comboSwitch===combos[index])?.click();});
+        page.scrollTop=top;const nextTable=$('#rawTable');if(nextTable){nextTable.scrollTop=tableTop||0;nextTable.scrollLeft=tableLeft||0;}
+        syncUrl('replace');
+      }
+    }catch(error){setSyncStatus('同步暂不可用，当前显示上次数据');}
+    finally{syncBusy=false;}
+  }
   await init();
   if(DYNAMIC){
     const refresh=()=>refreshSharedAnnotations().catch(()=>{});
@@ -1224,6 +1288,11 @@
     setInterval(()=>{if(!document.hidden)refresh()},30000);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
     window.addEventListener('focus',refresh);
+    setInterval(synchronizeDataset,15000);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)synchronizeDataset()});
+    window.addEventListener('focus',synchronizeDataset);
+    $('#trendAnnotationEditor')?.addEventListener('close',synchronizeDataset);
+    synchronizeDataset();
   }
 })().catch(error=>{
   const page=document.querySelector('#page');if(!page)return;

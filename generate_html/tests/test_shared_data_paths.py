@@ -19,15 +19,15 @@ class SharedDataPathsTests(TestCase):
             self.assertIsNone(shared_data_root(project))
             self.assertEqual(orders_input_directory(project), project / "output_file")
 
-    def test_shared_root_never_falls_back_when_category_or_file_is_missing(self):
+    def test_sibling_shared_directory_does_not_redirect_default_input(self):
         with TemporaryDirectory() as folder, patch.dict(os.environ, {"SHARED_DATA_ROOT": ""}):
             project = Path(folder) / "订单分析"
             (project / "output_file").mkdir(parents=True)
             (project / "output_file" / "小订及首销数据整理.xlsx").write_bytes(b"old copy")
             shared = Path(folder) / "共享数据"
             shared.mkdir()
-            self.assertEqual(orders_input_directory(project), shared / "订单汇总")
-            self.assertFalse(orders_input_directory(project).exists())
+            self.assertEqual(orders_input_directory(project), project / "output_file")
+            self.assertTrue(orders_input_directory(project).exists())
 
     def test_explicit_nonexistent_root_remains_authoritative(self):
         with TemporaryDirectory() as folder:

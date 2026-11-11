@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from contextlib import asynccontextmanager
 import gzip
 import hashlib
 import io
@@ -22,7 +23,7 @@ from core.annotations import create_annotations_router
 
 DATASET_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
 ROOT = Path(__file__).resolve().parents[1]
-SERVICE_SOURCE_FILES = ("server.py", "core/server.py", "core/annotations.py", "requirements.txt")
+SERVICE_SOURCE_FILES = ("server.py", "core/server.py", "core/annotations.py", "core/sync.py", "core/renderer.py", "core/data_paths.py", "main.py", "config.json", "requirements.txt")
 # Keep the running process identity fixed even when a newer release is written.
 SERVICE_FINGERPRINT = hashlib.sha256(
     b"".join((ROOT / name).read_bytes() for name in SERVICE_SOURCE_FILES)
@@ -81,7 +82,7 @@ class SnapshotStore:
         catalog = load_json(self.dataset_file(dataset, "catalog.json"))
         if not isinstance(catalog, dict):
             raise HTTPException(503, "数据目录格式无效")
-        return {**catalog, "dataset_id": dataset}
+        return {**{key: value for key, value in catalog.items() if key != "source_signature"}, "dataset_id": dataset}
 
     def catalog(self, dataset: str | None = None) -> dict[str, Any]:
         return self._catalog(dataset or self.current_id())
@@ -176,11 +177,31 @@ def create_app(
     web_dir: Path | str | None = None,
     allowed_hosts: Sequence[str] | None = None,
     allowed_origins: Sequence[str] = (),
+    input_dir: Path | str | None = None,
+    check_seconds: float = 300,
+    stable_seconds: float = 60,
 ) -> FastAPI:
     store = SnapshotStore(Path(data_dir or DEFAULT_DATA_DIR))
     web_root = Path(web_dir).resolve() if web_dir else store.data_dir
     state_root = Path(state_dir or DEFAULT_STATE_DIR).resolve()
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    from core.sync import AutoSync
+    sync = AutoSync(Path(input_dir), store.data_dir, check_seconds, stable_seconds) if input_dir is not None else None
+
+    @asynccontextmanager
+    async def lifespan(app):
+        if sync:
+            from core.renderer import render_dynamic_shell
+            if web_dir is None:
+                render_dynamic_shell(ROOT / "templates", store.data_dir)
+            sync.start()
+        try:
+            yield
+        finally:
+            if sync:
+                sync.stop()
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app.state.sync = sync
     app.state.snapshots = store
     app.add_middleware(
         TrustedHostMiddleware,
@@ -199,14 +220,30 @@ def create_app(
     @app.api_route("/health", methods=["GET", "HEAD"])
     @app.api_route("/api/health", methods=["GET", "HEAD"])
     def health():
-        catalog = store.catalog()
+        try:
+            dataset_id = store.current_id()
+        except HTTPException:
+            if sync is None:
+                raise
+            dataset_id = None
         return {
             "status": "ok",
             "application": "order-dashboard",
-            "dataset_id": catalog["dataset_id"],
+            "dataset_id": dataset_id,
             "data_fingerprint": data_fingerprint(store.data_dir),
             "service_fingerprint": SERVICE_FINGERPRINT,
+            "input_fingerprint": data_fingerprint(sync.source) if sync else None,
+            "check_seconds": sync.schedule.check_seconds if sync else None,
+            "stable_seconds": sync.schedule.stable_seconds if sync else None,
         }
+
+    @app.api_route("/api/sync", methods=["GET", "HEAD"])
+    def sync_status():
+        try:
+            dataset = store.current_id()
+        except HTTPException:
+            dataset = None
+        return {"dataset_id": dataset, **(sync.status() if sync else {"phase": "idle", "error": None})}
 
     @app.api_route("/api/catalog", methods=["GET", "HEAD"])
     def catalog():

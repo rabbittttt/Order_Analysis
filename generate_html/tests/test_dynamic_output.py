@@ -69,6 +69,8 @@ class DynamicOutputTests(TestCase):
             package(base / "release", runtime)
             self.assertTrue((base / "release/server.py").is_file())
             self.assertTrue((base / "release/requirements.txt").is_file())
+            for name in ("main.py", "config.json", "core/sync.py", "core/excel.py", "modules/registry.py", "templates/dashboard.html"):
+                self.assertTrue((base / "release" / name).is_file(), name)
             self.assertFalse((base / "release/web/assets/unrelated-private-image.png").exists())
             self.assertFalse((base / "release/datasets").exists())
             self.assertEqual(len(list((base / "release/web/assets").iterdir())), 4)

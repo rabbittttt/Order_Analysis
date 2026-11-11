@@ -8,10 +8,10 @@ const python=process.env.ORDER_PYTHON||path.resolve(project,'../.venv/Scripts/py
  const portServer=net.createServer();await new Promise(r=>portServer.listen(0,'127.0.0.1',r));const port=portServer.address().port;await new Promise(r=>portServer.close(r));
  const base=`http://127.0.0.1:${port}/`;let child,log='',browser;
  const start=async()=>{
-  child=spawn(python,['server.py','--port',String(port),'--state-dir',state],{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe']});child.stdout.on('data',b=>log+=b);child.stderr.on('data',b=>log+=b);
+  child=spawn(python,['server.py','--no-sync','--port',String(port),'--state-dir',state],{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe']});child.stdout.on('data',b=>log+=b);child.stderr.on('data',b=>log+=b);
   for(let i=0;i<80;i++){if(child.exitCode!==null)throw new Error(log);try{if((await fetch(base+'health')).ok)return;}catch{}await new Promise(r=>setTimeout(r,200));}throw new Error('Service start timed out: '+log);
  };
- const stop=async()=>{if(child&&child.exitCode===null){const exited=new Promise(r=>child.once('exit',r));child.kill();await exited;}};
+ const stop=async()=>{if(child&&child.exitCode===null){const exited=new Promise(r=>child.once('exit',r));if(process.platform==='win32'){const killer=spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});await new Promise(r=>killer.once('exit',r));}else child.kill();await exited;}};
  try{
   await start();browser=await chromium.launch({headless:true,channel:'msedge'});
   const a=await browser.newContext(),b=await browser.newContext(),page=await a.newPage(),other=await b.newPage(),errors=[];

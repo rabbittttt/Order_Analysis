@@ -313,17 +313,18 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         module_bar = template.split('<aside class="module-bar">', 1)[1].split("</aside>", 1)[0]
         self.assertNotIn('id="filters"', module_bar)
 
-    def test_topbar_keeps_generated_time_and_compacts_small_screen_filters(self):
+    def test_topbar_hides_generation_time_and_compacts_small_screen_filters(self):
         template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
         topbar = template.split('<header class="topbar">', 1)[1].split("</header>", 1)[0]
-        self.assertIn('id="updatedAt"', topbar)
+        self.assertIn('id="syncStatus"', topbar)
         self.assertIn('select id="subjectSelect" aria-label="分析主体"', topbar)
         self.assertIn('id="grainSelect"', topbar)
         self.assertIn('select id="periodSelect" aria-label="分析周期"', topbar)
-        self.assertIn('$("#updatedAt").textContent=', script)
-        self.assertIn(".topbar .top-actions #updatedAt {\n  display:inline-flex;", css)
+        self.assertNotIn("生成时间", script)
+        self.assertIn('id="syncStatus" role="status" aria-live="polite" hidden', topbar)
+        self.assertIn(".topbar .top-actions #syncStatus {\n  display:inline-flex;", css)
         self.assertIn(".topbar .top-actions>span { display:inline-flex; }", css)
         self.assertIn(".topbar-end {\n    display:grid;\n    grid-template-columns:auto minmax(0,1fr);", css)
         self.assertIn(".topbar .filters {\n    width:auto;\n    flex:none;\n    min-width:0;\n    grid-template-columns:minmax(0,1.2fr) 140px minmax(100px,1fr);", css)
@@ -334,7 +335,7 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         self.assertIn(".topbar .filters select { width:100%; min-width:0; max-width:100%; }", css)
         self.assertIn("grid-template-columns:minmax(0,1.2fr) 140px minmax(100px,1fr);", css)
         self.assertIn("grid-template-columns:140px minmax(0,1fr);", css)
-        self.assertNotIn(".topbar .top-actions #updatedAt {\n    display:none;", css)
+        self.assertNotIn(".topbar .top-actions #syncStatus {\n    display:none;", css)
         self.assertNotIn(".topbar .top-actions {\n    display:none;", css)
 
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for quick-generation filtering")

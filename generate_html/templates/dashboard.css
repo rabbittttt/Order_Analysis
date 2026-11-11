@@ -2830,7 +2830,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 
 /* 顶部响应式：生成时间始终可见，控件在窄屏内收紧但保留清晰标签与键盘操作。 */
 .topbar .top-actions { display:flex; min-width:0; max-width:100%; }
-.topbar .top-actions #updatedAt {
+.topbar .top-actions #syncStatus {
   display:inline-flex;
   align-items:center;
   max-width:100%;
@@ -2846,7 +2846,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   .topbar-main { width:100%; }
   .topbar-end { flex:1 1 auto; min-width:0; gap:7px; }
   .topbar .top-actions { display:flex; }
-  .topbar .top-actions #updatedAt { padding:4px 6px; font-size:9px; }
+  .topbar .top-actions #syncStatus { padding:4px 6px; font-size:9px; }
   .topbar .filters {
     flex:1 1 auto;
     max-width:100%;
@@ -2868,7 +2868,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   }}
 @media (max-width:780px) {
   .topbar .top-actions>span { display:inline-flex; }
-  .topbar .top-actions #updatedAt { padding:3px 5px; font-size:9px; }
+  .topbar .top-actions #syncStatus { padding:3px 5px; font-size:9px; }
   .topbar .filters { gap:5px; }
   .topbar .filters select { height:32px; padding:0 7px; font-size:11px; }
   .topbar .segments { height:30px; }
@@ -2892,7 +2892,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .raw-empty p{margin:6px 0 0;font-size:13px;line-height:1.6}
 .raw-toolbar #clearRawSearch{min-height:40px;padding:8px 12px;border:1px solid #c7d8e9;border-radius:8px;background:#f5f9ff;color:#14589f;font:600 12px "Microsoft YaHei",sans-serif}
 .raw-toolbar #clearRawSearch:disabled{opacity:.55;cursor:not-allowed}
-.topbar .top-actions #updatedAt{font-size:10px}
+.topbar .top-actions #syncStatus{font-size:10px}
 @media(max-width:780px){
   .raw-layout{grid-template-columns:minmax(0,1fr)}
   .raw-layout>.file-list{display:none}
@@ -2922,7 +2922,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .topbar-end{gap:6px}
 .topbar .filters{gap:5px}
 .topbar .filters select{height:32px;padding-inline:8px}
-.topbar .top-actions #updatedAt{padding:3px 6px}
+.topbar .top-actions #syncStatus{padding:3px 6px}
 .topbar .quick-generation-filter{min-width:0;gap:4px;padding-top:1px}
 .topbar .quick-generation-filter>span{padding-top:4px}
 .topbar .quick-generation-list{gap:3px;min-width:0}
@@ -3020,7 +3020,7 @@ button,select,input {font-family:inherit}
   box-shadow:none;
 }
 .topbar .filters span,.topbar .quick-generation-filter>span {color:var(--muted)}
-.topbar .top-actions #updatedAt {
+.topbar .top-actions #syncStatus {
   color:var(--muted);
   border:1px solid var(--line);
   border-radius:999px;
@@ -3212,3 +3212,5 @@ body {
 .raw-pagination button:focus-visible,.raw-search-error button:focus-visible{outline:2px solid #2859f5;outline-offset:2px}
 .raw-search-error{display:flex;align-items:center;gap:12px;padding:8px 0;color:#a63030}
 .raw-table[aria-busy="true"]{opacity:.65}
+
+.topbar .top-actions #syncStatus[hidden] { display:none !important; }

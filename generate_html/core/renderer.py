@@ -132,7 +132,7 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
     )
 
 
-def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: Path) -> None:
+def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: Path, *, runtime_dir: Path | None = None) -> None:
     """Publish an immutable dataset, then atomically switch the current pointer.
 
     Runtime is private: only the HTTP service exposes selected data and assets.
@@ -142,7 +142,7 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
     import uuid
     from urllib.parse import urlencode
 
-    runtime = output_file.parent / "runtime"
+    runtime = runtime_dir or output_file.parent / "runtime"
     entry = runtime / "index.html"
     # Retire only a verified duplicate produced by the previous dynamic build.
     # Keep it until the replacement dataset has been published successfully.
@@ -158,15 +158,6 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
     # even after every file has been closed, so publish without that operation.
     snapshot = datasets / dataset_id
     snapshot.mkdir()
-
-    def asset(data: bytes, suffix: str) -> str:
-        name = hashlib.sha256(data).hexdigest() + suffix
-        target = assets / name
-        if not target.exists():
-            temporary = assets / ("." + uuid.uuid4().hex + ".tmp")
-            temporary.write_bytes(data)
-            temporary.replace(target)
-        return "assets/" + name
 
     def json_text(value):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
@@ -198,6 +189,36 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
                 continue
         catalog["chart_assets"][key] = value
 
+    html = render_dynamic_shell(template_dir, runtime)
+    # Every data API checks the catalog before serving this batch. Write it
+    # only after all batch files are complete, then select the batch last.
+    _write_text_atomic(snapshot / "catalog.json", json_text(catalog))
+    _write_text_atomic(runtime / "current.json", json_text({"dataset_id": dataset_id}))
+    if legacy_duplicate:
+        output_file.unlink()
+        logging.getLogger(__name__).info("已清理重复页面: %s", output_file)
+    logging.getLogger(__name__).info("动态看板已发布：批次 %s，页面 %.1f KB，看板 %d 个；数据目录 %s", dataset_id, len(html.encode("utf-8")) / 1024, len(manifest.get("dashboards", {})), runtime)
+
+
+def render_dynamic_shell(template_dir: Path, runtime: Path) -> str:
+    """Prepare the small web shell even before the first Excel batch is ready."""
+    import hashlib
+    import uuid
+    assets = runtime / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    entry = runtime / "index.html"
+    def json_text(value):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+    def asset(data: bytes, suffix: str) -> str:
+        name = hashlib.sha256(data).hexdigest() + suffix
+        target = assets / name
+        if not target.exists():
+            temporary = assets / ("." + uuid.uuid4().hex + ".tmp")
+            temporary.write_bytes(data)
+            temporary.replace(target)
+        return "assets/" + name
+
     html = (template_dir / "dashboard.html").read_text(encoding="utf-8")
     css = asset((template_dir / "dashboard.css").read_bytes(), ".css")
     javascript = asset((template_dir / "dashboard.js").read_bytes(), ".js")
@@ -215,11 +236,4 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
     build_hashes = {name: hashlib.sha256((template_dir / name).read_bytes()).hexdigest() for name in ("dashboard.html", "dashboard.css", "dashboard.js", "trend_annotations.js", "brand-logo.png")}
     _write_text_atomic(runtime / "web-build.json", json_text(build_hashes))
     _write_text_atomic(entry, html)
-    # Every data API checks the catalog before serving this batch. Write it
-    # only after all batch files are complete, then select the batch last.
-    _write_text_atomic(snapshot / "catalog.json", json_text(catalog))
-    _write_text_atomic(runtime / "current.json", json_text({"dataset_id": dataset_id}))
-    if legacy_duplicate:
-        output_file.unlink()
-        logging.getLogger(__name__).info("已清理重复页面: %s", output_file)
-    logging.getLogger(__name__).info("动态看板已发布：批次 %s，页面 %.1f KB，看板 %d 个；数据目录 %s", dataset_id, len(html.encode("utf-8")) / 1024, len(manifest.get("dashboards", {})), runtime)
+    return html

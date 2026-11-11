@@ -39,8 +39,8 @@ echo Python: "%orderPython%"
 if errorlevel 1 goto missing_dependencies
 "%orderPython%" -c "import openpyxl, fastapi, uvicorn; from pydantic import field_validator" >nul 2>nul
 if errorlevel 1 goto missing_dependencies
-echo 正在更新订单数据并启动动态看板...
-"%orderPython%" generate_html\main.py %*
+echo 正在启动订单动态看板及自动同步...
+"%orderPython%" generate_html\server.py --open %*
 set "launcherExitCode=%errorlevel%"
 if not "%launcherExitCode%"=="0" pause
 exit /b %launcherExitCode%

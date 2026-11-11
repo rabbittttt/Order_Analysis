@@ -222,11 +222,12 @@ def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, st
     return files, blocks
 
 
-def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]]:
+def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None, source_signature: dict | None = None) -> tuple[dict[str, Any], list[str]]:
+    runtime_dir = runtime_dir or output_file.parent / "runtime"
     build_started = perf_counter()
     LOGGER.info("开始生成订单分析看板")
     LOGGER.info("输入目录: %s", input_dir)
-    LOGGER.info("运行目录: %s", output_file.parent / "runtime")
+    LOGGER.info("运行目录: %s", runtime_dir)
     config = load_config(ROOT / "config.json")
     if config.get("chart_render_mode") not in {"original", "generated"}:
         raise ValueError("config.json 的 chart_render_mode 必须是 original 或 generated")
@@ -239,6 +240,9 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
     excluded_names = {"鸿蒙智行销量数据汇总.xlsx", STAGE_SOURCE_PATH.name}
     store.load(exclude_names=excluded_names, data_only_view=config.get("chart_render_mode") == "generated")
     load_seconds = perf_counter() - stage_started
+    if store.load_errors:
+        store.close()
+        raise RuntimeError("Excel 读取不完整：" + "；".join(store.load_errors))
     if not store.items:
         details = "；".join(store.load_errors) if store.load_errors else "目录中没有xlsx文件"
         raise RuntimeError(f"没有成功读取任何Excel，无法生成看板：{details}")
@@ -317,9 +321,14 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
         stage_started = perf_counter()
         if DIAGNOSTIC_COUNTS["ERROR"]:
             raise RuntimeError("本批次存在生成错误，保留上一批已发布数据")
-        render_dashboard(manifest, ROOT / "templates", output_file)
+        if source_signature is not None:
+            manifest["source_signature"] = source_signature
+        if runtime_dir == output_file.parent / "runtime":
+            render_dashboard(manifest, ROOT / "templates", output_file)
+        else:
+            render_dashboard(manifest, ROOT / "templates", output_file, runtime_dir=runtime_dir)
         render_seconds = perf_counter() - stage_started
-        entry = output_file.parent / "runtime" / "index.html"
+        entry = runtime_dir / "index.html"
         LOGGER.info("入口页面体积: %.1fKB", entry.stat().st_size / 1024)
         emitted_messages = "\n".join(BUILD_DIAGNOSTICS)
         warnings = list(dict.fromkeys([
@@ -409,27 +418,32 @@ def cleanup_input_cache(input_dir: Path) -> None:
         LOGGER.warning("运行缓存未能清理: %s（%s）；可在文件占用结束后手动删除", cache_dir, exc)
 
 
-def open_dynamic_dashboard(data_dir: Path, port: int) -> None:
-    import hashlib
+def open_dynamic_dashboard(data_dir: Path, port: int, *, input_dir: Path | None = None, open_browser: bool = True, check_seconds: float = 300, stable_seconds: float = 60, no_sync: bool = False) -> None:
     import subprocess
     import time
     import urllib.error
     import urllib.request
 
     base = f"http://127.0.0.1:{port}"
-    expected_service = hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in ("server.py", "core/server.py", "core/annotations.py", "requirements.txt"))).hexdigest()[:16]
-    expected_directory = hashlib.sha256(os.path.normcase(str(data_dir.resolve())).encode("utf-8")).hexdigest()[:16]
-    expected_dataset = json.loads((data_dir / "current.json").read_text(encoding="utf-8"))["dataset_id"]
+    from core.server import SERVICE_FINGERPRINT, data_fingerprint
+    expected_service = SERVICE_FINGERPRINT
+    expected_directory = data_fingerprint(data_dir)
+    input_dir = (input_dir or orders_input_directory(PROJECT_ROOT)).resolve()
+    expected_input = None if no_sync else data_fingerprint(input_dir)
     def ready():
         try:
             with urllib.request.urlopen(base + "/health", timeout=1) as response:
                 health = json.load(response)
-            if health.get("application") != "order-dashboard" or health.get("dataset_id") != expected_dataset:
+            if health.get("application") != "order-dashboard":
                 raise RuntimeError(f"端口 {port} 已用于其他服务或数据目录，请使用 --port 指定空闲端口")
             if health.get("data_fingerprint") != expected_directory:
                 raise RuntimeError("该端口的订单服务使用不同数据目录，请使用 --port 指定空闲端口")
             if health.get("service_fingerprint") != expected_service:
                 raise RuntimeError("订单后台代码已更新，请停止旧订单服务后重新运行；或使用 --port 指定空闲端口")
+            if health.get("input_fingerprint") != expected_input:
+                raise RuntimeError("该端口订单服务的 Excel 输入目录或同步模式不同，请先停止旧服务或使用其他端口")
+            if not no_sync and (health.get("check_seconds") != check_seconds or health.get("stable_seconds") != stable_seconds):
+                raise RuntimeError("自动同步间隔已调整，请停止旧订单服务后重新启动")
             return True
         except (urllib.error.URLError, TimeoutError):
             return False
@@ -438,7 +452,10 @@ def open_dynamic_dashboard(data_dir: Path, port: int) -> None:
         log_path = data_dir.parent / "log" / "order_server.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("ab") as stream:
-            process = subprocess.Popen([sys.executable, str(ROOT / "server.py"), "--data-dir", str(data_dir.resolve()), "--port", str(port)], cwd=ROOT, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream, creationflags=flags)
+            command = [sys.executable, str(ROOT / "server.py"), "--data-dir", str(data_dir.resolve()), "--port", str(port), "--input", str(input_dir), "--check-seconds", str(check_seconds), "--stable-seconds", str(stable_seconds)]
+            if no_sync:
+                command.append("--no-sync")
+            process = subprocess.Popen(command, cwd=ROOT, stdin=subprocess.DEVNULL, stdout=stream, stderr=stream, creationflags=flags)
         for _ in range(40):
             if process.poll() is not None:
                 raise RuntimeError(f"服务启动失败，请查看 {log_path}")
@@ -447,7 +464,8 @@ def open_dynamic_dashboard(data_dir: Path, port: int) -> None:
             time.sleep(0.25)
         else:
             raise RuntimeError(f"服务启动超时，请查看 {log_path}")
-    webbrowser.open(base + "/")
+    if open_browser:
+        webbrowser.open(base + "/")
     LOGGER.info("订单看板访问地址: %s/", base)
 
 
@@ -455,13 +473,18 @@ def main() -> int:
     args = parse_args()
     log_file = configure_runtime(args.output.parent, args.debug)
     try:
-        manifest, warnings = build(args.input, args.output)
+        from core.sync import BuildLock
+        import core.model_identity as identity
+        identity.STAGE_SOURCE_PATH = args.input / "小订及首销数据整理.xlsx"
+        with BuildLock(args.output.parent / "runtime"):
+            try:
+                manifest, warnings = build(args.input, args.output)
+            finally:
+                cleanup_input_cache(args.output.parent)
     except Exception:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)
         return 1
-    finally:
-        cleanup_input_cache(args.output.parent)
     errors = DIAGNOSTIC_COUNTS["ERROR"]
     if errors:
         LOGGER.error("生成不完整：发生%d条错误；动态运行目录: %s",
@@ -474,7 +497,7 @@ def main() -> int:
         return 1
     if AUTO_OPEN_HTML and not args.no_open:
         try:
-            open_dynamic_dashboard(args.output.parent / "runtime", args.port)
+            open_dynamic_dashboard(args.output.parent / "runtime", args.port, input_dir=args.input)
         except Exception:
             LOGGER.exception("自动启动失败；请运行 server.py 后通过网址访问看板")
             return 1

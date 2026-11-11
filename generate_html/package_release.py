@@ -22,13 +22,11 @@ def package(destination: Path, runtime: Path) -> None:
     if recorded != expected:
         raise ValueError("前端源码在生成后发生变化，请先重新运行 main.py --no-open")
     destination.mkdir(parents=True)
-    for name in ("server.py", "requirements.txt", "SERVER.md"):
+    for name in ("server.py", "main.py", "config.json", "requirements.txt", "SERVER.md"):
         shutil.copy2(ROOT / name, destination / name)
-    (destination / "core").mkdir()
-    for name in ("__init__.py", "server.py", "annotations.py"):
-        source = ROOT / "core" / name
-        if source.exists():
-            shutil.copy2(source, destination / "core" / name)
+    for directory in ("core", "modules", "templates"):
+        shutil.copytree(ROOT / directory, destination / directory,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     web = destination / "web"
     web.mkdir()
     shutil.copy2(runtime / "index.html", web / "index.html")
@@ -42,7 +40,7 @@ def package(destination: Path, runtime: Path) -> None:
     (destination / "release-info.json").write_text(json.dumps({
         "application": "order-dashboard", "data_mode": "external",
         "entry": "server.py", "web_dir": "web",
-        "required_arguments": ["--data-dir", "--state-dir", "--web-dir"],
+        "required_arguments": ["--input", "--data-dir", "--state-dir", "--web-dir"],
     }, indent=2), encoding="utf-8")
 
 

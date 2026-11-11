@@ -42,7 +42,7 @@ class RelativeInputPathsTests(TestCase):
                         cwd=cwd, env=env, check=True, capture_output=True, text=True, encoding="utf-8",
                     )
                     actual = Path(json.loads(result.stdout)["orders"])
-                    self.assertEqual(actual, shared / "订单汇总")
+                    self.assertEqual(actual, shared / "订单汇总" if configured else project / "output_file")
                     outputs.append(actual)
             self.assertEqual(outputs[0], outputs[1])
             if not create_shared:
