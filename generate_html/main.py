@@ -418,7 +418,7 @@ def open_dynamic_dashboard(data_dir: Path, port: int) -> None:
     import urllib.request
 
     base = f"http://127.0.0.1:{port}"
-    expected_service = hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in ("server.py", "core/server.py", "core/annotations.py", "requirements-server.txt"))).hexdigest()[:16]
+    expected_service = hashlib.sha256(b"".join((ROOT / name).read_bytes() for name in ("server.py", "core/server.py", "core/annotations.py", "requirements.txt"))).hexdigest()[:16]
     expected_directory = hashlib.sha256(os.path.normcase(str(data_dir.resolve())).encode("utf-8")).hexdigest()[:16]
     expected_dataset = json.loads((data_dir / "current.json").read_text(encoding="utf-8"))["dataset_id"]
     def ready():

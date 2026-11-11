@@ -7,11 +7,11 @@
 在 `generate_html` 目录执行（使用项目 Python 环境）：
 
 ```powershell
-python -m pip install -r requirements-server.txt
+python -m pip install -r requirements.txt
 python main.py
 ```
 
-使用共享 `Project/.venv` 时，也在该环境中执行安装命令，以 `requirements-server.txt` 声明的服务依赖版本为准。
+使用共享 `Project/.venv` 时，也在该环境中执行安装命令，以 `requirements.txt` 声明的服务依赖版本为准。
 
 默认生成后启动后台服务，并通过 `http://127.0.0.1:8766/` 打开页面。后台日志位于项目 `output_file/log/order_server.log`。已运行相同数据目录的服务会复用。
 

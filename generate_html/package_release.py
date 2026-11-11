@@ -22,7 +22,7 @@ def package(destination: Path, runtime: Path) -> None:
     if recorded != expected:
         raise ValueError("前端源码在生成后发生变化，请先重新运行 main.py --no-open")
     destination.mkdir(parents=True)
-    for name in ("server.py", "requirements.txt", "requirements-server.txt", "SERVER.md"):
+    for name in ("server.py", "requirements.txt", "SERVER.md"):
         shutil.copy2(ROOT / name, destination / name)
     (destination / "core").mkdir()
     for name in ("__init__.py", "server.py", "annotations.py"):

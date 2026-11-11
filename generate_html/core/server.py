@@ -22,7 +22,7 @@ from core.annotations import create_annotations_router
 
 DATASET_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
 ROOT = Path(__file__).resolve().parents[1]
-SERVICE_SOURCE_FILES = ("server.py", "core/server.py", "core/annotations.py", "requirements-server.txt")
+SERVICE_SOURCE_FILES = ("server.py", "core/server.py", "core/annotations.py", "requirements.txt")
 # Keep the running process identity fixed even when a newer release is written.
 SERVICE_FINGERPRINT = hashlib.sha256(
     b"".join((ROOT / name).read_bytes() for name in SERVICE_SOURCE_FILES)

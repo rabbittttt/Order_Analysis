@@ -59,7 +59,7 @@ class XxxModule:
 所有 Git 网络操作（包括 fetch、pull、push、ls-remote）必须使用与 Codex 软件当前连接相同的代理。执行前核对有效代理；代理不可用时停止并报告，禁止清空代理、通过 NO_PROXY 绕过或回退直连。本地 commit 不需要联网；代理地址按当前运行环境配置，不在共享代码中写死。
 
 ```powershell
-python -m pip install -r requirements-server.txt "httpx2>=2,<3"
+python -m pip install -r requirements.txt "httpx2>=2,<3"
 python -m compileall core modules main.py server.py package_release.py
 node --check templates\dashboard.js
 python main.py --check --no-open
