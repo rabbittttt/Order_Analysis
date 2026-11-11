@@ -4,6 +4,8 @@
 
 ## 本地使用
 
+双击 `scripts/启动订单分析.cmd` 可一键生成最新数据、启动或复用后台服务，并通过浏览器打开看板。启动器检查 Excel 读取与动态服务依赖，使用共享 Python 或 `ORDER_ANALYSIS_PYTHON` 指定的解释器。
+
 在 `generate_html` 目录执行（使用项目 Python 环境）：
 
 ```powershell

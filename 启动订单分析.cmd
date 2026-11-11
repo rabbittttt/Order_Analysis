@@ -1,7 +1,7 @@
 @echo off
 setlocal EnableExtensions DisableDelayedExpansion
 chcp 65001 >nul
-title 订单分析
+title 订单分析动态看板
 cd /d "%~dp0"
 
 rem An explicit relative interpreter is anchored to this scripts directory.
@@ -35,8 +35,11 @@ for %%I in ("%launcherPythonDir%..") do set "launcherEnvironment=%%~fI"
 set "VIRTUAL_ENV="
 if exist "%launcherEnvironment%\pyvenv.cfg" set "VIRTUAL_ENV=%launcherEnvironment%"
 echo Python: "%orderPython%"
-"%orderPython%" -c "import importlib.util, sys; sys.exit(1 if sys.version_info < (3, 10) or importlib.util.find_spec('openpyxl') is None else 0)" >nul 2>nul
+"%orderPython%" -c "import sys; sys.exit(sys.version_info < (3, 10))" >nul 2>nul
 if errorlevel 1 goto missing_dependencies
+"%orderPython%" -c "import openpyxl, fastapi, uvicorn; from pydantic import field_validator" >nul 2>nul
+if errorlevel 1 goto missing_dependencies
+echo 正在更新订单数据并启动动态看板...
 "%orderPython%" generate_html\main.py %*
 set "launcherExitCode=%errorlevel%"
 if not "%launcherExitCode%"=="0" pause
