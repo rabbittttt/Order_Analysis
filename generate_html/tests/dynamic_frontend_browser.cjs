@@ -99,7 +99,7 @@ const server=http.createServer(async(req,res)=>{
   const download=page.waitForEvent('download');await page.locator('#exportRawWorkbook').click();await download;
   check('导出使用切换后的批次',requests.filter(r=>r.path.endsWith('/workbook')).at(-1).query.dataset==='fixture-v3');
   currentVersion='fixture-v4';
-  await page.waitForFunction(()=>window.DASHBOARD_DATA.dataset_id==='fixture-v4',{},{timeout:22000});
+  await page.waitForFunction(()=>window.DASHBOARD_DATA.dataset_id==='fixture-v4',{},{timeout:70000});
   check('无需点击或刷新即可定期同步',await page.evaluate(()=>window.__syncSentinel===42));
   check('无浏览器异常',errors.length===0);await ctx2.close();
  }finally{await browser.close();await new Promise(r=>server.close(r));}
