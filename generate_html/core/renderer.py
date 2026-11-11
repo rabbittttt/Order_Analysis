@@ -153,8 +153,11 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
     dataset_id = uuid.uuid4().hex
     datasets = runtime / "datasets"
     datasets.mkdir(exist_ok=True)
-    staging = datasets / (".building-" + dataset_id)
-    staging.mkdir()
+    # A unique directory remains unpublished until its catalog and current
+    # pointer are committed. Windows can deny renaming a populated directory
+    # even after every file has been closed, so publish without that operation.
+    snapshot = datasets / dataset_id
+    snapshot.mkdir()
 
     def asset(data: bytes, suffix: str) -> str:
         name = hashlib.sha256(data).hexdigest() + suffix
@@ -169,16 +172,16 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
     for directory in ("boards", "raw", "workbooks", "charts"):
-        (staging / directory).mkdir()
+        (snapshot / directory).mkdir()
     for key, board in manifest.get("dashboards", {}).items():
         name = hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json.gz"
-        (staging / "boards" / name).write_bytes(gzip.compress(json_text(pack_dashboard(board)).encode("utf-8"), mtime=0))
+        (snapshot / "boards" / name).write_bytes(gzip.compress(json_text(pack_dashboard(board)).encode("utf-8"), mtime=0))
     for key, value in manifest.get("raw_blocks", {}).items():
         file_id, sheet_id = key.split("|")
         if not file_id.isdigit() or (sheet_id != "xlsx" and not sheet_id.isdigit()):
             raise ValueError("Invalid raw block key")
-        target = (staging / "workbooks" / (file_id + ".xlsx") if sheet_id == "xlsx"
-                  else staging / "raw" / (file_id + "_" + sheet_id + ".json.gz"))
+        target = (snapshot / "workbooks" / (file_id + ".xlsx") if sheet_id == "xlsx"
+                  else snapshot / "raw" / (file_id + "_" + sheet_id + ".json.gz"))
         target.write_bytes(base64.b64decode(value, validate=True))
     catalog = {key: value for key, value in manifest.items() if key not in ("dashboards", "raw_blocks")}
     catalog["dataset_id"] = dataset_id
@@ -190,11 +193,10 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
             suffix = {"data:image/png;base64": ".png", "data:image/jpeg;base64": ".jpg", "data:image/svg+xml;base64": ".svg"}.get(header)
             if suffix:
                 image_name = hashlib.sha256(key.encode("utf-8")).hexdigest() + suffix
-                (staging / "charts" / image_name).write_bytes(base64.b64decode(encoded))
+                (snapshot / "charts" / image_name).write_bytes(base64.b64decode(encoded))
                 catalog["chart_assets"][key] = "api/chart?" + urlencode({"dataset": dataset_id, "key": key})
                 continue
         catalog["chart_assets"][key] = value
-    (staging / "catalog.json").write_text(json_text(catalog), encoding="utf-8")
 
     html = (template_dir / "dashboard.html").read_text(encoding="utf-8")
     css = asset((template_dir / "dashboard.css").read_bytes(), ".css")
@@ -210,10 +212,12 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
     html = html.replace('__BRAND_LOGO__', logo)
     if '__DASHBOARD_' in html:
         raise ValueError("Unresolved dynamic template placeholder")
-    staging.rename(datasets / dataset_id)
     build_hashes = {name: hashlib.sha256((template_dir / name).read_bytes()).hexdigest() for name in ("dashboard.html", "dashboard.css", "dashboard.js", "trend_annotations.js", "brand-logo.png")}
     _write_text_atomic(runtime / "web-build.json", json_text(build_hashes))
     _write_text_atomic(entry, html)
+    # Every data API checks the catalog before serving this batch. Write it
+    # only after all batch files are complete, then select the batch last.
+    _write_text_atomic(snapshot / "catalog.json", json_text(catalog))
     _write_text_atomic(runtime / "current.json", json_text({"dataset_id": dataset_id}))
     if legacy_duplicate:
         output_file.unlink()

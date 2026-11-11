@@ -29,7 +29,7 @@ python server.py --host 127.0.0.1 --port 8766
 ## 数据和接口
 
 - `output_file/runtime/current.json`：已完成批次指针，最后原子替换。
-- `output_file/runtime/datasets/<dataset_id>/`：看板、底表与原始 XLSX 快照。旧批次保留供已打开的网页读取。
+- `output_file/runtime/datasets/<dataset_id>/`：每次写入唯一目录，保存看板、底表与原始 XLSX 快照。全部文件和页面完成后原子写入 catalog.json，再切换 current.json；发布过程使用文件替换，兼容 Windows 拒绝重命名非空目录的环境。旧批次保留供已打开的网页读取。
 - `output_file/runtime/index.html`、`assets/`：服务读取的页面入口和资源，资源文件名带内容哈希。生成器只在 runtime 中输出入口，根目录与旧入口内容完全一致的重复 HTML 会在成功发布后清理。
 - `data/order_dashboard/annotations.sqlite3`：共享批注，服务重启和生成 Excel 批次不会覆盖；可用 `--state-dir` 指向持久目录。备份应在停止服务后复制数据库。
 
