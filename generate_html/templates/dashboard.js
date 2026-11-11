@@ -1288,7 +1288,7 @@
     setInterval(()=>{if(!document.hidden)refresh()},30000);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
     window.addEventListener('focus',refresh);
-    setInterval(synchronizeDataset,60000);
+    setInterval(synchronizeDataset,15000);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden)synchronizeDataset()});
     window.addEventListener('focus',synchronizeDataset);
     $('#trendAnnotationEditor')?.addEventListener('close',synchronizeDataset);
