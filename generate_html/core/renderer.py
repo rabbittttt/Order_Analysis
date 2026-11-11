@@ -143,6 +143,11 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
     from urllib.parse import urlencode
 
     runtime = output_file.parent / "runtime"
+    entry = runtime / "index.html"
+    # Retire only a verified duplicate produced by the previous dynamic build.
+    # Keep it until the replacement dataset has been published successfully.
+    legacy_duplicate = (output_file.is_file() and not output_file.is_symlink()
+                        and entry.is_file() and output_file.read_bytes() == entry.read_bytes())
     assets = runtime / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     dataset_id = uuid.uuid4().hex
@@ -208,7 +213,9 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
     staging.rename(datasets / dataset_id)
     build_hashes = {name: hashlib.sha256((template_dir / name).read_bytes()).hexdigest() for name in ("dashboard.html", "dashboard.css", "dashboard.js", "trend_annotations.js", "brand-logo.png")}
     _write_text_atomic(runtime / "web-build.json", json_text(build_hashes))
-    _write_text_atomic(runtime / "index.html", html)
-    _write_text_atomic(output_file, html)
+    _write_text_atomic(entry, html)
     _write_text_atomic(runtime / "current.json", json_text({"dataset_id": dataset_id}))
+    if legacy_duplicate:
+        output_file.unlink()
+        logging.getLogger(__name__).info("已清理重复页面: %s", output_file)
     logging.getLogger(__name__).info("动态看板已发布：批次 %s，页面 %.1f KB，看板 %d 个；数据目录 %s", dataset_id, len(html.encode("utf-8")) / 1024, len(manifest.get("dashboards", {})), runtime)

@@ -38,7 +38,8 @@ class DynamicOutputTests(TestCase):
             self.assertEqual(board, pack_dashboard(data["dashboards"]["group|overview"]))
             self.assertEqual(json.loads(gzip.decompress((snapshot / "raw/0_0.json.gz").read_bytes()))["rows"][1], ["37.5%"])
             self.assertEqual((snapshot / "workbooks/0.xlsx").read_bytes(), b"original-workbook")
-            html = output.read_text(encoding="utf-8")
+            self.assertFalse(output.exists())
+            html = (runtime / "index.html").read_text(encoding="utf-8")
             self.assertNotIn("DASHBOARD_RAW_B64", html)
             self.assertNotIn("DASHBOARD_BLOCKS_B64", html)
             self.assertLess(len(html.encode()), 16000)
@@ -75,3 +76,24 @@ class DynamicOutputTests(TestCase):
             with self.assertRaisesRegex(ValueError, "前端源码"):
                 package(base / "stale-release", runtime)
             self.assertFalse((base / "stale-release").exists())
+
+    def test_legacy_duplicate_is_removed_only_after_successful_publish(self):
+        with TemporaryDirectory() as folder:
+            output = Path(folder) / "dashboard.html"
+            render_dynamic_dashboard(self.manifest(), TEMPLATES, output)
+            entry = output.parent / "runtime/index.html"
+            output.write_bytes(entry.read_bytes())
+            with patch("core.renderer.pack_dashboard", side_effect=ValueError("bad board")):
+                with self.assertRaises(ValueError):
+                    render_dynamic_dashboard(self.manifest(), TEMPLATES, output)
+            self.assertEqual(output.read_bytes(), entry.read_bytes())
+            render_dynamic_dashboard(self.manifest(), TEMPLATES, output)
+            self.assertFalse(output.exists())
+            self.assertTrue(entry.is_file())
+
+    def test_unrelated_html_is_preserved(self):
+        with TemporaryDirectory() as folder:
+            output = Path(folder) / "dashboard.html"
+            output.write_text("previous report", encoding="utf-8")
+            render_dynamic_dashboard(self.manifest(), TEMPLATES, output)
+            self.assertEqual(output.read_text(encoding="utf-8"), "previous report")

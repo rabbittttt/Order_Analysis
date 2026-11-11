@@ -226,7 +226,7 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
     build_started = perf_counter()
     LOGGER.info("开始生成订单分析看板")
     LOGGER.info("输入目录: %s", input_dir)
-    LOGGER.info("输出文件: %s", output_file)
+    LOGGER.info("运行目录: %s", output_file.parent / "runtime")
     config = load_config(ROOT / "config.json")
     if config.get("chart_render_mode") not in {"original", "generated"}:
         raise ValueError("config.json 的 chart_render_mode 必须是 original 或 generated")
@@ -313,16 +313,14 @@ def build(input_dir: Path, output_file: Path) -> tuple[dict[str, Any], list[str]
         for warning in validation_warnings:
             LOGGER.warning("[生成校验] %s", warning)
         validation_seconds = perf_counter() - validation_started
-        LOGGER.info("开始写入 HTML（主体 %d 个，看板 %d 个）", len(subjects), len(dashboards))
+        LOGGER.info("开始发布动态看板（主体 %d 个，看板 %d 个）", len(subjects), len(dashboards))
         stage_started = perf_counter()
         if DIAGNOSTIC_COUNTS["ERROR"]:
             raise RuntimeError("本批次存在生成错误，保留上一批已发布数据")
         render_dashboard(manifest, ROOT / "templates", output_file)
         render_seconds = perf_counter() - stage_started
-        output_size = output_file.stat().st_size
-        LOGGER.info("生成HTML体积: %.1fMB", output_size / 1024 / 1024)
-        if output_size > 35 * 1024 * 1024:
-            LOGGER.warning("[性能校验] 单HTML超过35MB，建议优先拆分大底表或图表资源")
+        entry = output_file.parent / "runtime" / "index.html"
+        LOGGER.info("入口页面体积: %.1fKB", entry.stat().st_size / 1024)
         emitted_messages = "\n".join(BUILD_DIAGNOSTICS)
         warnings = list(dict.fromkeys([
             *BUILD_DIAGNOSTICS,
@@ -384,6 +382,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=PROJECT_ROOT / "output_file" / "鸿蒙智行订单分析汇总.html",
+        help="兼容旧版输出路径，使用其所在目录保存 runtime 和日志。",
     )
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")
@@ -465,10 +464,10 @@ def main() -> int:
         cleanup_input_cache(args.output.parent)
     errors = DIAGNOSTIC_COUNTS["ERROR"]
     if errors:
-        LOGGER.error("生成不完整：发生%d条错误；已保留可用HTML供排查，不自动打开: %s",
-                     errors, args.output, extra={"diagnostic_continuation": True})
+        LOGGER.error("生成不完整：发生%d条错误；动态运行目录: %s",
+                     errors, args.output.parent / "runtime", extra={"diagnostic_continuation": True})
     else:
-        LOGGER.info("生成成功: %s", args.output)
+        LOGGER.info("生成成功: %s", args.output.parent / "runtime")
     LOGGER.info("汇总: 主体=%d，看板=%d, 问题=%d", len(manifest["subjects"]), len(manifest["dashboards"]), len(warnings))
     LOGGER.info("运行日志: %s", log_file)
     if errors:

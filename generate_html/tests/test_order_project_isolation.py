@@ -31,9 +31,12 @@ class OrderProjectIsolationTests(TestCase):
         stack.enter_context(patch.object(generator, 'load_config', return_value=config))
         stack.enter_context(patch('core.discovery.generation_records', return_value=[]))
         stack.enter_context(patch.object(generator, 'validate_manifest', return_value=[]))
-        stack.enter_context(patch.object(generator, 'render_dashboard',
-                                        side_effect=lambda manifest, templates, output:
-                                        output.write_text('generated', encoding='utf-8')))
+        def render(manifest, templates, output):
+            runtime = output.parent / 'runtime'
+            runtime.mkdir(exist_ok=True)
+            (runtime / 'index.html').write_text('generated', encoding='utf-8')
+
+        stack.enter_context(patch.object(generator, 'render_dashboard', side_effect=render))
 
     def test_forecast_workbooks_are_excluded_and_remain_unchanged(self):
         with TemporaryDirectory() as folder, ExitStack() as stack:
@@ -63,7 +66,8 @@ class OrderProjectIsolationTests(TestCase):
             raw_files = manifest['raw_files']
             self.assertCountEqual([file['name'] for file in raw_files],
                                   [ordinary.name])
-            self.assertEqual([p.name for p in root.glob('*.html')], ['dashboard.html'])
+            self.assertEqual(list(root.glob('*.html')), [])
+            self.assertTrue((root / 'runtime/index.html').is_file())
             self.assertFalse((root / 'forecast_assets').exists())
             self.assertNotIn('sales_forecast', manifest['config']['module_order'])
             self.assertTrue(all(not key.endswith('|sales_forecast') for key in manifest['dashboards']))
