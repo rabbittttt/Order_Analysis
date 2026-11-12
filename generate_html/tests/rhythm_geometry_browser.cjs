@@ -19,7 +19,7 @@ function readBoard(block){
  let boards=0,charts=0,snapshots=0,selections=0,rankings=0,toolbars=0,ratePanels=0;
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});page.on('pageerror',error=>errors.push(error.message));
-  const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8766/');
+  const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8767/');
   const ready=()=>page.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false'&&[...document.querySelectorAll('[data-rhythm-config]')].every(n=>n._rhythmWidth===Math.floor(n.clientWidth)));
   await page.goto(base.href);await ready();
   const blocks=await page.evaluate(async()=>{if(window.DASHBOARD_BLOCKS_B64)return window.DASHBOARD_BLOCKS_B64;const data=window.DASHBOARD_DATA,result={};for(const subject of data.subjects)for(const module of ['cancellation','launch_rhythm']){if(!subject.modules.includes(module))continue;const url=new URL('api/dashboard',location.href);url.search=new URLSearchParams({dataset:data.dataset_id,subject:subject.id,module});const response=await fetch(url);if(!response.ok)throw new Error('board request failed');result[subject.id+'|'+module]=await response.json();}return result;}),keys=Object.keys(blocks).filter(key=>/\|(cancellation|launch_rhythm)$/.test(key));

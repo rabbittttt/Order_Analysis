@@ -2,7 +2,7 @@
 const fs=require('fs'),path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
 const project=path.resolve(__dirname,'../../..'),{chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const out=path.join(project,'.test_outputs/ui_audit_20261002/after');
-const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8766/');
+const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8767/');
 (async()=>{
  fs.mkdirSync(out,{recursive:true});const browser=await chromium.launch({headless:true,channel:'msedge'});
  const page=await browser.newPage({viewport:{width:1440,height:1000},timezoneId:'Asia/Shanghai',reducedMotion:'reduce'}),checks=[],errors=[];

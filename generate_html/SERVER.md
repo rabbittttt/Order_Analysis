@@ -15,13 +15,13 @@ python server.py --open
 
 使用共享 `Project/.venv` 时，也在该环境中执行安装命令，以 `requirements.txt` 声明的服务依赖版本为准。
 
-通过 `http://127.0.0.1:8766/` 打开页面。后台日志位于项目 `output_file/log/order_server.log`，自动处理日志为 `auto_sync.log` 及每批 `generate_html_*.log`。相同代码、输入/数据目录和同步间隔的运行服务会复用；升级代码后需先停止旧订单服务，再启动新版本。首次没有数据时页面自动等待，已有数据立即展示。
+通过 `http://127.0.0.1:8767/` 打开页面。后台日志位于项目 `output_file/log/order_server.log`，自动处理日志为 `auto_sync.log` 及每批 `generate_html_*.log`。相同代码、输入/数据目录和同步间隔的运行服务会复用；升级代码后需先停止旧订单服务，再启动新版本。首次没有数据时页面自动等待，已有数据立即展示。
 
 手动重建/检查（排错时使用）与直接运行：
 
 ```powershell
 python main.py --check --no-open
-python server.py --host 127.0.0.1 --port 8766
+python server.py --host 127.0.0.1 --port 8767
 ```
 
 `--check` 遇到数据校验警告返回非零；无生成错误时仍发布完整数据。生成错误不会切换当前批次。Excel 更新后由后台自动处理；网页可见时，前台每 15 秒检查一次版本；隐藏时暂停，切回或聚焦时立即检查。发现新版本后，预加载当前看板成功后统一切换，看板、底表和导出保持同一批次。保留主体、标签、粒度、周期以及底表搜索和分页；批注编辑中延后切换，提交/取消后关闭编辑器即可同步。顶部不显示生成时间，异常时才显示简短状态。
@@ -68,7 +68,7 @@ python package_release.py --output ../../releases/order-dashboard-v1
 从发布目录启动时显式传入绝对持久路径与当前版本 web 目录：
 
 ```powershell
-python server.py --input <汇总Excel目录> --data-dir <持久数据目录/runtime> --state-dir <持久批注目录> --web-dir ./web --allowed-host <门户域名> --host 127.0.0.1 --port 8766
+python server.py --input <汇总Excel目录> --data-dir <持久数据目录/runtime> --state-dir <持久批注目录> --web-dir ./web --allowed-host <门户域名> --host 127.0.0.1 --port 8767
 ```
 
 服务默认路径仅方便开发，发布运行必须显式配置。持久数据目录不得放入发布版本目录或静态站点根。首次部署可直接从 Excel 自动构建，也可复制已验证的完整数据快照目录；升级复用原持久路径，不用新包覆盖批注数据。停止旧订单服务，切换同版前后端，使用相同持久路径启动并验收。门户、其他应用不需要随之停止。此仓库不自动安装 Windows 服务或修改 IIS。

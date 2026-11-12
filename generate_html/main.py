@@ -395,7 +395,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")
-    parser.add_argument("--port", type=int, default=8766, help="本地订单服务端口。")
+    parser.add_argument("--port", type=int, default=8767, help="本地订单服务端口。")
     parser.add_argument("--debug", action="store_true", help="输出调试日志，用于排查数据解析问题。")
     return parser.parse_args()
 
