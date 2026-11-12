@@ -41,3 +41,19 @@ assert.strictEqual(subjects.length, names.length, 'source subjects must remain u
 
 const coexist=select({subjects:['问界 M5 2026款','问界 M5 2026款汇总','问界 M5 2025款汇总'].map(name=>({name,type:'generation',parent:'问界'}))});
 assert.deepStrictEqual(coexist.sort(),['问界 M5 2026款','问界 M5 2026款汇总'].sort());
+
+// Ampersand aggregates stay alongside their individual models, without a
+// synthetic suffix or collision with the ordinary generation shortcut.
+const combinedNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界 Z7&Z7T 2026款','享界 S9&S9T 2026款'];
+const individualNames=['问界 M9 2026款','问界 M9 Ultimate 2026款','尊界 V680 2026款','尊界 V800 2026款','尚界 Z7 2026款','尚界 Z7T 2026款','享界 S9 2026款','享界 S9T 2026款'];
+const combinedSubjects=[...combinedNames,...individualNames,'问界 M9&M9U 2025款汇总'].map(name=>({name,type:'generation',parent:name.slice(0,2)}));
+assert.deepStrictEqual(select({subjects:combinedSubjects}).sort(),[...combinedNames,...individualNames].sort());
+const helpers=new Function(`${script.slice(start,end)};return {generationShortName,generationAggregate};`)();
+for(const name of combinedNames){
+  assert.strictEqual(helpers.generationAggregate(name),true);
+  const short=helpers.generationShortName(name);
+  assert(short.includes('&')&&!short.includes('汇总')&&!short.includes('true'),short);
+}
+assert.strictEqual(helpers.generationShortName('问界 M9&M9U 2026款'),'M9&M9U 26');
+assert.strictEqual(helpers.generationShortName('问界 M9 2026款汇总'),'M9 26汇总');
+assert.strictEqual(helpers.generationAggregate('问界 M9 2026款'),false);

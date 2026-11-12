@@ -419,11 +419,12 @@
   }
   const quickBrandOrder=['问界','智界','享界','尊界','尚界'];
   const generationYear=name=>Math.max(...[...String(name||'').matchAll(/(20\d{2})\s*款/g)].map(match=>Number(match[1])),0);
-  const generationAggregate=name=>String(name||'').match(/(总计|汇总|合计)\s*$/)?.[1]||'';
+  const generationAggregateSuffix=name=>String(name||'').match(/(总计|汇总|合计)\s*$/)?.[1]||'';
+  const generationAggregate=name=>String(name||'').includes('&')||Boolean(generationAggregateSuffix(name));
   const generationModelKey=name=>String(name||'').replace(/20\d{2}\s*款/g,'').replace(/总计|汇总|合计/g,'').replace(/\s+/g,'').toLowerCase();
   const quickGenerationExcluded=name=>/beta|预订|直订|盲订/i.test(String(name||''));
   const quickGenerationFamilyKey=name=>generationModelKey(name).replace(/增程|纯电|智驾版|标准版/g,'');
-  const generationShortName=name=>{const raw=String(name||'').trim(),aggregate=generationAggregate(raw),value=raw.replace(/(总计|汇总|合计)\s*$/,'').trim(),year=generationYear(value),brand=quickBrandOrder.find(item=>value.startsWith(item))||value.match(/^[\u4e00-\u9fff]{1,3}界/)?.[0]||'',model=value.slice(brand.length).replace(/20\d{2}\s*款/g,'').replace(/\s+Ultimate\b/ig,'U').replace(/\s+典藏大观\b/g,'大观').replace(/\s+/g,' ').trim(),yearLabel=year?` ${String(year).slice(-2)}`:'';return `${model||value}${yearLabel}${aggregate}`};
+  const generationShortName=name=>{const raw=String(name||'').trim(),aggregate=generationAggregateSuffix(raw),value=raw.replace(/(总计|汇总|合计)\s*$/,'').trim(),year=generationYear(value),brand=quickBrandOrder.find(item=>value.startsWith(item))||value.match(/^[\u4e00-\u9fff]{1,3}界/)?.[0]||'',model=value.slice(brand.length).replace(/20\d{2}\s*款/g,'').replace(/\s+Ultimate\b/ig,'U').replace(/\s+典藏大观\b/g,'大观').replace(/\s+/g,' ').trim(),yearLabel=year?` ${String(year).slice(-2)}`:'';return `${model||value}${yearLabel}${aggregate}`};
   function latestQuickGenerations(){
     const candidates=DATA.subjects.filter(item=>item.type==='generation').filter(item=>!quickGenerationExcluded(item.name));
     const newestYear=new Map();

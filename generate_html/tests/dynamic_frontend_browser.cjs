@@ -1,7 +1,8 @@
 const fs=require('fs'),path=require('path'),http=require('http'),assert=require('assert');
 const project=path.resolve(__dirname,'../../..'),root=path.resolve(__dirname,'..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
-const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'}].map(s=>({...s,modules:['overview','raw']}));
+const aggregateNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界 Z7&Z7T 2026款','享界 S9&S9T 2026款'];
+const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,modules:['overview','raw']}));
 const catalog={dataset_id:'fixture-v1',meta:{generated_at:'2026-11-10T10:00:00'},subjects,config:{module_order:['overview','raw'],module_labels:{overview:'订单总览',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
 const header=['序号','格式值'],allRows=Array.from({length:450},(_,i)=>[i+1,`${i%2?'odd':'even'} 12.30%`]),xlsx=Buffer.from('fixture-original-xlsx');
 let currentVersion='fixture-v1',failNewBoard=false;
@@ -101,6 +102,15 @@ const server=http.createServer(async(req,res)=>{
   currentVersion='fixture-v4';
   await page.waitForFunction(()=>window.DASHBOARD_DATA.dataset_id==='fixture-v4',{},{timeout:22000});
   check('无需点击或刷新即可定期同步',await page.evaluate(()=>window.__syncSentinel===42));
+  for(let index=0;index<aggregateNames.length;index++){
+    const name=aggregateNames[index],option=page.locator('#subjectSelect option').filter({hasText:name});
+    check('组合代际完整显示 '+name,await option.textContent()===name);
+    const shortcut=page.locator('[data-quick-generation="aggregate'+index+'"]');
+    check('组合快捷名称不追加汇总 '+name,(await shortcut.textContent()).includes('&')&&!(await shortcut.textContent()).includes('汇总'));
+  }
+  await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');
+  await page.locator('#subjectSelect').selectOption('aggregate0');await page.waitForFunction(()=>new URL(location).searchParams.get('subject')==='aggregate0');
+  check('组合代际可选择并加载',await page.locator('.kpi').count()>0&&await page.locator('#subjectSelect').inputValue()==='aggregate0');
   check('无浏览器异常',errors.length===0);await ctx2.close();
  }finally{await browser.close();await new Promise(r=>server.close(r));}
  console.log(JSON.stringify({checks:checks.length,errors}));

@@ -334,7 +334,7 @@ class OptionFeeModule:
             if "选配渗透率" not in normalized_title or "排名" in normalized_title or generation not in cards:
                 continue
             if is_aggregate_generation(generation):
-                # 品牌级统计不重复纳入“总计/汇总”代际，避免与明细代际重复计算。
+                # 品牌统计排除含 & 的组合代际及旧“总计/汇总”代际，避免与明细重复。
                 continue
             try:
                 _, band_row, order_row = _option_layout(sheet)
