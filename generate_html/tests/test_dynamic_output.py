@@ -59,7 +59,7 @@ class DynamicOutputTests(TestCase):
                     render_dynamic_dashboard(self.manifest(), TEMPLATES, output)
             self.assertEqual(pointer.read_bytes(), previous)
 
-    def test_release_excludes_data_and_rejects_stale_frontend(self):
+    def test_release_excludes_data_and_ignores_old_runtime(self):
         from package_release import package
         with TemporaryDirectory() as folder:
             base = Path(folder)
@@ -75,9 +75,11 @@ class DynamicOutputTests(TestCase):
             self.assertFalse((base / "release/datasets").exists())
             self.assertEqual(len(list((base / "release/web/assets").iterdir())), 4)
             (runtime / "web-build.json").write_text("{}")
-            with self.assertRaisesRegex(ValueError, "前端源码"):
-                package(base / "stale-release", runtime)
-            self.assertFalse((base / "stale-release").exists())
+            (runtime / "index.html").write_text("private old report")
+            package(base / "fresh-release", runtime)
+            self.assertEqual((base / "fresh-release/web/index.html").read_bytes(),
+                             (base / "release/web/index.html").read_bytes())
+            self.assertEqual((runtime / "index.html").read_text(), "private old report")
 
     def test_legacy_duplicate_is_removed_only_after_successful_publish(self):
         with TemporaryDirectory() as folder:

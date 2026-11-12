@@ -57,13 +57,15 @@ HTTP 仅公开页面、资源和业务接口，不挂载整个数据目录。看
 
 门户公共入口保持 `/orderiq/`，代理转发到独立订单服务，并剥除该前缀。页面资源、请求及下载使用相对路径，不抢占站点根 `/api/`。反代须保留公共 Host/Origin；服务使用 `--allowed-host` 显式允许门户域名。默认允许 localhost 和 127.0.0.1。HTTPS 反代同时显式设置 `--allowed-origin https://<门户域名>`，不要信任客户端传入的代理身份头。本地服务没有 Windows 身份认证。
 
-生成经过验证的服务发布目录：
+更新代码后直接生成服务发布目录，无需先运行 `main.py` 或准备 Excel：
 
 ```powershell
 python package_release.py --output ../../releases/order-dashboard-v1
 ```
 
 发布目录含服务代码、Excel 读取和计算模块、模板、配置、依赖清单及同版前端，拒绝覆盖已有目录，不包含原始业务数据、数据快照或批注数据库。可交给门户的 `New-AppRelease.ps1` 封装，类型 service、入口 server.py、dataMode external、healthPath /health。
+
+打包器使用包内同版模板生成 `web/index.html`、内容哈希资源和 `web-build.json`，不读取开发机的 `output_file/runtime`。旧命令中的 `--runtime` 仅为兼容保留，指定后会提示忽略；模板更新后直接重新打包即可。打包成功只说明程序产物生成成功，业务数据在服务启动后按已配置的输入和持久路径生成，查询与保存仍需验收。
 
 从发布目录启动时显式传入绝对持久路径与当前版本 web 目录：
 
