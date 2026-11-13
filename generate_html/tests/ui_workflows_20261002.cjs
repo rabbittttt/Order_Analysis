@@ -7,6 +7,7 @@ const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8767/');
  fs.mkdirSync(out,{recursive:true});const browser=await chromium.launch({headless:true,channel:'msedge'});
  const page=await browser.newPage({viewport:{width:1440,height:1000},timezoneId:'Asia/Shanghai',reducedMotion:'reduce'}),checks=[],errors=[];
  page.on('pageerror',e=>errors.push(e.message));
+ const network=[];page.on('request',request=>{if(/^https?:/.test(request.url()))network.push(request.url())});
  const check=(name,value)=>{assert(value,name);checks.push(name);console.log('PASS',name)};
  const ready=()=>page.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false'&&window.DASHBOARD_DATA);
  try{
@@ -49,7 +50,7 @@ const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8767/');
   const workbookDownload=page.waitForEvent('download');await page.locator('#exportRawWorkbook').click();const workbook=await workbookDownload;
   check('完整Excel下载保留文件名',workbook.suggestedFilename()===file.name);
   const dataset=await page.evaluate(()=>window.DASHBOARD_DATA.dataset_id);
-  const expected=fs.readFileSync(path.join(project,'output_file/runtime/datasets',dataset,'workbooks',file.workbook_key.split('|')[0]+'.xlsx'));
+  const expected=dataset?fs.readFileSync(path.join(project,'output_file/runtime/datasets',dataset,'workbooks',file.workbook_key.split('|')[0]+'.xlsx')):Buffer.from(await page.evaluate(key=>window.DASHBOARD_RAW_B64[key],file.workbook_key),'base64');
   check('全部Sheet和原格式原样导出且不受筛选影响',fs.readFileSync(await workbook.path()).equals(expected));
   await page.locator('#clearRawSearch').click();
   await page.setViewportSize({width:390,height:844});
@@ -80,6 +81,7 @@ const base=new URL(process.env.DASHBOARD_URL||'http://127.0.0.1:8767/');
   check('新模块从顶部开始',await page.locator('#page').evaluate(n=>n.scrollTop)===0);
   check('订单页面没有加载预测引擎',await page.evaluate(()=>window.ForecastMath===undefined&&window.ForecastImport===undefined));
   check('减少动态效果偏好得到尊重',await page.locator('html').evaluate(n=>getComputedStyle(n).scrollBehavior)==='auto');
+  if(base.protocol==='file:'){check('静态页没有HTTP请求',network.length===0);check('静态页未启用动态API',!await page.evaluate(()=>window.ORDER_DASHBOARD_API_BASE));}
   check('无浏览器异常',errors.length===0);
  }finally{await browser.close();fs.writeFileSync(path.join(out,'workflow-report.json'),JSON.stringify({checks,errors},null,2));}
  console.log(JSON.stringify({checks:checks.length,errors}));

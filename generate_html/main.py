@@ -20,7 +20,7 @@ from core.data_paths import orders_input_directory
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
 from core.model_identity import STAGE_SOURCE_PATH
-from core.renderer import b64gzip, render_dynamic_dashboard as render_dashboard
+from core.renderer import b64gzip, render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
 
@@ -222,12 +222,12 @@ def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, st
     return files, blocks
 
 
-def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None, source_signature: dict | None = None) -> tuple[dict[str, Any], list[str]]:
+def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None, source_signature: dict | None = None, static: bool = False) -> tuple[dict[str, Any], list[str]]:
     runtime_dir = runtime_dir or output_file.parent / "runtime"
     build_started = perf_counter()
     LOGGER.info("开始生成订单分析看板")
     LOGGER.info("输入目录: %s", input_dir)
-    LOGGER.info("运行目录: %s", runtime_dir)
+    LOGGER.info("输出目标: %s", output_file if static else runtime_dir)
     config = load_config(ROOT / "config.json")
     if config.get("chart_render_mode") not in {"original", "generated"}:
         raise ValueError("config.json 的 chart_render_mode 必须是 original 或 generated")
@@ -317,18 +317,20 @@ def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None
         for warning in validation_warnings:
             LOGGER.warning("[生成校验] %s", warning)
         validation_seconds = perf_counter() - validation_started
-        LOGGER.info("开始发布动态看板（主体 %d 个，看板 %d 个）", len(subjects), len(dashboards))
+        LOGGER.info("开始输出%s看板（主体 %d 个，看板 %d 个）", "静态" if static else "动态", len(subjects), len(dashboards))
         stage_started = perf_counter()
         if DIAGNOSTIC_COUNTS["ERROR"]:
             raise RuntimeError("本批次存在生成错误，保留上一批已发布数据")
         if source_signature is not None:
             manifest["source_signature"] = source_signature
-        if runtime_dir == output_file.parent / "runtime":
+        if static:
+            render_static_dashboard(manifest, ROOT / "templates", output_file)
+        elif runtime_dir == output_file.parent / "runtime":
             render_dashboard(manifest, ROOT / "templates", output_file)
         else:
             render_dashboard(manifest, ROOT / "templates", output_file, runtime_dir=runtime_dir)
         render_seconds = perf_counter() - stage_started
-        entry = runtime_dir / "index.html"
+        entry = output_file if static else runtime_dir / "index.html"
         LOGGER.info("入口页面体积: %.1fKB", entry.stat().st_size / 1024)
         emitted_messages = "\n".join(BUILD_DIAGNOSTICS)
         warnings = list(dict.fromkeys([
@@ -390,14 +392,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=PROJECT_ROOT / "output_file" / "鸿蒙智行订单分析汇总.html",
-        help="兼容旧版输出路径，使用其所在目录保存 runtime 和日志。",
+        default=None,
+        help="静态模式为 HTML 文件；动态模式使用其所在目录保存 runtime 和日志。",
     )
+    parser.add_argument("--static", action="store_true", help="生成可离线打开的单文件 HTML，不启动后台服务。")
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")
     parser.add_argument("--port", type=int, default=8767, help="本地订单服务端口。")
     parser.add_argument("--debug", action="store_true", help="输出调试日志，用于排查数据解析问题。")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.output is None:
+        filename = "鸿蒙智行订单分析汇总_静态版.html" if args.static else "鸿蒙智行订单分析汇总.html"
+        args.output = PROJECT_ROOT / "output_file" / filename
+    return args
 
 
 def cleanup_input_cache(input_dir: Path) -> None:
@@ -471,6 +478,7 @@ def open_dynamic_dashboard(data_dir: Path, port: int, *, input_dir: Path | None 
 
 def main() -> int:
     args = parse_args()
+    static_mode = getattr(args, "static", False)
     log_file = configure_runtime(args.output.parent, args.debug)
     try:
         from core.sync import BuildLock
@@ -478,28 +486,39 @@ def main() -> int:
         identity.STAGE_SOURCE_PATH = args.input / "小订及首销数据整理.xlsx"
         with BuildLock(args.output.parent / "runtime"):
             try:
-                manifest, warnings = build(args.input, args.output)
+                if static_mode:
+                    manifest, warnings = build(args.input, args.output, static=True)
+                else:
+                    manifest, warnings = build(args.input, args.output)
             finally:
                 cleanup_input_cache(args.output.parent)
     except Exception:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)
         return 1
+    target = args.output if static_mode else args.output.parent / "runtime"
     errors = DIAGNOSTIC_COUNTS["ERROR"]
     if errors:
-        LOGGER.error("生成不完整：发生%d条错误；动态运行目录: %s",
-                     errors, args.output.parent / "runtime", extra={"diagnostic_continuation": True})
+        LOGGER.error("生成不完整：发生%d条错误；输出目标: %s",
+                     errors, target, extra={"diagnostic_continuation": True})
     else:
-        LOGGER.info("生成成功: %s", args.output.parent / "runtime")
+        LOGGER.info("生成成功: %s", target)
     LOGGER.info("汇总: 主体=%d，看板=%d, 问题=%d", len(manifest["subjects"]), len(manifest["dashboards"]), len(warnings))
     LOGGER.info("运行日志: %s", log_file)
     if errors:
         return 1
     if AUTO_OPEN_HTML and not args.no_open:
         try:
-            open_dynamic_dashboard(args.output.parent / "runtime", args.port, input_dir=args.input)
+            if static_mode:
+                webbrowser.open(args.output.resolve().as_uri())
+                LOGGER.info("静态网页: %s", args.output.resolve())
+            else:
+                open_dynamic_dashboard(args.output.parent / "runtime", args.port, input_dir=args.input)
         except Exception:
-            LOGGER.exception("自动启动失败；请运行 server.py 后通过网址访问看板")
+            if static_mode:
+                LOGGER.exception("自动打开失败，请手动打开静态网页: %s", args.output)
+            else:
+                LOGGER.exception("自动启动失败；请运行 server.py 后通过网址访问看板")
             return 1
     return 1 if args.check and warnings else 0
 
