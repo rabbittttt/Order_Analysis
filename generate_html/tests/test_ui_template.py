@@ -313,7 +313,7 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         module_bar = template.split('<aside class="module-bar">', 1)[1].split("</aside>", 1)[0]
         self.assertNotIn('id="filters"', module_bar)
 
-    def test_topbar_hides_generation_time_and_compacts_small_screen_filters(self):
+    def test_topbar_shows_generation_time_and_compacts_small_screen_filters(self):
         template = (ROOT / "templates" / "dashboard.html").read_text(encoding="utf-8")
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
@@ -322,7 +322,7 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         self.assertIn('select id="subjectSelect" aria-label="分析主体"', topbar)
         self.assertIn('id="grainSelect"', topbar)
         self.assertIn('select id="periodSelect" aria-label="分析周期"', topbar)
-        self.assertNotIn("生成时间", script)
+        self.assertIn("生成时间 ${String(generatedAt).replace('T',' ')}", script)
         self.assertIn('id="syncStatus" role="status" aria-live="polite" hidden', topbar)
         self.assertIn(".topbar .top-actions #syncStatus {\n  display:inline-flex;", css)
         self.assertIn(".topbar .top-actions>span { display:inline-flex; }", css)

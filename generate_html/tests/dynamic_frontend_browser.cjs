@@ -3,7 +3,9 @@ const project=path.resolve(__dirname,'../../..'),root=path.resolve(__dirname,'..
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const aggregateNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界 Z7&Z7T 2026款','享界 S9&S9T 2026款'];
 const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,modules:['overview','raw']}));
-const catalog={dataset_id:'fixture-v1',meta:{generated_at:'2026-11-10T10:00:00'},subjects,config:{module_order:['overview','raw'],module_labels:{overview:'订单总览',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
+const generatedTimes={'fixture-v1':'2026-11-10T10:00:00','fixture-v2':'2026-11-10T10:01:00','fixture-v3':'2026-11-10T10:02:00','fixture-v4':'2026-11-10T10:03:00'};
+const generationLabel=version=>'生成时间 '+generatedTimes[version].replace('T',' ');
+const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','raw'],module_labels:{overview:'订单总览',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
 const header=['序号','格式值'],allRows=Array.from({length:450},(_,i)=>[i+1,`${i%2?'odd':'even'} 12.30%`]),xlsx=Buffer.from('fixture-original-xlsx');
 let currentVersion='fixture-v1',failNewBoard=false;
 let notes=[{id:'group',subject:'g',date:'2026-11-10',text:'集团事件',version:1},{id:'brand',subject:'b',date:'2026-11-10',text:'问界事件',version:1}],failSubject='other',requests=[],nextId=1;
@@ -14,7 +16,7 @@ const server=http.createServer(async(req,res)=>{
  const send=(value,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(value))};
  if(!p.startsWith('/orderiq/api/')){res.setHeader('Content-Type','text/html;charset=utf-8');return res.end(shell)}
  const route=p.slice('/orderiq/api/'.length);
- if(route==='catalog')return send({...catalog,dataset_id:currentVersion});
+ if(route==='catalog')return send({...catalog,dataset_id:currentVersion,meta:{...catalog.meta,generated_at:generatedTimes[currentVersion]}});
  if(route==='sync')return send({dataset_id:currentVersion,phase:'idle',error:null});
  if(!['fixture-v1','fixture-v2','fixture-v3','fixture-v4'].includes(url.searchParams.get('dataset')))return send({detail:'missing dataset'},400);
  if(route==='dashboard'){
@@ -45,6 +47,7 @@ const server=http.createServer(async(req,res)=>{
  page.on('pageerror',e=>errors.push(e.message));const check=(label,v)=>{assert(v,label);checks.push(label);console.log('PASS',label)};
  try{
   await page.goto(base+'?subject=m');await page.waitForSelector('.kpi');
+  check('桌面顶部显示当前批次生成时间',await page.locator('#syncStatus').isVisible()&&await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
   check('首屏仅请求当前看板，未请求底表或Excel',requests.filter(r=>r.path.endsWith('/dashboard')).length===1&&!requests.some(r=>/\/(raw|workbook)$/.test(r.path)));
   await page.locator('[data-trend-annotation-toggle]').click();await page.waitForSelector('.trend-annotation');
   check('集团和品牌批注继承到车型',(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('集团事件')&&(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('问界事件'));
@@ -74,7 +77,7 @@ const server=http.createServer(async(req,res)=>{
   const w=page.waitForEvent('download');await page.locator('#exportRawWorkbook').click();check('Excel按需下载原始字节',fs.readFileSync(await(await w).path()).equals(xlsx));
   await page.setViewportSize({width:390,height:844});check('手机无页面横向溢出',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   check('API请求都携带同一批次',requests.filter(r=>r.path.includes('/api/')&&!r.path.endsWith('/catalog')).every(r=>r.query.dataset==='fixture-v1'));
-  check('顶部不再显示生成时间',await page.locator('#updatedAt').count()===0&&await page.locator('#syncStatus').isHidden());
+  check('手机顶部显示当前批次生成时间',await page.locator('#syncStatus').isVisible()&&await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
   await page.setViewportSize({width:1440,height:1000});
   await page.evaluate(()=>{window.__syncSentinel=42;document.activeElement?.blur()});
   await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');
@@ -82,14 +85,17 @@ const server=http.createServer(async(req,res)=>{
   await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await page.waitForFunction(()=>document.querySelector('#syncStatus').textContent.includes('同步暂不可用'));
   check('新批次请求失败保留旧页面',await page.evaluate(()=>window.DASHBOARD_DATA.dataset_id)==='fixture-v1'&&await page.locator('.kpi').count()>0);
+  check('新批次请求失败保留旧生成时间',(await page.locator('#syncStatus').textContent()).startsWith(generationLabel('fixture-v1')+' · '));
   failNewBoard=false;
   await page.locator('[data-trend-annotation-manage]').click();
   await page.locator('#trendAnnotationForm [name="text"]').fill('尚未提交的批注');
   await page.evaluate(()=>window.dispatchEvent(new Event('focus')));await page.waitForTimeout(150);
   check('批注编辑时暂缓切换',await page.evaluate(()=>window.DASHBOARD_DATA.dataset_id)==='fixture-v1'&&await page.locator('#trendAnnotationForm [name="text"]').inputValue()==='尚未提交的批注');
+  check('暂缓切换时保留旧生成时间',await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
   await page.locator('#trendAnnotationEditor header button').click();
   await page.waitForFunction(()=>window.DASHBOARD_DATA.dataset_id==='fixture-v2');await page.waitForSelector('.kpi');
   check('关闭编辑后自动同步且不重载网页',await page.evaluate(()=>window.__syncSentinel===42)&&await page.locator('#subjectSelect').inputValue()==='m');
+  check('同步成功显示新批次生成时间',await page.locator('#syncStatus').textContent()===generationLabel('fixture-v2'));
   await page.locator('[data-module="raw"]').click();await page.waitForSelector('#rawNext');
   await page.locator('#rawSearch').fill('even');await page.waitForFunction(()=>document.querySelector('#rawMatchCount').textContent.includes('225'));
   await page.locator('#rawNext').click();await page.waitForFunction(()=>document.querySelector('#rawPageInfo').textContent==='2 / 2');
@@ -97,11 +103,13 @@ const server=http.createServer(async(req,res)=>{
   await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await page.waitForFunction(()=>window.DASHBOARD_DATA.dataset_id==='fixture-v3'&&document.querySelector('#page').getAttribute('aria-busy')==='false');
   check('底表同步保留搜索和页码',await page.locator('#rawSearch').inputValue()==='even'&&await page.locator('#rawPageInfo').textContent()==='2 / 2');
+  check('底表同步更新生成时间',await page.locator('#syncStatus').textContent()===generationLabel('fixture-v3'));
   const download=page.waitForEvent('download');await page.locator('#exportRawWorkbook').click();await download;
   check('导出使用切换后的批次',requests.filter(r=>r.path.endsWith('/workbook')).at(-1).query.dataset==='fixture-v3');
   currentVersion='fixture-v4';
   await page.waitForFunction(()=>window.DASHBOARD_DATA.dataset_id==='fixture-v4',{},{timeout:22000});
   check('无需点击或刷新即可定期同步',await page.evaluate(()=>window.__syncSentinel===42));
+  check('定期同步更新生成时间',await page.locator('#syncStatus').textContent()===generationLabel('fixture-v4'));
   for(let index=0;index<aggregateNames.length;index++){
     const name=aggregateNames[index],option=page.locator('#subjectSelect option').filter({hasText:name});
     check('组合代际完整显示 '+name,await option.textContent()===name);

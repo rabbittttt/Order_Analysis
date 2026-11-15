@@ -492,6 +492,7 @@
     state.grain=params.get("grain")||state.grain;state.period=params.get("period")||state.period;
     readRawLocation(params);
     if(state.module==="launch_rhythm"&&!params.get("grain"))state.grain="day";
+    setSyncStatus("");
     bindStatic();renderSubjectSelect();if(await ensureState()===false)return;await renderAll();syncUrl("replace");
   }
   function bindStatic(){
@@ -1231,7 +1232,9 @@
   }
   function setSyncStatus(message){
     const node=$('#syncStatus');if(!node)return;
-    node.textContent=message;node.hidden=!message;
+    const generatedAt=DATA.meta?.generated_at;
+    const time=generatedAt?`生成时间 ${String(generatedAt).replace('T',' ')}`:'';
+    node.textContent=[time,message].filter(Boolean).join(' · ');node.hidden=!node.textContent;
   }
   async function synchronizeDataset(){
     if(!DYNAMIC||syncBusy||document.hidden)return;
@@ -1269,6 +1272,7 @@
       clearTimeout(rawSearchTimer);rawRowsCache=[];rawRowsKey=null;
       for(const key of Object.keys(boardCache))delete boardCache[key];
       DATA=catalog;window.DASHBOARD_DATA=DATA;moduleLabels=DATA.config.module_labels;
+      setSyncStatus(status.error?'更新失败，当前显示上次数据':'');
       window.CHART_RENDER_MODE=DATA.config.chart_render_mode||'generated';
       Object.assign(state,nextState);pendingRawPage=raw||null;
       if(board)boardCache[`${DATA.dataset_id}|${state.subject}|${state.module}`]=Promise.resolve(board);
