@@ -39,8 +39,7 @@ echo Python: "%orderPython%"
 if errorlevel 1 goto missing_dependencies
 "%orderPython%" -c "import openpyxl" >nul 2>nul
 if errorlevel 1 goto missing_dependencies
-echo 正在读取 Excel 并生成订单分析静态网页...
-"%orderPython%" generate_html\main.py --static %*
+"%orderPython%" -X utf8 generate_html\static_launcher.py %*
 set "launcherExitCode=%errorlevel%"
 if not "%launcherExitCode%"=="0" pause
 exit /b %launcherExitCode%
