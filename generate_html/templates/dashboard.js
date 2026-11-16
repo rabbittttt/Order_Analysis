@@ -635,8 +635,7 @@
     if(revision!==pageRevision||moduleId!==state.module||subjectId!==state.subject)return;
     if(!board||!page){$("#page").innerHTML=`<div class="empty-page">当前主体暂无该分析</div>`;return}
     channelPanelData.clear();
-    const heading=moduleId==="overview"?"":`<header class="page-section-heading"><h1>${esc(moduleLabels[moduleId])}</h1><p>${esc(subject()?.name)}</p></header>`;
-    $("#page").innerHTML=`${heading}${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
+    $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
     bindRhythmCharts();
     bindChannelPanels();
     bindSkuHeatmaps();
