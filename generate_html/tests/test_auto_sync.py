@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-from core.sync import AutoSync, BuildLock, RefreshSchedule, copy_stable_inputs, source_signature, published_signature, run_worker
+from core.sync import calculation_revision, AutoSync, BuildLock, RefreshSchedule, copy_stable_inputs, source_signature, published_signature, run_worker
 from core.server import create_app
 
 
@@ -33,7 +33,11 @@ class AutoSyncTests(unittest.TestCase):
         self.assertEqual(schedule.observe('newer', 'newer', 900), (False, 300))
 
     def test_checks_only_metadata_and_detects_add_edit_delete(self):
-        with patch.object(Path, 'read_bytes', side_effect=AssertionError('must not read Excel')):
+        read_bytes = Path.read_bytes
+        def read_program_only(path):
+            self.assertFalse(path.is_relative_to(self.source), 'must not read Excel')
+            return read_bytes(path)
+        with patch.object(Path, 'read_bytes', autospec=True, side_effect=read_program_only):
             before = source_signature(self.source)
             (self.source / '~$orders.xlsx').write_text('lock')
             (self.source / '鸿蒙智行销量数据汇总.xlsx').write_text('excluded')
@@ -164,3 +168,49 @@ class AutoSyncTests(unittest.TestCase):
             sync.stop()
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[-1], source_signature(self.source))
+
+
+class CalculationRevisionTests(unittest.TestCase):
+    def test_recipe_tracks_code_rules_and_templates_not_path_or_runtime_data(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'source';root.mkdir()
+            for name in ('main.py','server.py','config.json','requirements.txt','core/a.py','modules/a.py','templates/dashboard.js'):
+                target=root/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_text('v1')
+            original=calculation_revision(root)
+            (root/'output_file').mkdir();(root/'output_file'/'data.json').write_text('business fixture')
+            self.assertEqual(calculation_revision(root),original)
+            moved=Path(folder)/'moved';shutil.copytree(root,moved)
+            self.assertEqual(calculation_revision(moved),original)
+            for name in ('config.json','core/a.py','modules/a.py','templates/dashboard.js'):
+                target=moved/name;target.write_text('v2')
+                self.assertNotEqual(calculation_revision(moved),original)
+                target.write_text('v1')
+
+    def test_code_only_upgrade_rebuilds_without_advancing_excel_completion_marker(self):
+        old={'directory':'inputs','files':[['orders.xlsx',10,1,1]],'ready':[1,2,2],'calculation_revision':'old'}
+        new={**old,'calculation_revision':'new'}
+        schedule=RefreshSchedule()
+        self.assertEqual(schedule.observe(new,old,0),(False,60))
+        self.assertEqual(schedule.observe(new,old,60),(True,0))
+        self.assertEqual(schedule.observe(new,new,61),(False,300))
+        # Old catalogs without a recipe are refreshed once after the upgrade.
+        legacy={key:value for key,value in old.items() if key!='calculation_revision'}
+        self.assertEqual(RefreshSchedule().observe(new,legacy,0),(False,60))
+        changed_inputs={**new,'files':[['orders.xlsx',11,1,1]]}
+        self.assertEqual(RefreshSchedule().observe(changed_inputs,old,0),(False,300))
+
+    def test_restart_with_new_recipe_schedules_unchanged_excel(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=root/'input';source.mkdir();(source/'orders.xlsx').write_bytes(b'fixture')
+            runtime=root/'runtime';runtime.mkdir()
+            with patch('core.sync.calculation_revision',return_value='old'):
+                old=source_signature(source)
+            sync=AutoSync(source,runtime,check_seconds=.01,stable_seconds=.01)
+            published=[old];calls=[]
+            def build(signature):
+                calls.append(signature);published[0]=signature;sync.stop_event.set();return True
+            with patch('core.sync.calculation_revision',return_value='new'),patch('core.sync.published_signature',side_effect=lambda _:published[0]),patch.object(sync,'_build',side_effect=build):
+                sync.start();sync.thread.join(timeout=3);sync.stop()
+            self.assertEqual(len(calls),1)
+            self.assertEqual(calls[0]['files'],old['files'])
+            self.assertEqual(calls[0]['calculation_revision'],'new')

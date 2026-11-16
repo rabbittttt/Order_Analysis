@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import shutil
@@ -52,6 +53,20 @@ class BuildLock:
             self.stream = None
 
 
+def calculation_revision(root: Path = ROOT) -> str:
+    """Hash only shipped calculation code, rules and templates, never runtime data."""
+    files = [root / name for name in ("main.py", "server.py", "config.json", "requirements.txt")]
+    for directory in ("core", "modules", "templates"):
+        files.extend(path for path in (root / directory).rglob("*")
+                     if path.is_file() and "__pycache__" not in path.parts
+                     and path.suffix not in (".pyc", ".pyo"))
+    digest = hashlib.sha256()
+    for path in sorted(files, key=lambda item: item.relative_to(root).as_posix()):
+        digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
+        digest.update(hashlib.sha256(path.read_bytes()).digest())
+    return digest.hexdigest()
+
+
 def source_signature(source: Path) -> dict:
     if not source.is_dir():
         raise FileNotFoundError("订单 Excel 输入目录不存在")
@@ -72,7 +87,8 @@ def source_signature(source: Path) -> dict:
         marker_info = [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
         if stat.st_mtime_ns < max(row[2] for row in entries):
             raise ValueError("等待本轮 Excel 更新完成标记 orders.ready")
-    return {"directory": str(source.resolve()), "files": entries, "ready": marker_info}
+    return {"directory": str(source.resolve()), "files": entries, "ready": marker_info,
+            "calculation_revision": calculation_revision()}
 
 
 def published_signature(runtime: Path) -> dict | None:
@@ -102,7 +118,8 @@ class RefreshSchedule:
             self.pending = None
             return False, self.check_seconds
         if (isinstance(signature, dict) and signature.get("ready") is not None
-                and isinstance(published, dict) and signature["ready"] == published.get("ready")):
+                and isinstance(published, dict) and signature["ready"] == published.get("ready")
+                and any(signature.get(key) != published.get(key) for key in ("directory", "files"))):
             # Copy tools can preserve old Excel mtimes. An existing marker must
             # advance for a new batch, not merely be newer than those old mtimes.
             self.pending, self.since = signature, now
