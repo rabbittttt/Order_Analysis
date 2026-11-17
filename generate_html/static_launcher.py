@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 def choose_input_directory() -> Path | None:
-    shared = (shared_data_root(PROJECT_ROOT) or PROJECT_ROOT.parent / "共享数据") / "订单汇总"
+    shared = (shared_data_root(PROJECT_ROOT) or PROJECT_ROOT.parent / "工作台数据" / "shared") / "订单汇总"
     local = PROJECT_ROOT / "output_file"
     while True:
         print("\n请选择数据来源：")

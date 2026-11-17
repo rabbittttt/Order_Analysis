@@ -16,17 +16,17 @@ class SharedDataPathsTests(TestCase):
     def test_standalone_project_keeps_existing_defaults(self):
         with TemporaryDirectory() as folder, patch.dict(os.environ, {"SHARED_DATA_ROOT": ""}):
             project = Path(folder) / "订单分析"
-            self.assertIsNone(shared_data_root(project))
-            self.assertEqual(orders_input_directory(project), project.parent / "共享数据" / "订单汇总")
+            self.assertEqual(shared_data_root(project), project.parent / "工作台数据" / "shared")
+            self.assertEqual(orders_input_directory(project), project.parent / "工作台数据" / "shared" / "订单汇总")
 
     def test_standalone_and_portal_share_default_input(self):
         with TemporaryDirectory() as folder, patch.dict(os.environ, {"SHARED_DATA_ROOT": ""}):
             project = Path(folder) / "订单分析"
             (project / "output_file").mkdir(parents=True)
             (project / "output_file" / "小订及首销数据整理.xlsx").write_bytes(b"old copy")
-            shared = Path(folder) / "共享数据"
-            shared.mkdir()
-            self.assertEqual(orders_input_directory(project), project.parent / "共享数据" / "订单汇总")
+            shared = Path(folder) / "工作台数据" / "shared"
+            shared.mkdir(parents=True)
+            self.assertEqual(orders_input_directory(project), project.parent / "工作台数据" / "shared" / "订单汇总")
             self.assertFalse(orders_input_directory(project).exists())
 
     def test_explicit_nonexistent_root_remains_authoritative(self):

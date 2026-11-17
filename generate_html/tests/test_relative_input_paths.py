@@ -29,9 +29,9 @@ class RelativeInputPathsTests(TestCase):
             unrelated = root / "other-working-directory"
             project.mkdir(parents=True)
             unrelated.mkdir()
-            shared = project.parent / "共享数据"
+            shared = project.parent / "工作台数据" / "shared"
             if create_shared:
-                shared.mkdir()
+                shared.mkdir(parents=True)
             configured = str(shared) if setting == "absolute" else setting
             env = dict(os.environ, SHARED_DATA_ROOT=configured, PYTHONIOENCODING="utf-8")
             outputs = []
@@ -42,14 +42,14 @@ class RelativeInputPathsTests(TestCase):
                         cwd=cwd, env=env, check=True, capture_output=True, text=True, encoding="utf-8",
                     )
                     actual = Path(json.loads(result.stdout)["orders"])
-                    self.assertEqual(actual, shared / "订单汇总" if configured else project / "output_file")
+                    self.assertEqual(actual, shared / "订单汇总")
                     outputs.append(actual)
             self.assertEqual(outputs[0], outputs[1])
             if not create_shared:
                 self.assertFalse(shared.exists(), "Resolving an explicit root must not create it.")
 
     def test_relative_override_is_project_relative_from_any_cwd(self):
-        self.check_from_two_directories("../共享数据")
+        self.check_from_two_directories("../工作台数据/shared")
 
     def test_absolute_override_keeps_its_meaning_from_any_cwd(self):
         self.check_from_two_directories("absolute")

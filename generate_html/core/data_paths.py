@@ -16,8 +16,8 @@ def shared_data_root(project_root: Path = PROJECT_ROOT) -> Path | None:
     if configured:
         candidate = Path(configured).expanduser()
         return (candidate if candidate.is_absolute() else project_root / candidate).resolve()
-    candidate = project_root.parent / "共享数据"
-    return candidate if candidate.is_dir() else None
+    base = (project_root / os.environ["PLANHUB_DATA_ROOT"]).resolve() if os.environ.get("PLANHUB_DATA_ROOT") else project_root.parent / "工作台数据"
+    return base / "shared"
 
 
 def orders_input_directory(project_root: Path = PROJECT_ROOT) -> Path:
@@ -25,10 +25,7 @@ def orders_input_directory(project_root: Path = PROJECT_ROOT) -> Path:
     if configured:
         candidate = Path(configured).expanduser()
         return (candidate if candidate.is_absolute() else project_root / candidate).resolve()
-    # Only an explicit shared-data override may redirect the order input.
-    if os.environ.get("SHARED_DATA_ROOT", "").strip():
-        return shared_data_root(project_root) / "订单汇总"
-    return project_root.parent / "共享数据" / "订单汇总"
+    return shared_data_root(project_root) / "订单汇总"
 
 
 def persistent_directory(root):
