@@ -20,7 +20,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--web-dir", type=Path, help="已发布的前端目录，默认使用 data-dir")
     parser.add_argument("--allowed-host", action="append", help="额外允许的公共主机名，可重复指定，本机健康检查始终允许 localhost/127.0.0.1")
     parser.add_argument("--allowed-origin", action="append", default=[], help="允许的公共站点完整来源，例如 https://portal.example，可重复指定")
-    parser.add_argument("--input", type=Path, default=orders_input_directory(PROJECT_ROOT), help="订单汇总 Excel 目录，默认项目 output_file")
+    parser.add_argument("--input", type=Path, default=orders_input_directory(PROJECT_ROOT), help="订单汇总 Excel 目录，默认同级共享数据/订单汇总")
     parser.add_argument("--check-seconds", type=float, default=300)
     parser.add_argument("--stable-seconds", type=float, default=60)
     parser.add_argument("--no-sync", action="store_true", help="只读取已发布数据，不自动处理 Excel")

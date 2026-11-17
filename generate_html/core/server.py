@@ -30,8 +30,9 @@ SERVICE_FINGERPRINT = hashlib.sha256(
 ).hexdigest()[:16]
 CODE_ROOT = ROOT.parent
 PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
-DEFAULT_DATA_DIR = PROJECT_ROOT / "output_file" / "runtime"
-DEFAULT_STATE_DIR = PROJECT_ROOT / "data" / "order_dashboard"
+from core.data_paths import persistent_directory
+DEFAULT_DATA_DIR = persistent_directory(PROJECT_ROOT) / "runtime"
+DEFAULT_STATE_DIR = persistent_directory(PROJECT_ROOT) / "annotations"
 LEGACY_ENTRY = "鸿蒙智行订单分析汇总.html"
 ASSET_SUFFIXES = {".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico", ".woff", ".woff2", ".ttf", ".json"}
 

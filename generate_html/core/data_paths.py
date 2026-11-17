@@ -28,4 +28,14 @@ def orders_input_directory(project_root: Path = PROJECT_ROOT) -> Path:
     # Only an explicit shared-data override may redirect the order input.
     if os.environ.get("SHARED_DATA_ROOT", "").strip():
         return shared_data_root(project_root) / "订单汇总"
-    return project_root / "output_file"
+    return project_root.parent / "共享数据" / "订单汇总"
+
+
+def persistent_directory(root):
+    root = Path(root).resolve()
+    value = os.environ.get("PLANHUB_DATA_ROOT", "").strip()
+    base = (root / value).resolve() if value else root.parent / "工作台数据"
+    destination = base / "database" / "orderiq"
+    if not destination.exists() and (root / "data" / "order_dashboard" / "annotations.sqlite3").exists():
+        raise RuntimeError("旧持久数据尚未迁移，请先停止服务并运行门户的数据迁移工具；不会创建空库。")
+    return destination

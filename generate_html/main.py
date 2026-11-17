@@ -403,7 +403,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.output is None:
         filename = "鸿蒙智行订单分析汇总_静态版.html" if args.static else "鸿蒙智行订单分析汇总.html"
-        args.output = PROJECT_ROOT / "output_file" / filename
+        from core.data_paths import persistent_directory
+        args.output = (PROJECT_ROOT / "output_file" if args.static else persistent_directory(PROJECT_ROOT)) / filename
     return args
 
 

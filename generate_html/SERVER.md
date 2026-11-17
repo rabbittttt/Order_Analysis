@@ -1,5 +1,7 @@
 # 订单看板动态服务
 
+动态运行与批注统一存放在同级 `工作台数据/database/orderiq/`；可通过 `PLANHUB_DATA_ROOT` 覆盖根目录，相对值按订单项目根解析。静态导出仍可选择输出文件。发布版使用包外 `planhub-runtime/database/orderiq/`。首次升级先运行门户的 `迁移持久数据.cmd`，旧库保留为恢复备份。
+
 数据来自当前汇总 Excel，默认输入为项目 `output_file`。后台自动检查文件变化，由独立低优先级进程复用现有业务模块，生成不可变数据批次；HTTP 请求只读取已完成数据，不解析 Excel。
 
 ## 本地使用
@@ -48,10 +50,10 @@ python main.py --static
 
 ## 数据和接口
 
-- `output_file/runtime/current.json`：已完成批次指针，最后原子替换。
-- `output_file/runtime/datasets/<dataset_id>/`：每次写入唯一目录，保存看板、底表与原始 XLSX 快照。全部文件和页面完成后原子写入 catalog.json，再切换 current.json；发布过程使用文件替换，兼容 Windows 拒绝重命名非空目录的环境。旧批次保留供已打开的网页读取。
-- `output_file/runtime/index.html`、`assets/`：服务读取的页面入口和资源，资源文件名带内容哈希。生成器只在 runtime 中输出入口，根目录与旧入口内容完全一致的重复 HTML 会在成功发布后清理。
-- `data/order_dashboard/annotations.sqlite3`：共享批注，服务重启和生成 Excel 批次不会覆盖；可用 `--state-dir` 指向持久目录。备份应在停止服务后复制数据库。
+- `../工作台数据/database/orderiq/runtime/current.json`：已完成批次指针，最后原子替换。
+- `../工作台数据/database/orderiq/runtime/datasets/<dataset_id>/`：每次写入唯一目录，保存看板、底表与原始 XLSX 快照。全部文件和页面完成后原子写入 catalog.json，再切换 current.json；发布过程使用文件替换，兼容 Windows 拒绝重命名非空目录的环境。旧批次保留供已打开的网页读取。
+- `../工作台数据/database/orderiq/runtime/index.html`、`assets/`：服务读取的页面入口和资源，资源文件名带内容哈希。生成器只在 runtime 中输出入口，根目录与旧入口内容完全一致的重复 HTML 会在成功发布后清理。
+- `../工作台数据/database/orderiq/annotations/annotations.sqlite3`：共享批注，服务重启和生成 Excel 批次不会覆盖；可用 `--state-dir` 指向持久目录。备份应在停止服务后复制数据库。
 
 HTTP 仅公开页面、资源和业务接口，不挂载整个数据目录。看板按主体和模块请求；底表后台搜索分页；CSV 导出当前搜索的全部匹配记录；Excel 下载该批次的原始文件，保留格式、公式和全部 Sheet。
 
