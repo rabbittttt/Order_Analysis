@@ -1330,15 +1330,6 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   box-shadow:var(--shadow-md);
 }
 
-.kpi:before {
-  display:block;
-  content:"";
-  position:absolute;
-  inset:0 0 auto;
-  height:4px;
-  background:var(--accent);
-}
-
 .kpi>span {
   display:block;
   font-weight:650;
