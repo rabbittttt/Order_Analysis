@@ -20,7 +20,7 @@ class GenerationOutcomeTests(TestCase):
     def run_main(self, severity=None, *, strict=False, auto_open=False, failure=None):
         args = Namespace(input=Path('input'), output=Path('output/report.html'), debug=False,
                          check=strict, no_open=not auto_open)
-        def configure(*_):
+        def configure(*_, **kwargs):
             generator.DIAGNOSTIC_COUNTS.update(WARNING=0, ERROR=0)
             return Path('test.log')
         def build(*_, **__):

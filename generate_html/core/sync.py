@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 
+from .data_paths import dynamic_log_directory
+
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_SECONDS = 300
 STABLE_SECONDS = 60
@@ -151,7 +153,7 @@ def run_worker(source: Path, runtime: Path, expected: dict) -> None:
             os.environ["ORDER_DASHBOARD_INPUT"] = str(snapshot)
             # Import business modules only after the stage-identity source is pinned.
             import main as generator
-            generator.configure_runtime(runtime.parent, False)
+            generator.configure_runtime(runtime.parent, False, dynamic=True)
             try:
                 generator.build(snapshot, runtime.parent / "鸿蒙智行订单分析汇总.html",
                                 runtime_dir=runtime, source_signature=expected)
@@ -203,7 +205,7 @@ class AutoSync:
         self.process.wait(timeout=10)
 
     def _build(self, signature):
-        log_dir = self.runtime.parent / "log"
+        log_dir = dynamic_log_directory()
         log_dir.mkdir(parents=True, exist_ok=True)
         flags = (subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS) if os.name == "nt" else 0
         with (log_dir / "auto_sync.log").open("ab") as log:

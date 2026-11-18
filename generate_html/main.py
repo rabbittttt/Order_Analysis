@@ -16,7 +16,7 @@ from typing import Any
 
 from core.components import add_kpi_comparisons
 from core.config import load_config
-from core.data_paths import orders_input_directory
+from core.data_paths import orders_input_directory, dynamic_log_directory
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
 from core.model_identity import STAGE_SOURCE_PATH
@@ -84,14 +84,14 @@ class LevelFormatter(logging.Formatter):
         return f"{color}{message}\033[0m" if color else message
 
 
-def configure_runtime(output_dir: Path, debug: bool = False) -> Path:
+def configure_runtime(output_dir: Path, debug: bool = False, *, dynamic: bool = False) -> Path:
     """Configure UTF-8 console/file logging before any workbook is opened."""
     output_dir.mkdir(parents=True, exist_ok=True)
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure:
             reconfigure(encoding="utf-8", errors="replace")
-    log_dir = output_dir / "log"
+    log_dir = output_dir / "log" if not dynamic else dynamic_log_directory(PROJECT_ROOT)
     log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = log_dir / f"generate_html_{timestamp}.log"
@@ -393,7 +393,7 @@ def parse_args() -> argparse.Namespace:
         "--output",
         type=Path,
         default=None,
-        help="静态模式为 HTML 文件；动态模式使用其所在目录保存 runtime 和日志。",
+        help="静态模式为 HTML 文件；动态模式使用其所在目录保存 runtime。",
     )
     parser.add_argument("--static", action="store_true", help="生成可离线打开的单文件 HTML，不启动后台服务。")
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
@@ -457,7 +457,7 @@ def open_dynamic_dashboard(data_dir: Path, port: int, *, input_dir: Path | None 
             return False
     if not ready():
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        log_path = data_dir.parent / "log" / "order_server.log"
+        log_path = dynamic_log_directory(PROJECT_ROOT) / "order_server.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("ab") as stream:
             command = [sys.executable, str(ROOT / "server.py"), "--data-dir", str(data_dir.resolve()), "--port", str(port), "--input", str(input_dir), "--check-seconds", str(check_seconds), "--stable-seconds", str(stable_seconds)]
@@ -480,7 +480,7 @@ def open_dynamic_dashboard(data_dir: Path, port: int, *, input_dir: Path | None 
 def main() -> int:
     args = parse_args()
     static_mode = getattr(args, "static", False)
-    log_file = configure_runtime(args.output.parent, args.debug)
+    log_file = configure_runtime(args.output.parent, args.debug, dynamic=not static_mode)
     try:
         from core.sync import BuildLock
         import core.model_identity as identity

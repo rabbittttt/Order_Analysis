@@ -28,6 +28,15 @@ def orders_input_directory(project_root: Path = PROJECT_ROOT) -> Path:
     return shared_data_root(project_root) / "订单汇总"
 
 
+def dynamic_log_directory(project_root: Path = PROJECT_ROOT) -> Path:
+    root = Path(project_root).resolve()
+    configured = os.environ.get("PLANHUB_APP_LOG_DIR")
+    if configured:
+        return (root / configured).resolve()
+    base = root / (os.environ.get("PLANHUB_DATA_ROOT") or "../工作台数据")
+    return (base / "logs" / "orderiq").resolve()
+
+
 def persistent_directory(root):
     root = Path(root).resolve()
     value = os.environ.get("PLANHUB_DATA_ROOT", "").strip()

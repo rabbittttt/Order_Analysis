@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -35,6 +36,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if (Path(__file__).with_name("release-info.json").is_file()
+            and not os.environ.get("PLANHUB_APP_LOG_DIR") and not os.environ.get("PLANHUB_DATA_ROOT")):
+        data = args.data_dir.resolve().parent
+        base = data.parent.parent if data.parent.name == "database" else data
+        os.environ["PLANHUB_APP_LOG_DIR"] = str(base / "logs" / "orderiq")
     if args.sync_worker:
         from core.sync import run_worker
         try:

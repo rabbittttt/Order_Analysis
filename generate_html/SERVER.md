@@ -17,7 +17,7 @@ python server.py --open
 
 使用共享 `Project/.venv` 时，也在该环境中执行安装命令，以 `requirements.txt` 声明的服务依赖版本为准。
 
-通过 `http://127.0.0.1:8767/` 打开页面。后台日志位于项目 `output_file/log/order_server.log`，自动处理日志为 `auto_sync.log` 及每批 `generate_html_*.log`。相同代码、输入/数据目录和同步间隔的运行服务会复用；升级代码后需先停止旧订单服务，再启动新版本。首次没有数据时页面自动等待，已有数据立即展示。
+通过 `http://127.0.0.1:8767/` 打开页面。后台日志位于 `工作台数据/logs/orderiq/order_server.log`，自动处理日志为 `auto_sync.log` 及每批 `generate_html_*.log`。相同代码、输入/数据目录和同步间隔的运行服务会复用；升级代码后需先停止旧订单服务，再启动新版本。首次没有数据时页面自动等待，已有数据立即展示。
 
 手动重建/检查（排错时使用）与直接运行：
 
