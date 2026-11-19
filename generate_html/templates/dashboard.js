@@ -67,6 +67,9 @@
   const RAW_BLOCKS = window.DASHBOARD_RAW_B64 = window.DASHBOARD_RAW_B64 || {};
   window.CHART_RENDER_MODE = DATA.config.chart_render_mode || "generated";
   const $ = selector => document.querySelector(selector);
+  $('.topbar-tools')?.addEventListener('focusin', event => {
+    event.target.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});
+  });
   const displayText = value => String(value ?? "").replaceAll("净大定", "留存大定");
   const esc = value => displayText(value).replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
   const numberFormatter = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 1});

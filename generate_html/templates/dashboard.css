@@ -3089,7 +3089,34 @@ body {
   flex-direction:column;
   overflow:hidden;
 }
-.topbar {position:relative;flex:0 0 auto}
+.topbar {
+  position:relative;
+  display:grid;
+  flex:0 0 auto;
+  box-sizing:border-box;
+  height:64px;
+  min-height:64px;
+  grid-template-columns:auto minmax(0,1fr);
+  grid-template-rows:32px 24px;
+  column-gap:16px;
+  row-gap:0;
+  padding:3px 16px 4px;
+}
+.topbar>.brand,.topbar.quick-generation-wrapped>.brand {grid-column:1;grid-row:1/-1;width:auto}
+.topbar-tools {grid-column:2;grid-row:1/-1;display:grid;grid-template-rows:32px 24px;min-width:0}
+.topbar .topbar-main {grid-column:1;grid-row:1;display:flex;flex-wrap:nowrap;width:100%;height:32px;min-width:0;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.topbar .topbar-end {display:flex;flex:1 0 auto;flex-wrap:nowrap;align-items:center;min-width:max-content;width:max-content;gap:6px;margin-left:auto}
+.topbar .filters {flex:0 0 auto;display:grid;width:max-content;min-width:max-content;max-width:none;grid-template-columns:180px 140px 180px;gap:5px}
+.topbar .filters label {position:relative}
+.topbar .filters label:first-child {grid-column:auto}
+.topbar .filters[data-mode=window] {grid-template-columns:180px 180px}
+.topbar .top-actions {grid-column:auto;grid-row:auto;flex:0 0 auto}
+.topbar .quick-generation-filter {grid-column:1;grid-row:2;width:100%;max-width:100%;height:24px;min-width:0;padding-top:0;align-items:center}
+.topbar .quick-generation-filter>span {padding-top:0}
+.topbar .quick-generation-list {flex:1 1 0;min-width:0;height:24px;flex-wrap:nowrap;align-items:center;justify-content:flex-start;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.topbar .quick-generation-button {flex:0 0 auto}
+.topbar-tools::-webkit-scrollbar,.topbar .topbar-main::-webkit-scrollbar,.topbar .quick-generation-list::-webkit-scrollbar {display:none}
+.topbar .filters :focus-visible,.topbar .quick-generation-button:focus-visible {outline-offset:-2px}
 .app-shell {
   grid-template-columns:minmax(0,1fr);
   grid-template-rows:auto minmax(0,1fr);
@@ -3101,13 +3128,19 @@ body {
 .module-bar {
   position:static;
   align-self:stretch;
-  height:auto;
-  padding:7px 16px;
+  box-sizing:border-box;
+  display:flex;
+  align-items:center;
+  height:56px;
+  min-height:56px;
+  padding:0 16px;
   border-right:0;
   border-bottom:1px solid var(--line);
   overflow:visible;
 }
-.module-bar .module-nav {flex-direction:row;flex-wrap:wrap}
+.module-bar .module-nav {flex:1;min-width:0;height:100%;box-sizing:border-box;align-items:center;flex-direction:row;flex-wrap:nowrap;padding:4px 0;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none}
+.module-bar .module-nav::-webkit-scrollbar {display:none}
+.mobile-module-picker {flex:1;min-width:0}
 .module-bar .module-nav button {
   width:auto;
   max-width:none;
@@ -3135,6 +3168,8 @@ body {
 .kpi strong {font-size:var(--font-title)}
 .kpis,.kpis.five,.sections {gap:16px}
 .sections {margin-top:18px}
+.kpis:empty {display:none}
+.kpis:empty+.sections {margin-top:0}
 .panel {padding:18px}
 .stacked-chart svg {background:none}
 .trend-annotation-actions {
@@ -3192,7 +3227,7 @@ body {
 .trend-legend i.line-key {background:var(--primary)}
 @media (min-width:981px) {
   .module-bar {padding-inline:20px}
-  .workspace {padding:18px 24px 16px}
+  .workspace {padding:16px 24px}
 }
 @media (min-width:1280px) {
   #page[data-view-key$="|overview"]>.sections {grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}
@@ -3203,7 +3238,19 @@ body {
 @media (max-width:640px) {
   body {height:auto;display:block;overflow:visible}
   .app-shell {display:block;overflow:visible}
-  .module-bar {padding:6px 10px}
+  .topbar {grid-template-columns:minmax(0,1fr);grid-template-rows:28px 32px;padding:1px 8px 2px}
+  .topbar>.brand,.topbar.quick-generation-wrapped>.brand {grid-column:1;grid-row:1;gap:8px}
+  .topbar .brand-mark {width:28px;height:28px;flex-basis:28px}
+  .topbar .brand strong {line-height:1.2}
+  .topbar-tools {grid-column:1;grid-row:2;display:flex;align-items:center;gap:10px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+  .topbar .topbar-main {flex:0 0 auto;width:max-content;overflow:visible}
+  .topbar .topbar-end {min-width:0;gap:8px}
+  .topbar .filters {grid-template-columns:160px 116px 136px}
+  .topbar .filters[data-mode=window] {grid-template-columns:160px 160px}
+  .topbar .top-actions {order:1}
+  .topbar .quick-generation-filter {flex:0 0 auto;width:max-content;max-width:none}
+  .topbar .quick-generation-list {flex:0 0 auto;overflow:visible}
+  .module-bar {padding:0 10px}
   .workspace {height:auto;overflow:visible;padding:12px 10px 20px}
   #page {height:auto;overflow:visible;scrollbar-gutter:auto}
   .raw-layout {height:auto;min-height:60vh}
