@@ -2128,7 +2128,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   flex:0 0 auto;
   padding-top:6px;
   color:rgba(255,255,255,.9);
-  font-size:var(--font-caption);
+  font-size:calc(var(--font-caption) - 1px);
   font-weight:700;
   white-space:nowrap;
 }
@@ -2149,7 +2149,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   border-radius:999px;
   background:rgba(255,255,255,.14);
   color:#fff;
-  font:600 var(--font-body) "Microsoft YaHei","微软雅黑",sans-serif;
+  font:600 calc(var(--font-body) - 1px) "Microsoft YaHei","微软雅黑",sans-serif;
   line-height:1.1;
   white-space:nowrap;
   cursor:pointer;
