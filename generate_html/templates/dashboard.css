@@ -2149,7 +2149,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   border-radius:999px;
   background:rgba(255,255,255,.14);
   color:#fff;
-  font:600 calc(var(--font-body) - 2px) "Microsoft YaHei","微软雅黑",sans-serif;
+  font:600 calc(var(--font-body) - 2px) var(--ui-font);
   line-height:1.1;
   white-space:nowrap;
   cursor:pointer;
@@ -2890,7 +2890,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .raw-empty{padding:24px;border:1px dashed #bdcede;border-radius:10px;background:#f7fafd;color:#3b5670;text-align:center}
 .raw-empty[hidden]{display:none}
 .raw-empty p{margin:6px 0 0;font-size:var(--font-body);line-height:1.6}
-.raw-toolbar #clearRawSearch{min-height:40px;padding:8px 12px;border:1px solid #c7d8e9;border-radius:8px;background:#f5f9ff;color:#14589f;font:600 var(--font-body) "Microsoft YaHei",sans-serif}
+.raw-toolbar #clearRawSearch{min-height:40px;padding:8px 12px;border:1px solid #c7d8e9;border-radius:8px;background:#f5f9ff;color:#14589f;font:600 var(--font-body) var(--ui-font)}
 .raw-toolbar #clearRawSearch:disabled{opacity:.55;cursor:not-allowed}
 .topbar .top-actions #syncStatus{font-size:var(--font-caption)}
 @media(max-width:780px){
@@ -2990,7 +2990,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 
 /* Shopeers surfaces and component states. Geometry-sensitive plots keep their sizing rules. */
 :root {
-  --ui-font:system-ui,"Segoe UI","Microsoft YaHei","微软雅黑",sans-serif;
+  --ui-font:"Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif;
   --surface-muted:#f7f8fa;
   --positive:#14764a;
   --positive-soft:#eaf7ef;
