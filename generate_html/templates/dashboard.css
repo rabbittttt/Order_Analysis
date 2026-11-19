@@ -3006,7 +3006,7 @@ button,select,input {font-family:inherit}
 }
 .topbar {
   background:var(--card);
-  border-bottom:1px solid var(--line);
+  border-bottom:0;
   box-shadow:none;
 }
 .topbar .brand {color:var(--ink)}
