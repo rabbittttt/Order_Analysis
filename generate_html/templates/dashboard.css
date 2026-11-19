@@ -3026,6 +3026,7 @@ button,select,input {font-family:inherit}
   border-radius:999px;
   background:var(--surface-muted);
 }
+.topbar .quick-generation-button {color:var(--muted)}
 .topbar .segments button {color:var(--muted);border-radius:999px}
 .topbar .segments button:disabled {color:var(--muted)}
 .topbar .segments button.active,.topbar .quick-generation-button.active {
