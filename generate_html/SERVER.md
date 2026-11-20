@@ -59,7 +59,7 @@ HTTP 仅公开页面、资源和业务接口，不挂载整个数据目录。看
 
 批注的集团范围作用到所有品牌和车型，品牌范围作用到自身及所属车型；车型范围仅作用到自身。数据库保存修改时间、版本和连接来源，同一条批注并发修改返回冲突，避免后保存者覆盖前一次修改。显示/隐藏偏好仍属于本地浏览器。服务不提供实名登录，来源记录不等于个人身份；部门访问控制由部署入口提供，不能直接信任浏览器自报的用户头。
 
-接口均在应用前缀内：`api/catalog`、`api/dashboard`、`api/raw`、`api/export/csv`、`api/workbook`、`api/annotations`、`api/sync`。健康检查为 `health`，含 `application=order-dashboard` 和数据批次。允许同源 iframe，页面与接口支持 HEAD。
+接口均在应用前缀内：`api/catalog`、`api/dashboard`、`api/raw`、`api/export/csv`、`api/workbook`、`api/annotations`、`api/sync`。健康检查为 `health`，含 `application=order-dashboard` 和数据批次。允许 iframe 嵌入，页面与接口支持 HEAD。
 
 ## 门户与正式发布
 

@@ -213,8 +213,6 @@ def create_app(
     async def response_headers(request: Request, call_next):
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'")
         response.headers.setdefault("Cache-Control", "no-store")
         return response
 
