@@ -3022,9 +3022,9 @@ button,select,input {font-family:inherit}
 .topbar .filters span,.topbar .quick-generation-filter>span {color:var(--muted)}
 .topbar .top-actions #syncStatus {
   color:var(--muted);
-  border:1px solid var(--line);
-  border-radius:999px;
-  background:var(--surface-muted);
+  border:0;
+  border-radius:0;
+  background:none;
 }
 .topbar .quick-generation-button {color:var(--muted)}
 .topbar .segments button {color:var(--muted);border-radius:999px}
