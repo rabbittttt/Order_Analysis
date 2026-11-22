@@ -57,6 +57,16 @@ class StaticEntryTests(TestCase):
                     else:
                         browser.assert_called_once_with(output.resolve().as_uri())
 
+    def test_static_template_preserves_placeholder_text_inside_board_keys(self):
+        import json
+        key = "group|__BRAND_LOGO__"
+        with TemporaryDirectory() as folder:
+            output = Path(folder) / "offline.html"
+            generator.render_static_dashboard({"dashboards": {key: {}}}, generator.ROOT / "templates", output)
+            html = output.read_text(encoding="utf-8")
+            assignment = html.split("window.DASHBOARD_BLOCKS_B64=", 1)[1].split(";</script>", 1)[0]
+            self.assertEqual(list(json.loads(assignment)), [key])
+
     def test_real_static_build_embeds_data_without_changing_dynamic_runtime(self):
         with TemporaryDirectory() as folder:
             root = Path(folder)

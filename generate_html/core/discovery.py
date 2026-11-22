@@ -40,7 +40,7 @@ def is_valid_subject_name(name: str) -> bool:
 
 def discover_subjects(store: WorkbookStore) -> list[Subject]:
     names: dict[str, str] = {"鸿蒙智行": "鸿蒙智行"}
-    records = generation_records()
+    records = generation_records(store.input_dir)
     for _, sheet_name in store.all_sheet_names():
         subject = parent_generation(sheet_subject(sheet_name), records)
         if subject and "图表" not in subject and subject not in {"Sheet1", "汇总"} and is_valid_subject_name(subject):

@@ -105,6 +105,23 @@ const api=new Function('RAW_BLOCKS','document','URL','showToast','state','rawRow
         self.assertIn('匹配,0', result['csv'])
         self.assertNotIn('不显示', result['csv'])
 
+    def test_static_and_dynamic_csv_protect_formula_text_and_keep_signed_numbers(self):
+        import csv
+        import io
+        from core.server import csv_chunks
+
+        rows = [["=标题", "数量"], ["+项目", "-1,234.50"], ["\t=文字", "-2.5%"],
+                ["@名称", -3], ["-文字", "+1.2e3"], ['引号,"换行\n', ""]]
+        expected = [["'=标题", "数量"], ["'+项目", "-1,234.50"], ["'\t=文字", "-2.5%"],
+                    ["'@名称", "-3"], ["'-文字", "+1.2e3"], ['引号,"换行\n', ""]]
+        source = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
+        block = source[source.index("  function csvCell("):source.index("  async function jumpToSource")]
+        script = block + 'process.stdout.write(JSON.parse(process.argv[1]).map(r=>r.map(csvCell).join(",")).join("\\r\\n"));'
+        static = subprocess.run(["node", "-e", script, json.dumps(rows)], capture_output=True, check=True)
+        dynamic = b"".join(csv_chunks(rows, ""))
+        for data in (static.stdout, dynamic):
+            self.assertEqual(list(csv.reader(io.StringIO(data.decode("utf-8-sig"), newline=""))), expected)
+
     def test_invalid_snapshot_restores_button_and_explains_failure(self):
         result = self.run_download(invalid=True)
         self.assertFalse(result['same'])

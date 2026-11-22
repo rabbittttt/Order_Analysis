@@ -5,6 +5,7 @@ import gzip
 import json
 import logging
 import math
+import re
 from time import perf_counter
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -114,13 +115,16 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
     main_payload = b64gzip(json.dumps(main_manifest, ensure_ascii=False, separators=(",", ":")))
     raw_payload = json.dumps(raw_blocks, ensure_ascii=False, separators=(",", ":"))
     board_payload = json.dumps(dashboard_blocks, separators=(",", ":"))
-    html = html.replace("__DASHBOARD_CSS__", css)
-    html = html.replace("__DASHBOARD_DATA__", main_payload)
-    html = html.replace("__DASHBOARD_RAW__", raw_payload)
-    html = html.replace("__DASHBOARD_BLOCKS__", board_payload)
-    html = html.replace("__TREND_ANNOTATIONS_JS__", trend_annotations)
-    html = html.replace("__DASHBOARD_JS__", javascript)
-    html = html.replace("__BRAND_LOGO__", f"data:image/png;base64,{logo_data}")
+    slots = {
+        "__DASHBOARD_CSS__": css,
+        "__DASHBOARD_DATA__": main_payload,
+        "__DASHBOARD_RAW__": raw_payload.replace("<", r"\u003c"),
+        "__DASHBOARD_BLOCKS__": board_payload.replace("<", r"\u003c"),
+        "__TREND_ANNOTATIONS_JS__": trend_annotations,
+        "__DASHBOARD_JS__": javascript,
+        "__BRAND_LOGO__": f"data:image/png;base64,{logo_data}",
+    }
+    html = re.sub("|".join(slots), lambda match: slots[match[0]], html)
     # Write on the same volume, and close before replacing (Windows). A disk
     # write/replace failure must not truncate the previous usable dashboard.
     _write_text_atomic(output_file, html)

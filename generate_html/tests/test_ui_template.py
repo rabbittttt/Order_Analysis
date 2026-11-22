@@ -35,7 +35,7 @@ assert.strictEqual(fmt(null),'');
             self.skipTest("Node unavailable")
         script = (ROOT / "templates/dashboard.js").read_text(encoding="utf-8")
         runtime = script[script.index("  const displayText ="):script.index("  const RHYTHM_LAYOUT=")]
-        runtime += script[script.index("  function renderSkuHeatmap("):script.index("  function renderComboHeatmap(")]
+        runtime += script[script.index("  function renderSkuHeatmap("):script.index("  function renderComboMatrix(")]
         runtime += script[script.index("  function renderComboMatrix("):script.index("  function renderColumns(")]
         runtime += script[script.index("  function renderColumns("):script.index("  function renderCancelCards(")]
         checks = r'''

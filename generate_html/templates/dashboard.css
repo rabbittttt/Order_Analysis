@@ -566,21 +566,6 @@ button {
   font-weight:700;
 }
 
-.combo-grid {
-  display:grid;
-  grid-template-columns:repeat(3,1fr);
-  gap:7px;
-}
-
-.combo-cell {
-  padding:11px;
-  background:var(--cyan-soft);
-  border:1px solid #d7eee8;
-  border-radius:9px;
-  color:#3e8e7b;
-  font-size:var(--font-table);
-}
-
 .trend {
   height:244px;
   display:flex;

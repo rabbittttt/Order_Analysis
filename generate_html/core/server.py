@@ -140,14 +140,25 @@ def safe_filename(value: str) -> str:
     return re.sub(r'[\\/:*?"<>|\x00-\x1f]', "_", value).strip(". ") or "download"
 
 
+def csv_cell(value: Any) -> str:
+    text = cell_text(value)
+    if isinstance(value, str):
+        trimmed = text.replace("\ufeff", " ").strip()
+        if trimmed.startswith(("=", "+", "-", "@")) and not re.fullmatch(
+            r"[+-](?:(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?%?", trimmed
+        ):
+            return "'" + text
+    return text
+
+
 def csv_chunks(rows: list[list[Any]], query: str) -> Iterator[bytes]:
     yield b"\xef\xbb\xbf"
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\r\n")
     if rows:
-        writer.writerow([cell_text(value) for value in rows[0]])
+        writer.writerow([csv_cell(value) for value in rows[0]])
     for index, row in enumerate(matching_rows(rows, query), start=1):
-        writer.writerow([cell_text(value) for value in row])
+        writer.writerow([csv_cell(value) for value in row])
         if index % 200 == 0:
             yield buffer.getvalue().encode("utf-8")
             buffer.seek(0)

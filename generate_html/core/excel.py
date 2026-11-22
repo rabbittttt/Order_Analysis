@@ -1552,7 +1552,9 @@ class WorkbookStore:
                 sheet_name = sheet_subject(sheet.title)
                 if any(marker in keyword for marker in ("首销期订单节奏", "小订退订")):
                     from core.model_identity import generation_records, parent_generation
-                    sheet_name = parent_generation(sheet_name, generation_records()) if parent_generation(subject, generation_records()) == subject else sheet_name
+                    records = generation_records(self.input_dir)
+                    if parent_generation(subject, records) == subject:
+                        sheet_name = parent_generation(sheet_name, records)
                 if compact_text(sheet_name) != compact_text(subject):
                     continue
                 if grain and grain_from_sheet(sheet.title) != grain:

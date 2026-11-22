@@ -55,7 +55,7 @@ class GenerationCampaignTests(TestCase):
             return Dashboard('cancellation', 'm7', {'day': {'pages': {'日期':page}}}, [source])
         with patch('modules.cancellation.generation_records', return_value=rs), \
              patch.object(CancellationModule, '_build_campaign', side_effect=[board(100,90),board(300,150)]):
-            result = CancellationModule().build(None, Subject('m7', PARENT, 'generation'))
+            result = CancellationModule().build(WorkbookStore(Path('.')), Subject('m7', PARENT, 'generation'))
         view = result.views['day']
         self.assertEqual(len(view['pages']), 3)
         self.assertIn('全部阶段', view['periods'])
@@ -65,7 +65,7 @@ class GenerationCampaignTests(TestCase):
         self.assertEqual(len(result.sources), 1)
         with patch('modules.cancellation.generation_records', return_value=rs[:1]), \
              patch.object(CancellationModule, '_build_campaign', return_value=board(100,90)):
-            single = CancellationModule().build(None, Subject('m7', PARENT, 'generation'))
+            single = CancellationModule().build(WorkbookStore(Path('.')), Subject('m7', PARENT, 'generation'))
         self.assertNotIn('全部阶段', single.views['day']['periods'])
 
 
@@ -113,6 +113,12 @@ class GenerationCampaignTests(TestCase):
         book.save(source); book.close()
         return source
 
+
+    def test_stage_identity_uses_the_selected_workbook_directory(self):
+        with TemporaryDirectory() as first, TemporaryDirectory() as second:
+            self.make_source(Path(first))
+            self.assertEqual([stage_name(row) for row in generation_records(Path(first))], [ULTRA, PRO])
+            self.assertEqual(generation_records(Path(second)), [])
 
     def test_primary_selector_and_exact_secondary_sheet_pairing(self):
         book = Workbook(); book.remove(book.active)

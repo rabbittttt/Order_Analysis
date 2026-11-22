@@ -210,7 +210,7 @@ class CancellationModule:
     label = "小订节奏"
 
     def build(self, store: WorkbookStore, subject: Subject) -> Dashboard | None:
-        campaigns = [r for r in generation_records() if model_key(r["代际名"]) == model_key(subject.name) and r.get("二级代际名")]
+        campaigns = [r for r in generation_records(store.input_dir) if model_key(r["代际名"]) == model_key(subject.name) and r.get("二级代际名")]
         if not campaigns:
             return self._build_campaign(store, subject)
         pages, sources = {}, []
@@ -291,7 +291,7 @@ class CancellationModule:
             periods = list(parsed)
         if window:
             start, end = str(window.get("小订开始日期") or "").split(" ")[0], str(window.get("小订结束日期") or "").split(" ")[0]
-            peers = [r for r in generation_records() if model_key(r["代际名"]) == model_key(parent)]
+            peers = [r for r in generation_records(store.input_dir) if model_key(r["代际名"]) == model_key(parent)]
             periods = [p for p in periods if start <= _campaign_day(p) <= end
                        and sum(str(r.get("小订开始日期") or "").split(" ")[0] <= _campaign_day(p) <= str(r.get("小订结束日期") or "").split(" ")[0] for r in peers) == 1]
         if not periods:

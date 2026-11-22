@@ -19,7 +19,7 @@ from core.config import load_config
 from core.data_paths import orders_input_directory, dynamic_log_directory
 from core.discovery import discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
-from core.model_identity import STAGE_SOURCE_PATH
+from core.model_identity import STAGE_SOURCE_NAME
 from core.renderer import b64gzip, render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
@@ -121,14 +121,6 @@ def configure_runtime(output_dir: Path, debug: bool = False, *, dynamic: bool = 
     LOGGER.disabled = False
     LOGGER.propagate = True
     return log_file
-
-
-def serializable(value: Any) -> Any:
-    if isinstance(value, (datetime, date)):
-        return value.isoformat()
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
 
 
 def split_parallel_blocks(name: str, rows: list[list]) -> list[dict[str, Any]]:
@@ -237,7 +229,7 @@ def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None
     store = WorkbookStore(input_dir, cache_dir=output_file.parent / ".cache" / "excel")
     stage_started = perf_counter()
     # These workbooks describe stage identities or a separate report, not order sheets.
-    excluded_names = {"鸿蒙智行销量数据汇总.xlsx", STAGE_SOURCE_PATH.name}
+    excluded_names = {"鸿蒙智行销量数据汇总.xlsx", STAGE_SOURCE_NAME}
     store.load(exclude_names=excluded_names, data_only_view=config.get("chart_render_mode") == "generated")
     load_seconds = perf_counter() - stage_started
     if store.load_errors:
@@ -483,8 +475,6 @@ def main() -> int:
     log_file = configure_runtime(args.output.parent, args.debug, dynamic=not static_mode)
     try:
         from core.sync import BuildLock
-        import core.model_identity as identity
-        identity.STAGE_SOURCE_PATH = args.input / "小订及首销数据整理.xlsx"
         with BuildLock(args.output.parent / "runtime"):
             try:
                 if static_mode:

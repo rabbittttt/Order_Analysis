@@ -1,9 +1,10 @@
-// Run after main.py: node tests/sku_raw_export_browser.cjs [dashboard.html]
+// Run after main.py: node tests/sku_raw_export_browser.cjs [dashboard.html] [input-directory]
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {pathToFileURL}=require('node:url'),{createHash}=require('node:crypto');
 const root=path.resolve(__dirname,'..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.resolve(root,'../../.test_runtime/node_modules/playwright'));
 const html=process.argv[2]||path.resolve(root,'../../output_file/鸿蒙智行订单分析汇总.html');
+const inputDir=process.argv[3]||path.dirname(html);
 const source=fs.readFileSync(path.join(root,'templates/dashboard.js'),'utf8');
 const css=fs.readFileSync(path.join(root,'templates/dashboard.css'),'utf8');
 const runtime=source.slice(source.indexOf('  const displayText ='),source.indexOf('  const colors ='))+
@@ -105,7 +106,7 @@ async function atRight(locator){const s=await scrollState(locator);assert(s.max>
    await page.waitForSelector('#rawEmpty:not([hidden])');
    const pending=page.waitForEvent('download');await page.locator('#exportRawWorkbook').click();const download=await pending;
    assert.equal(download.suggestedFilename(),files[index].name);
-   const actual=fs.readFileSync(await download.path()),original=fs.readFileSync(path.join(path.dirname(html),files[index].name));
+   const actual=fs.readFileSync(await download.path()),original=fs.readFileSync(path.join(inputDir,files[index].name));
    const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
    assert.equal(hash(actual),hash(original));
    const csvPending=page.waitForEvent('download');await page.locator('#exportRaw').click();const csv=fs.readFileSync(await (await csvPending).path(),'utf8');

@@ -685,7 +685,7 @@
   }
   function renderSection(item,index,appendix=''){
     const pieBars=item.kind==='bars'&&item.title==='门店渠道订单量';
-    const renderer=pieBars?renderPieChart:({channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_heatmap:renderComboHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
+    const renderer=pieBars?renderPieChart:({channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
     const annotationControls=item.kind==="stacked_trend" && item.data?.periods?.length;
     const chartId="trendChart"+index;
     const actions=annotationControls ? `<div class="trend-annotation-actions">
@@ -978,10 +978,6 @@
     const periods=data?.periods||[],rows=data?.rows||[],columns=Math.max(periods.length,1);
     return `<div class="sku-heatmap-scroll" data-sku-scroll tabindex="0" role="region" aria-label="SKU累计锁单占比历史表，首列固定，可左右拖动或使用左右方向键查看全部周期"><div class="heatmap sku-heatmap"><div class="heatmap-row" style="--cols:${columns}"><div class="heat-head">累计锁单</div>${periods.map(p=>`<div class="heat-head" data-sku-period="${esc(p)}">${esc(p)}</div>`).join("")}</div>${rows.map(row=>`<div class="heatmap-row" style="--cols:${columns}"><div class="heat-label">${esc(row.label)}</div>${periods.map((_,index)=>{const raw=row.values[index];if(raw==null||!Number.isFinite(Number(raw)))return '<div title="该周期未提供累计锁单占比">—</div>';const value=Number(raw);return `<div style="background:rgba(0,181,120,${.12+value*.72})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div></div>`;
   }
-  function renderComboHeatmap(data){
-    const periods=data?.periods||[],rows=data?.rows||[],index=Math.max(periods.length-1,0);
-    return `<div class="combo-grid">${rows.map(row=>`<div class="combo-cell"><b>${esc(row.rank)}</b><br>${row.labels.map(esc).join(" × ")}<br><strong>${esc(periods[index]||"总计")} ${(Number(row.values[index]??row.total)*100).toFixed(1)}%</strong></div>`).join("")}</div>`;
-  }
   function renderComboMatrix(data){
     const groups=data?.groups||[];
     if(!groups.length)return '<div class="empty-image">组合Sheet暂无可绘制数据</div>';
@@ -1219,7 +1215,12 @@
     try{link.href=url;link.download=name;document.body.appendChild(link);link.click()}
     finally{link.remove();setTimeout(()=>URL.revokeObjectURL(url),500)}
   }
-  function csvCell(value){const text=String(value??"");return /[",\r\n]/.test(text)?`"${text.replace(/"/g,'""')}"`:text}
+  function csvCell(value){
+    let text=String(value??"");
+    const trimmed=text.trim();
+    if(typeof value==="string" && /^[=+@-]/.test(trimmed) && !/^[+-](?:(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?%?$/.test(trimmed)) text="'"+text;
+    return /[",\r\n]/.test(text)?`"${text.replace(/"/g,'""')}"`:text;
+  }
   async function jumpToSource(source){
     if(!source){showToast("当前看板没有独立来源");return}
     const fileIndex=DATA.raw_files.findIndex(item=>item.name===source.file);if(fileIndex<0){showToast("未找到对应底表文件");return}
