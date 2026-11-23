@@ -1300,7 +1300,9 @@
     const node=$('#syncStatus');if(!node)return;
     const generatedAt=DATA.meta?.generated_at;
     const time=generatedAt?`生成时间 ${String(generatedAt).replace('T',' ')}`:'';
-    node.textContent=[time,message].filter(Boolean).join(' · ');node.hidden=!node.textContent;
+    const labels=[[time,'sync-time'],[message?(time?' · ':'')+message:'','sync-message']].filter(([text])=>text);
+    node.replaceChildren(...labels.map(([text,className])=>{const label=document.createElement('span');label.className=className;label.textContent=text;return label;}));
+    node.hidden=!labels.length;
   }
   async function synchronizeDataset(){
     if(!DYNAMIC||syncBusy||document.hidden)return;
