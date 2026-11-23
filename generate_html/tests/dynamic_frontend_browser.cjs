@@ -7,7 +7,7 @@ const generatedTimes={'fixture-v1':'2026-11-10T10:00:00','fixture-v2':'2026-11-1
 const generationLabel=version=>'生成时间 '+generatedTimes[version].replace('T',' ');
 const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','raw'],module_labels:{overview:'订单总览',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
 const header=['序号','格式值'],allRows=Array.from({length:450},(_,i)=>[i+1,`${i%2?'odd':'even'} 12.30%`]),xlsx=Buffer.from('fixture-original-xlsx');
-let currentVersion='fixture-v1',failNewBoard=false;
+let currentVersion='fixture-v1',failNewBoard=false,syncPhase='idle';
 let notes=[{id:'group',subject:'g',date:'2026-11-10',text:'集团事件',version:1},{id:'brand',subject:'b',date:'2026-11-10',text:'问界事件',version:1}],failSubject='other',requests=[],nextId=1;
 const view={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[{label:'合计',value:123,unit:'辆'}],sections:[{title:'留存大定趋势',kind:'stacked_trend',data:{periods:['26WK46'],totals:[123],series:[{name:'增程',values:[1]}]},source:{file:'fixture.xlsx',sheet:'数据'}}]}}};
 let shell=fs.readFileSync(path.join(root,'templates/dashboard.html'),'utf8').replace('<script>window.DASHBOARD_DATA_B64="__DASHBOARD_DATA__";</script>','<script>window.ORDER_DASHBOARD_API_BASE="api/";</script>').replace('__DASHBOARD_RAW__','{}').replace('__DASHBOARD_BLOCKS__','{}').replace('__DASHBOARD_CSS__',()=>fs.readFileSync(path.join(root,'templates/dashboard.css'),'utf8')).replace('__DASHBOARD_JS__',()=>fs.readFileSync(path.join(root,'templates/dashboard.js'),'utf8')).replace('__TREND_ANNOTATIONS_JS__',()=>fs.readFileSync(path.join(root,'templates/trend_annotations.js'),'utf8')).replace('__BRAND_LOGO__','data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
@@ -17,7 +17,7 @@ const server=http.createServer(async(req,res)=>{
  if(!p.startsWith('/orderiq/api/')){res.setHeader('Content-Type','text/html;charset=utf-8');return res.end(shell)}
  const route=p.slice('/orderiq/api/'.length);
  if(route==='catalog')return send({...catalog,dataset_id:currentVersion,meta:{...catalog.meta,generated_at:generatedTimes[currentVersion]}});
- if(route==='sync')return send({dataset_id:currentVersion,phase:'idle',error:null});
+ if(route==='sync')return send({dataset_id:currentVersion,phase:syncPhase,error:null});
  if(!['fixture-v1','fixture-v2','fixture-v3','fixture-v4'].includes(url.searchParams.get('dataset')))return send({detail:'missing dataset'},400);
  if(route==='dashboard'){
    if(failNewBoard&&url.searchParams.get('dataset')!=='fixture-v1')return send({detail:'new batch unavailable'},503);
@@ -49,6 +49,22 @@ const server=http.createServer(async(req,res)=>{
   await page.goto(base+'?subject=m');await page.waitForSelector('.kpi');
   check('桌面顶部显示当前批次生成时间',await page.locator('#syncStatus').isVisible()&&await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
   check('首屏仅请求当前看板，未请求底表或Excel',requests.filter(r=>r.path.endsWith('/dashboard')).length===1&&!requests.some(r=>/\/(raw|workbook)$/.test(r.path)));
+  const actionsMatchSource=()=>page.locator('.trend-annotation-actions>button').evaluateAll(buttons=>{
+    if(buttons.length!==3||buttons.some(button=>!button.classList.contains('panel-source')))return false;
+    const styles=buttons.map(button=>{
+      const css=getComputedStyle(button);
+      return JSON.stringify([css.color,css.backgroundColor,css.border,css.borderRadius,css.fontSize,css.fontWeight,css.minHeight,css.padding]);
+    });
+    return new Set(styles).size===1;
+  });
+  check('批注按钮与来源数据使用相同样式',await actionsMatchSource());
+  for(const phase of ['building','waiting','idle']){
+    syncPhase=phase;
+    const expected=generationLabel('fixture-v1')+(phase==='building'?' · 后台数据刷新中':'');
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(text=>document.querySelector('#syncStatus').textContent===text,expected);
+    check('顶部按后台状态显示并恢复 '+phase,await page.locator('#syncStatus').isVisible());
+  }
   await page.waitForSelector('.trend-annotation');
   await page.locator('[data-trend-annotation-toggle]').click();assert.equal(await page.locator('.trend-annotation').count(),0);
   await page.locator('[data-trend-annotation-toggle]').click();await page.waitForSelector('.trend-annotation');
@@ -80,6 +96,15 @@ const server=http.createServer(async(req,res)=>{
   await page.setViewportSize({width:390,height:844});check('手机无页面横向溢出',await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   check('API请求都携带同一批次',requests.filter(r=>r.path.includes('/api/')&&!r.path.endsWith('/catalog')).every(r=>r.query.dataset==='fixture-v1'));
   check('手机顶部显示当前批次生成时间',await page.locator('#syncStatus').isVisible()&&await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
+  for(const phase of ['building','idle']){
+    syncPhase=phase;
+    const expected=generationLabel('fixture-v1')+(phase==='building'?' · 后台数据刷新中':'');
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(text=>document.querySelector('#syncStatus').textContent===text,expected);
+    check('手机生成时间旁按后台状态显示 '+phase,await page.locator('#syncStatus').isVisible());
+  }
+  await page.locator('#moduleSelect').selectOption('overview');await page.waitForSelector('.kpi');
+  check('手机批注按钮与来源数据使用相同样式',await actionsMatchSource());
   await page.setViewportSize({width:1440,height:1000});
   await page.evaluate(()=>{window.__syncSentinel=42;document.activeElement?.blur()});
   await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');

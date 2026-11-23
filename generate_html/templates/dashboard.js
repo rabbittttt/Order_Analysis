@@ -751,8 +751,8 @@
     const chartId="trendChart"+index;
     const source=renderPanelSource(item,index);
     const actions=annotationControls ? `<div class="trend-annotation-actions">
-      <button type="button" class="trend-annotation-button" data-trend-annotation-toggle aria-controls="${chartId}" aria-expanded="${trendAnnotationState.visible}">${trendAnnotationState.visible ? "隐藏批注" : "显示批注"}</button>
-      <button type="button" class="trend-annotation-button" data-trend-annotation-manage>管理批注</button>
+      <button type="button" class="panel-source" data-trend-annotation-toggle aria-controls="${chartId}" aria-expanded="${trendAnnotationState.visible}">${trendAnnotationState.visible ? "隐藏批注" : "显示批注"}</button>
+      <button type="button" class="panel-source" data-trend-annotation-manage>管理批注</button>
       ${source}
     </div>` : source;
     const content=renderer(item.data);
@@ -1307,7 +1307,8 @@
     syncBusy=true;
     try{
       const status=await apiJson('sync');
-      setSyncStatus(status.error?'更新失败，当前显示上次数据':'');
+      const message=status.phase==='building'?'后台数据刷新中':status.error?'更新失败，当前显示上次数据':'';
+      setSyncStatus(message);
       if(!status.dataset_id||status.dataset_id===DATA.dataset_id||syncBlocked())return;
       const original=DATA,previousState=JSON.stringify(state),interaction=interactionRevision;
       const catalog=await apiJson('catalog');
@@ -1338,7 +1339,7 @@
       clearTimeout(rawSearchTimer);rawRowsCache=[];rawRowsKey=null;
       for(const key of Object.keys(boardCache))delete boardCache[key];
       DATA=catalog;window.DASHBOARD_DATA=DATA;moduleLabels=DATA.config.module_labels;
-      setSyncStatus(status.error?'更新失败，当前显示上次数据':'');
+      setSyncStatus(message);
       window.CHART_RENDER_MODE=DATA.config.chart_render_mode||'generated';
       Object.assign(state,nextState);pendingRawPage=raw||null;
       if(board)boardCache[`${DATA.dataset_id}|${state.subject}|${state.module}`]=Promise.resolve(board);
