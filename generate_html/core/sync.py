@@ -18,7 +18,6 @@ from .data_paths import dynamic_log_directory
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_SECONDS = 300
 STABLE_SECONDS = 60
-BATCH_WAIT_SECONDS = 3600
 EXCLUDED = {"鸿蒙智行销量数据汇总.xlsx"}
 BATCH_WORKBOOKS = (
     "小订及首销数据整理.xlsx",
@@ -81,7 +80,7 @@ def calculation_revision(root: Path = ROOT) -> str:
     return digest.hexdigest()
 
 
-def source_signature(source: Path, *, check_ready: bool = True) -> dict:
+def source_signature(source: Path) -> dict:
     if not source.is_dir():
         raise FileNotFoundError("订单 Excel 输入目录不存在")
     entries = []
@@ -92,14 +91,7 @@ def source_signature(source: Path, *, check_ready: bool = True) -> dict:
             raise ValueError("Excel 输入必须是普通文件")
         stat = path.stat()
         entries.append([path.name, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns])
-    marker = source / "orders.ready"
-    marker_info = None
-    if marker.exists():
-        stat = marker.stat()
-        marker_info = [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
-        if check_ready and entries and stat.st_mtime_ns < max(row[2] for row in entries):
-            raise ValueError("等待本轮 Excel 更新完成标记 orders.ready")
-    return {"directory": str(source.resolve()), "files": entries, "ready": marker_info,
+    return {"directory": str(source.resolve()), "files": entries,
             "calculation_revision": calculation_revision()}
 
 
@@ -115,65 +107,27 @@ def published_signature(runtime: Path) -> dict | None:
         return None
 
 
+def refresh_key(signature):
+    if signature is None:
+        return None
+    # Compare mtimes by filename, including catalogs published by older services.
+    files = sorted((row[0], row[2]) for row in signature["files"] if row[0] in BATCH_WORKBOOKS)
+    return signature["directory"], files, signature.get("calculation_revision")
+
+
 class RefreshSchedule:
-    def __init__(self, check_seconds=CHECK_SECONDS, stable_seconds=STABLE_SECONDS, runtime=None):
+    def __init__(self, check_seconds=CHECK_SECONDS, stable_seconds=STABLE_SECONDS):
         if check_seconds <= 0 or stable_seconds <= 0:
             raise ValueError("检查和稳定等待时间必须大于零")
         self.check_seconds = check_seconds
         self.stable_seconds = stable_seconds
         self.pending = None
         self.since = 0.0
-        self.waiting_for = []
-        self.window_file = runtime / "batch-wait.json" if runtime is not None else None
-        self.window = {}
-        if self.window_file is not None and self.window_file.is_file():
-            self.window = json.loads(self.window_file.read_text(encoding="utf-8"))
 
-    def _save_window(self, window):
-        if self.window == window:
-            return
-        if self.window_file is not None:
-            from core.renderer import _write_text_atomic
-            _write_text_atomic(self.window_file, json.dumps(window))
-        self.window = window
-
-    def batch_delay(self, signature, published, wall_now):
-        previous = published or {}
-        if previous.get("directory") != signature["directory"]:
-            previous = {}
-        current = {row[0]: row[1:] for row in signature["files"]}
-        baseline = {row[0]: row[1:] for row in previous.get("files", [])}
-        changed = {name for name in BATCH_WORKBOOKS if name in current and current[name] != baseline.get(name)}
-        self.waiting_for = [name for name in BATCH_WORKBOOKS if name not in changed]
-        if not changed:
-            self._save_window({})
-            if current.keys() >= set(BATCH_WORKBOOKS):
-                self.waiting_for = []
-            return self.check_seconds
-
-        # Bind the persisted first observation to its input directory and last
-        # publication. Later edits, retries and service restarts share this deadline.
-        batch = [signature["directory"], previous]
-        key = hashlib.sha256(json.dumps(batch, sort_keys=True).encode()).hexdigest()
-        if self.window.get("key") != key:
-            self._save_window({"key": key, "started": wall_now})
-        remaining = self.window["started"] + BATCH_WAIT_SECONDS - wall_now
-        if self.waiting_for and remaining > 0:
-            return min(self.check_seconds, remaining)
-        if not any(name in current for name in BATCH_WORKBOOKS if name != "小订及首销数据整理.xlsx"):
-            return self.check_seconds
-        marker = signature.get("ready")
-        if marker is not None and (marker == previous.get("ready") or
-                                   marker[1] < max(row[2] for row in signature["files"])):
-            self.waiting_for = ["orders.ready"]
-            return self.check_seconds
-        return 0
-
-    def observe(self, signature, published, now, *, wall_now=None):
-        delay = self.batch_delay(signature, published, now if wall_now is None else wall_now)
-        if delay:
+    def observe(self, signature, published, now):
+        if refresh_key(signature) == refresh_key(published):
             self.pending = None
-            return False, delay
+            return False, self.check_seconds
         if signature != self.pending:
             self.pending, self.since = signature, now
             return False, self.stable_seconds
@@ -197,10 +151,8 @@ def run_worker(source: Path, runtime: Path, expected: dict) -> None:
     with BuildLock(runtime):
         # A manual publication can advance the baseline after the scheduler checks it.
         published = published_signature(runtime)
-        if published == expected:
+        if refresh_key(published) == refresh_key(expected):
             return
-        if RefreshSchedule(runtime=runtime).batch_delay(expected, published, time.time()):
-            raise RuntimeError("本批输入未全部更新，保留当前已发布数据")
         with tempfile.TemporaryDirectory(prefix=".order-input-", dir=runtime.parent) as folder:
             snapshot = Path(folder)
             copy_stable_inputs(source, snapshot, expected)
@@ -218,7 +170,7 @@ def run_worker(source: Path, runtime: Path, expected: dict) -> None:
 class AutoSync:
     def __init__(self, source: Path, runtime: Path, check_seconds=CHECK_SECONDS, stable_seconds=STABLE_SECONDS):
         self.source, self.runtime = source.resolve(), runtime.resolve()
-        self.schedule = RefreshSchedule(check_seconds, stable_seconds, self.runtime)
+        self.schedule = RefreshSchedule(check_seconds, stable_seconds)
         self.stop_event = threading.Event()
         self.thread = None
         self.process = None
@@ -229,7 +181,6 @@ class AutoSync:
 
     def status(self):
         return {"phase": self.phase, "error": self.error, "checked_at": self.checked_at,
-                "waiting_for": self.schedule.waiting_for,
                 "check_seconds": self.schedule.check_seconds, "stable_seconds": self.schedule.stable_seconds}
 
     def start(self):
@@ -279,7 +230,7 @@ class AutoSync:
             self.process = None
             if not result:
                 raise RuntimeError("更新失败，当前显示上次数据")
-            if published_signature(self.runtime) != signature:
+            if refresh_key(published_signature(self.runtime)) != refresh_key(signature):
                 raise RuntimeError("更新未发布，当前显示上次数据")
             return True
 
@@ -287,11 +238,11 @@ class AutoSync:
         delay = 0
         while not self.stop_event.wait(delay):
             try:
-                signature = source_signature(self.source, check_ready=False)
+                signature = source_signature(self.source)
                 self.checked_at = time.time()
-                build, delay = self.schedule.observe(signature, published_signature(self.runtime), time.monotonic(), wall_now=time.time())
+                build, delay = self.schedule.observe(signature, published_signature(self.runtime), time.monotonic())
                 if not build:
-                    self.phase = "waiting" if self.schedule.pending or self.schedule.waiting_for else "idle"
+                    self.phase = "waiting" if self.schedule.pending else "idle"
                     if not self.schedule.pending:
                         self.error = None
                     continue

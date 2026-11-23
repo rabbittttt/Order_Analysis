@@ -8,6 +8,7 @@ from datetime import date
 from core.components import kpi, section
 from core.discovery import BRAND_ORDER
 from core.excel import GRAIN_LABELS, WorkbookStore, _source_date_range, compact_text, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_parent, subject_type
+from core.model_identity import aggregate_members
 from core.models import Dashboard, SourceRef, Subject
 
 
@@ -188,6 +189,36 @@ def _chart_totals(chart_data: dict | None) -> dict[str, float]:
         for period, total in zip(chart_data.get("periods", []), chart_data.get("totals", []))
         if isinstance(total, (int, float))
     }
+
+
+def _aggregate_order_trend(store, members, grain, chart, order_data):
+    if not _chart_metric(chart, ("留存大定", "净大定")):
+        chart = None
+    aggregate_counts = {p: _metric_value(row["metrics"], "留存大定", "净大定", default=None)
+                        for p, row in order_data.items()}
+    periods = chart["periods"] if chart else [p for p, count in aggregate_counts.items() if count is not None]
+    totals = chart["totals"] if chart else [aggregate_counts[p] for p in periods]
+    children = []
+    sources = []
+    for name in members:
+        found = store.find_chart_data("大定选配比例", name, grain)
+        if found and _chart_metric(found[2], ("留存大定", "净大定")):
+            counts = _chart_totals(found[2])
+        else:
+            found = store.find_subject_sheet("大定选配比例", name, grain)
+            counts = {p: _metric_value(row["metrics"], "留存大定", "净大定", default=None)
+                      for p, row in parse_metric_sheet(found[1]).items()} if found else {}
+        if found:
+            sources.append(SourceRef(found[0].path.name, found[1].title, name + "留存大定"))
+        children.append(counts)
+    series = [{"name": name, "values": []} for name in members]
+    for p in periods:
+        counts = [child.get(p) for child in children]
+        total = sum(counts) if all(v is not None and v >= 0 for v in counts) else None
+        for entry, count in zip(series, counts):
+            entry["values"].append(count / total if total else None)
+    return {**(chart or {}), "periods": periods, "totals": totals, "series": series,
+            "image_key": None}, sources
 
 
 def _lock_trend(lock_data: dict, periods: list[str], subject: Subject, grain: str) -> dict:
@@ -440,6 +471,7 @@ class OverviewModule:
     label = "订单总览"
 
     def build(self, store: WorkbookStore, subject: Subject) -> Dashboard | None:
+        members = aggregate_members(subject.name)
         grains_data: dict[str, dict] = {}
         sources: list[SourceRef] = []
         for grain in ("day", "week", "month"):
@@ -464,6 +496,10 @@ class OverviewModule:
             if order_chart:
                 order_chart_data = dict(order_chart[2])
                 order_chart_data["headline"] = str(order_chart_data.get("headline") or "").replace("净大定", "留存大定")
+            trend_data = order_chart_data
+            if members:
+                trend_data, member_sources = _aggregate_order_trend(store, members, grain, order_chart_data, order_data)
+                sources.extend(member_sources)
             order_source = SourceRef(order_item.path.name, order_sheet.title, "大定与留存大定")
             lock_source = SourceRef(lock_item.path.name, lock_sheet.title, "交车锁单与已交付")
             order_chart_source = SourceRef(order_chart[0].path.name, order_chart[1].title, "留存大定趋势") if order_chart else order_source
@@ -473,6 +509,7 @@ class OverviewModule:
                 "order": order_data,
                 "lock": lock_data,
                 "order_chart": order_chart_data,
+                "order_trend": trend_data,
                 "lock_chart": lock_chart[2] if lock_chart else _lock_trend(lock_data, periods, subject, grain),
                 "order_chart_source": order_chart_source,
                 "lock_chart_source": lock_chart_source,
@@ -541,7 +578,7 @@ class OverviewModule:
                         *[kpi(label, value, "单", period, COLORS[index]) for index, (label, value) in enumerate(values)],
                     ],
                     "sections": [
-                        section("stacked_trend", f"{subject.name}{GRAIN_LABELS[grain]}度留存大定趋势", gd["order_chart"], "图表Sheet", "half", gd["order_chart_source"]),
+                        section("stacked_trend", f"{subject.name}{GRAIN_LABELS[grain]}度留存大定趋势", gd["order_trend"], "分代际留存大定占比" if members else "图表Sheet", "half", gd["order_chart_source"]),
                         section(
                             "stacked_trend",
                             f"{subject.name}{GRAIN_LABELS[grain]}度交车锁单趋势",

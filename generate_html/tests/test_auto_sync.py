@@ -25,60 +25,37 @@ class AutoSyncTests(unittest.TestCase):
         self.book = self.books[0]
         self.runtime = self.root / 'runtime'
 
-    def test_default_timing_and_change_debounce(self):
-        schedule = RefreshSchedule()
+    def test_each_watched_mtime_alone_triggers_after_stability(self):
         old = source_signature(self.source)
-        self.assertEqual(schedule.observe(old, old, 0), (False, 300))
-        for book in self.books[:-1]:
-            book.write_bytes(b'updated')
-            self.assertEqual(schedule.observe(source_signature(self.source), old, 300), (False, 300))
-        restarted = RefreshSchedule()
-        self.assertEqual(restarted.observe(source_signature(self.source), old, 600), (False, 300))
-        self.assertEqual(restarted.waiting_for, [self.books[-1].name])
-        self.books[-1].write_bytes(b'updated')
-        complete = source_signature(self.source)
-        self.assertEqual(restarted.observe(complete, old, 900), (False, 60))
-        self.assertEqual(restarted.observe(complete, old, 959), (False, 1))
-        self.book.write_bytes(b'changed again')
-        complete = source_signature(self.source)
-        self.assertEqual(restarted.observe(complete, old, 960), (False, 60))
-        self.assertEqual(restarted.observe(complete, old, 1020), (True, 0))
-        self.assertEqual(restarted.observe(complete, complete, 1021), (False, 300))
-        self.assertEqual(restarted.waiting_for, [])
+        for row in old["files"]:
+            with self.subTest(name=row[0]):
+                rows = [list(item) for item in old["files"]]
+                next(item for item in rows if item[0] == row[0])[2] += 1
+                new = {**old, "files": rows}
+                schedule = RefreshSchedule()
+                self.assertEqual(schedule.observe(new, old, 0), (False, 60))
+                self.assertEqual(schedule.observe(new, old, 59), (False, 1))
+                self.assertEqual(schedule.observe(new, old, 60), (True, 0))
+                self.assertEqual(schedule.observe(new, new, 61), (False, 300))
 
-    def test_one_hour_deadline_survives_restart_and_later_edits(self):
+    def test_stale_marker_and_absent_peer_do_not_block_resaved_file(self):
+        self.books[-1].unlink()
+        marker = self.source / "orders.ready"
+        marker.touch()
+        os.utime(marker, (1, 1))
         old = source_signature(self.source)
-        schedule = RefreshSchedule(runtime=self.runtime)
-        self.book.write_bytes(b'updated')
-        self.assertEqual(schedule.observe(source_signature(self.source), old, 100), (False, 300))
-        self.books[1].write_bytes(b'updated later')
-        partial = source_signature(self.source)
-        restarted = RefreshSchedule(runtime=self.runtime)
-        self.assertEqual(restarted.observe(partial, old, 3650), (False, 50))
-        self.assertEqual(restarted.observe(partial, old, 3700), (False, 60))
-        self.books[1].write_bytes(b'still changing')
-        partial = source_signature(self.source)
-        self.assertEqual(restarted.observe(partial, old, 3760), (False, 60))
-        self.assertEqual(restarted.observe(partial, old, 3820), (True, 0))
-        self.assertEqual(restarted.observe(partial, partial, 3821), (False, 300))
-        self.books[-1].write_bytes(b'next round')
-        next_batch = source_signature(self.source)
-        self.assertEqual(restarted.observe(next_batch, partial, 3900), (False, 300))
-        self.assertEqual(restarted.observe(next_batch, partial, 4200), (False, 300))
-
-    def test_first_batch_requires_all_named_files_and_a_stable_minute(self):
-        self.book.unlink()
-        (self.source / "备份.xlsx").write_bytes(b'extra')
+        old["ready"] = [0, 1, 1]  # Previously published catalog.
         schedule = RefreshSchedule()
-        missing = source_signature(self.source)
-        self.assertEqual(schedule.observe(missing, None, 0), (False, 300))
-        self.assertEqual(schedule.waiting_for, [self.book.name])
-        self.book.write_bytes(b'first')
-        complete = source_signature(self.source)
-        self.assertEqual(schedule.observe(complete, None, 300), (False, 60))
-        self.assertEqual(schedule.observe(complete, None, 360), (True, 0))
-        (self.source / "备份.xlsx").unlink()
-        self.assertEqual(schedule.observe(source_signature(self.source), complete, 400), (False, 300))
+        (self.source / "临时备份.xlsx").write_bytes(b"other")
+        self.assertEqual(schedule.observe(source_signature(self.source), old, 0), (False, 300))
+        stamp = self.book.stat().st_mtime_ns
+        os.utime(self.book, ns=(stamp, stamp + 2_000_000_000))
+        new = source_signature(self.source)
+        self.assertEqual(schedule.observe(new, old, 300), (False, 60))
+        os.utime(self.book, ns=(stamp, stamp + 4_000_000_000))
+        new = source_signature(self.source)
+        self.assertEqual(schedule.observe(new, old, 360), (False, 60))
+        self.assertEqual(schedule.observe(new, old, 420), (True, 0))
 
     def test_checks_only_metadata_and_detects_add_edit_delete(self):
         read_bytes = Path.read_bytes
@@ -97,22 +74,6 @@ class AutoSyncTests(unittest.TestCase):
             self.book.write_text('changed content')
             self.assertNotEqual(source_signature(self.source), before)
 
-    def test_existing_marker_must_advance_for_next_batch(self):
-        schedule = RefreshSchedule()
-        stamp = time.time_ns() + 10_000_000_000
-        old = {**source_signature(self.source), "ready": [10, stamp, stamp]}
-        for book in self.books:
-            book.write_bytes(b'updated')
-        new = {**source_signature(self.source), "ready": old["ready"]}
-        self.assertEqual(schedule.observe(new, old, 300), (False, 300))
-        self.assertEqual(schedule.observe(new, old, 600), (False, 300))
-        stale = {**new, "ready": [10, 1, 1]}
-        self.assertEqual(schedule.observe(stale, old, 700), (False, 300))
-        self.assertEqual(schedule.waiting_for, ["orders.ready"])
-        new = {**new, "ready": [10, stamp + 1, stamp + 1]}
-        self.assertEqual(schedule.observe(new, old, 900), (False, 60))
-        self.assertEqual(schedule.observe(new, old, 960), (True, 0))
-
     def test_copy_uses_original_bytes_and_rejects_concurrent_edit(self):
         expected = source_signature(self.source)
         destination = self.root / 'snapshot'
@@ -126,15 +87,6 @@ class AutoSyncTests(unittest.TestCase):
         with patch('core.sync.shutil.copy2', side_effect=changing_copy):
             with self.assertRaisesRegex(RuntimeError, '复制期间'):
                 copy_stable_inputs(self.source, destination, expected)
-
-    def test_optional_completion_marker_waits_for_latest_excel(self):
-        marker = self.source / 'orders.ready'
-        marker.write_text('done')
-        os.utime(marker, (1, 1))
-        with self.assertRaisesRegex(ValueError, 'orders.ready'):
-            source_signature(self.source)
-        os.utime(marker, None)
-        self.assertIsNotNone(source_signature(self.source)['ready'])
 
     def test_lock_excludes_other_builds_and_recovers_on_release(self):
         with BuildLock(self.runtime):
@@ -241,13 +193,9 @@ class CalculationRevisionTests(unittest.TestCase):
                 self.assertNotEqual(calculation_revision(moved),original)
                 target.write_text('v1')
 
-    def test_revision_and_marker_cannot_bypass_batch_rule(self):
-        files = [[name, 10, 1, 1] for name in BATCH_WORKBOOKS]
-        old = {"directory": "inputs", "files": files, "ready": [1, 2, 2], "calculation_revision": "old"}
-        new = {**old, "calculation_revision": "new", "ready": [1, 3, 3]}
+    def test_code_only_upgrade_refreshes_existing_batch(self):
+        old = {"directory": "inputs", "files": [], "calculation_revision": "old"}
+        new = {**old, "calculation_revision": "new"}
         schedule = RefreshSchedule()
-        self.assertEqual(schedule.observe(new, old, 0), (False, 300))
-        partial = {**new, "files": [[files[0][0], 11, 2, 2], *files[1:]]}
-        self.assertEqual(schedule.observe(partial, old, 300), (False, 300))
-        self.assertEqual(schedule.observe(partial, old, 600), (False, 300))
-        self.assertEqual(schedule.waiting_for, list(BATCH_WORKBOOKS[1:]))
+        self.assertEqual(schedule.observe(new, old, 0), (False, 60))
+        self.assertEqual(schedule.observe(new, old, 60), (True, 0))

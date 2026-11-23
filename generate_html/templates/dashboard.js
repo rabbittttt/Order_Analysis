@@ -293,9 +293,9 @@
   function localTrendAnnotations(){
     try {
       const saved=JSON.parse(localStorage.getItem(annotationStorageKey));
-      if(Array.isArray(saved?.entries))return {visible:saved.visible===true,entries:saved.entries.filter(note=>note&&typeof note.id==='string'&&typeof note.subject==='string'&&typeof note.text==='string'&&window.TrendAnnotations.dateKey(note.date,'day'))};
+      if(Array.isArray(saved?.entries))return {visible:saved.visible!==false,entries:saved.entries.filter(note=>note&&typeof note.id==='string'&&typeof note.subject==='string'&&typeof note.text==='string'&&window.TrendAnnotations.dateKey(note.date,'day'))};
     } catch {}
-    return {visible:false,entries:[]};
+    return {visible:true,entries:[]};
   }
   function readTrendAnnotations(){
     const local=localTrendAnnotations();
@@ -405,9 +405,68 @@
     dialog.showModal();date.focus();
     if(DYNAMIC)await refreshSharedAnnotations().catch(fail);
   }
+  function bindTrendAnnotationTooltips(){
+    const tooltip=document.createElement('div');
+    tooltip.id='trendAnnotationTooltip';tooltip.className='trend-annotation-tooltip';tooltip.hidden=true;tooltip.tabIndex=0;
+    tooltip.setAttribute('role','tooltip');document.body.append(tooltip);
+    let marker=null,hideTimer,layoutFrame,pointer=null;
+    const hide=()=>{
+      cancelAnimationFrame(layoutFrame);clearTimeout(hideTimer);marker?.removeAttribute('aria-describedby');marker=null;tooltip.hidden=true;
+    };
+    const show=target=>{
+      clearTimeout(hideTimer);
+      if(marker!==target)marker?.removeAttribute('aria-describedby');
+      marker=target;
+      const text=marker.getAttribute('aria-label')||marker.querySelector('title')?.textContent||'';
+      if(tooltip.textContent!==text)tooltip.textContent=text;
+      tooltip.hidden=!tooltip.textContent;if(tooltip.hidden)return;
+      marker.setAttribute('aria-describedby',tooltip.id);
+      const box=marker.getBoundingClientRect(),tip=tooltip.getBoundingClientRect();
+      tooltip.style.left=Math.max(12,Math.min(box.left+box.width/2-tip.width/2,innerWidth-tip.width-12))+'px';
+      const below=box.bottom+8;
+      tooltip.style.top=(below+tip.height<=innerHeight-12?below:Math.max(12,box.top-tip.height-8))+'px';
+    };
+    const reposition=()=>{
+      cancelAnimationFrame(layoutFrame);
+      layoutFrame=requestAnimationFrame(()=>{
+        if(!marker||tooltip.hidden)return;
+        if(!marker.isConnected){hide();return;}
+        const focused=document.activeElement?.closest?.('.trend-annotation');
+        const pointed=pointer&&document.elementFromPoint(pointer.x,pointer.y),hovered=pointed?.closest?.('.trend-annotation');
+        if(focused||hovered)show(focused||hovered);
+        else if(tooltip.contains(pointed)||tooltip.contains(document.activeElement))show(marker);
+        else hide();
+      });
+    };
+    const leave=event=>{
+      if(marker?.contains(event.relatedTarget)||tooltip.contains(event.relatedTarget))return;
+      clearTimeout(hideTimer);hideTimer=setTimeout(reposition,180);
+    };
+    document.addEventListener('pointermove',event=>{pointer={x:event.clientX,y:event.clientY};},{passive:true});
+    document.addEventListener('pointerover',event=>{
+      pointer={x:event.clientX,y:event.clientY};
+      const target=event.target.closest?.('.trend-annotation');
+      if(target)show(target);else if(tooltip.contains(event.target))clearTimeout(hideTimer);
+    });
+    document.addEventListener('pointerout',event=>{if(event.target.closest?.('.trend-annotation')||tooltip.contains(event.target))leave(event);});
+    document.addEventListener('focusin',event=>{
+      const target=event.target.closest?.('.trend-annotation');
+      if(target)show(target);else if(tooltip.contains(event.target))clearTimeout(hideTimer);else hide();
+    });
+    document.addEventListener('focusout',event=>{if(event.target.closest?.('.trend-annotation')||tooltip.contains(event.target))leave(event);});
+    document.addEventListener('click',event=>{
+      const target=event.target.closest?.('.trend-annotation');
+      if(target)show(target);else if(!tooltip.contains(event.target))hide();
+    });
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')hide();});
+    document.addEventListener('scroll',event=>{if(!tooltip.contains(event.target))reposition();},true);
+    window.addEventListener('resize',reposition);
+    bindTrendAnnotationTooltips.hide=hide;
+  }
   function bindTrendAnnotations(sections){
     const charts=[...document.querySelectorAll('[data-trend-chart]')],toggles=[...document.querySelectorAll('[data-trend-annotation-toggle]')];
     const refreshCharts=()=>{
+      bindTrendAnnotationTooltips.hide?.();
       for(const chart of charts){
         if(!chart.isConnected)continue;
         const previous=chart.querySelector('.stacked-chart,.original-chart'),scroll=previous?.scrollLeft||0,atEnd=previous&&previous.scrollWidth-previous.clientWidth-scroll<2;
@@ -434,7 +493,7 @@
     candidates.forEach(item=>{const key=quickGenerationFamilyKey(item.name);newestYear.set(key,Math.max(newestYear.get(key)||0,generationYear(item.name)))});
     const latest=new Map();
     candidates.forEach(item=>{const year=generationYear(item.name);if(year<newestYear.get(quickGenerationFamilyKey(item.name)))return;const key=generationModelKey(item.name)+'|'+generationAggregate(item.name),old=latest.get(key);if(!old||year>generationYear(old.name)||(year===generationYear(old.name)&&item.name.localeCompare(old.name,'zh-CN')<0))latest.set(key,item)});
-    return [...latest.values()].sort((left,right)=>{const brandLeft=quickBrandOrder.indexOf(left.parent),brandRight=quickBrandOrder.indexOf(right.parent);return (brandLeft<0?quickBrandOrder.length:brandLeft)-(brandRight<0?quickBrandOrder.length:brandRight)||generationModelKey(left.name).localeCompare(generationModelKey(right.name),'en')||left.name.localeCompare(right.name,'zh-CN')});
+    return [...latest.values()].filter(item=>item.has_lock_orders===true).sort((left,right)=>{const brandLeft=quickBrandOrder.indexOf(left.parent),brandRight=quickBrandOrder.indexOf(right.parent);return (brandLeft<0?quickBrandOrder.length:brandLeft)-(brandRight<0?quickBrandOrder.length:brandRight)||generationModelKey(left.name).localeCompare(generationModelKey(right.name),'en')||left.name.localeCompare(right.name,'zh-CN')});
   }
   function syncTopbarQuickLayout(){
     const topbar=document.querySelector('.topbar'),list=$('#quickGenerationList');if(!topbar||!list)return;
@@ -499,6 +558,7 @@
     bindStatic();renderSubjectSelect();if(await ensureState()===false)return;await renderAll();syncUrl("replace");
   }
   function bindStatic(){
+    bindTrendAnnotationTooltips();
     history.scrollRestoration='manual';
     let readingTimer;
     document.addEventListener('scroll',event=>{if(event.target.matches?.('#page,#rawTable')&&!readingTimer)readingTimer=setTimeout(()=>{readingTimer=null;rememberReadingPosition()},500)},true);
@@ -630,6 +690,7 @@
     });
   }
   async function renderPage(){
+    bindTrendAnnotationTooltips.hide?.();
     rhythmObserver?.disconnect();rhythmObserver=null;
     channelPanelResizeObserver?.disconnect();channelPanelResizeObserver=null;
     const revision=++pageRevision,moduleId=state.module,subjectId=state.subject;
@@ -688,13 +749,15 @@
     const renderer=pieBars?renderPieChart:({channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
     const annotationControls=item.kind==="stacked_trend" && item.data?.periods?.length;
     const chartId="trendChart"+index;
+    const source=renderPanelSource(item,index);
     const actions=annotationControls ? `<div class="trend-annotation-actions">
       <button type="button" class="trend-annotation-button" data-trend-annotation-toggle aria-controls="${chartId}" aria-expanded="${trendAnnotationState.visible}">${trendAnnotationState.visible ? "隐藏批注" : "显示批注"}</button>
       <button type="button" class="trend-annotation-button" data-trend-annotation-manage>管理批注</button>
-    </div>` : "";
+      ${source}
+    </div>` : source;
     const content=renderer(item.data);
-    const body=annotationControls ? `${actions}<div id="${chartId}" data-trend-chart="${index}">${content}</div>` : content;
-    return `<article class="panel ${item.width==="half"?"":"full"}${appendix?' has-cancel-ranking':''}" data-section-kind="${esc(item.kind||"")}"><div class="panel-head"><div><h2>${esc(item.title)}</h2><span>${esc(item.meta)}</span></div>${renderPanelSource(item,index)}</div><div class="panel-body">${body}${appendix}</div></article>`;
+    const body=annotationControls ? `<div id="${chartId}" data-trend-chart="${index}">${content}</div>` : content;
+    return `<article class="panel ${item.width==="half"?"":"full"}${appendix?' has-cancel-ranking':''}" data-section-kind="${esc(item.kind||"")}"><div class="panel-head${annotationControls?' has-trend-actions':''}"><div><h2>${esc(item.title)}</h2><span>${esc(item.meta)}</span></div>${actions}</div><div class="panel-body">${body}${appendix}</div></article>`;
   }
   const channelPanelData=new Map();
   let channelPanelResizeObserver=null;
@@ -872,7 +935,7 @@
 
     const trendLine=colors.blue,seriesFill=index=>stackedTrendPalette[index%stackedTrendPalette.length],periods=data.periods,series=data.series||[],totals=data.totals||[],maxTotal=chartMax(totals),labelMax=Math.max(...periods.map(period=>String(period||"").length),1),left=52,bottom=252,plotH=218,step=Math.max(42,Math.min(labelMax*4.8,90)),W=Math.max(380,periods.length*step+50),H=Math.max(310,bottom+Math.min(labelMax*4.2,80)+14),barW=stackedBarWidth(step);
     const annotations=trendAnnotationState.visible
-      ? window.TrendAnnotations.render(trendAnnotationsFor(state.subject),periods,state.grain,{left,step,width:W})
+      ? window.TrendAnnotations.render([...trendAnnotationsFor(state.subject),...(subject()?.stage_annotations||[])],periods,state.grain,{left,step,width:W})
       : {height:0,markup:""};
     if(!annotations.height&&window.CHART_RENDER_MODE==="original"&&originalImage)return `<div class="original-chart"><img src="${originalImage}" alt="${esc(data.headline||"Excel原始图表")}"/></div>`;
     const segmentLabelYs=periods.map(()=>[]);

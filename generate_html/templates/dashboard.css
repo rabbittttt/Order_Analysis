@@ -3158,12 +3158,41 @@ body {
 .kpis:empty+.sections {margin-top:0}
 .panel {padding:18px}
 .stacked-chart svg {background:none}
+.panel-head.has-trend-actions {flex-wrap:wrap;align-items:center}
+.panel-head.has-trend-actions>div:first-child {flex:1 1 200px;min-width:0}
 .trend-annotation-actions {
   display:flex;
-  flex-wrap:wrap;
+  flex:0 0 auto;
+  max-width:100%;
+  flex-wrap:nowrap;
+  align-items:center;
   justify-content:flex-end;
   gap:6px;
-  margin-bottom:6px;
+  margin-left:auto;
+}
+.trend-annotation-actions>button {white-space:nowrap}
+.trend-annotation-tooltip {
+  position:fixed;
+  z-index:200;
+  box-sizing:border-box;
+  width:max-content;
+  max-width:min(480px,calc(100vw - 24px));
+  max-height:min(50vh,360px);
+  overflow:auto;
+  padding:10px 12px;
+  border:1px solid var(--line-strong);
+  border-radius:10px;
+  background:var(--card);
+  box-shadow:var(--shadow-md);
+  color:var(--ink);
+  font-size:var(--font-body);
+  line-height:1.55;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+}
+.trend-annotation-tooltip:focus-visible {outline:2px solid var(--primary);outline-offset:2px}
+@media (max-width:640px) {
+  .trend-annotation-actions .trend-annotation-button,.trend-annotation-actions .panel-source {font-size:var(--font-caption);padding-inline:8px}
 }
 .trend-annotation-button {
   min-height:34px;

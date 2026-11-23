@@ -84,6 +84,31 @@ class AmpersandAggregateTests(TestCase):
         self.assertEqual(sheet_subject("尊界 V680&V800_区域分析"), "尊界 V680&V800")
         self.assertEqual(sheet_subject("尊界 V680 & V800_区域分析"), "尊界 V680 & V800")
 
+    def test_aggregate_order_trend_and_stage_events_use_only_its_two_children(self):
+        from core.discovery import catalog_subjects
+        from core.model_identity import aggregate_members
+
+        self.assertEqual(aggregate_members("尊界 V680&V800"), ["尊界 V680", "尊界 V800"])
+        for parent in (COMBINED[0], LEGACY):
+            records = [(FIRST, 20), (SECOND, 30), (parent, 55)]
+            store = self.store([("鸿蒙智行大定选配比例分析.xlsx", self.metrics(records)),
+                                ("鸿蒙智行锁单选配比例分析.xlsx", self.metrics([(FIRST, 0), (SECOND, 30), (parent, 30)], lock=True))])
+            subject = Subject("combined", parent, "generation", "问界")
+            board = OverviewModule().build(store, subject)
+            trend = board.views["week"]["pages"][PERIODS[0]]["sections"][0]["data"]
+            self.assertEqual([s["name"] for s in trend["series"]], [FIRST, SECOND])
+            self.assertEqual([s["values"][0] for s in trend["series"]], [0.4, 0.6])
+            self.assertEqual(trend["totals"], [55, 55])
+            stages = [{"代际名": name, "小订开始日期": "2026-01-01", "开始大定日期": "2026-01-05"}
+                      for name in [FIRST, SECOND, "问界 M8 2026款"]]
+            with patch("core.discovery.generation_records", return_value=stages):
+                combined, zero = catalog_subjects(store, [subject, Subject("first", FIRST, "generation")])
+            self.assertTrue(combined["has_lock_orders"])
+            self.assertFalse(zero["has_lock_orders"])
+            self.assertEqual(len(combined["stage_annotations"]), 4)
+            self.assertEqual(len(zero["stage_annotations"]), 2)
+            self.assertTrue(all(FIRST in note["text"] for note in zero["stage_annotations"]))
+
     def test_brand_lock_share_excludes_combined_and_legacy_aggregate_counts(self):
         records = [("问界", 700), (FIRST, 20), (SECOND, 30), (COMBINED[0], 50), (LEGACY, 9999)]
         store = self.store([

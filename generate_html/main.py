@@ -17,7 +17,7 @@ from typing import Any
 from core.components import add_kpi_comparisons
 from core.config import load_config
 from core.data_paths import orders_input_directory, dynamic_log_directory
-from core.discovery import discover_subjects, set_capabilities
+from core.discovery import catalog_subjects, discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
 from core.model_identity import STAGE_SOURCE_NAME
 from core.renderer import b64gzip, render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard
@@ -229,7 +229,7 @@ def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None
     if not static and source_signature is None:
         # A manual dynamic publication is also the baseline for the next batch.
         from core.sync import source_signature as input_signature
-        source_signature = input_signature(input_dir, check_ready=False)
+        source_signature = input_signature(input_dir)
     store = WorkbookStore(input_dir, cache_dir=output_file.parent / ".cache" / "excel")
     stage_started = perf_counter()
     # These workbooks describe stage identities or a separate report, not order sheets.
@@ -302,7 +302,7 @@ def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None
                 "input_dir": str(input_dir),
             },
             "config": config,
-            "subjects": [subject.to_dict() for subject in subjects],
+            "subjects": catalog_subjects(store, subjects),
             "dashboards": dashboards,
             "chart_assets": store.chart_assets,
             "raw_files": raw_files,

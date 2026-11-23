@@ -26,7 +26,9 @@ const names = [
   '智界 RX 盲订 2027款', '智界 RX 2027款盲订', '智界 RX 2027款',
 ];
 const subjects = names.map((name, index) => ({id: String(index), name, parent: name.slice(0, 2), type: 'generation'}));
+subjects.forEach(item=>item.has_lock_orders=true);
 const actual = select({subjects});
+assert.deepStrictEqual(select({subjects:[{...subjects[0],has_lock_orders:false}]}),[]);
 const expected = [
   '问界 F2N 2026款汇总', '尚界 X6M 2026款汇总', '尚界 SHB 2026款汇总',
   '问界 M5 2025款', '问界 M8 2025款', '问界 M9 2026款',
@@ -39,14 +41,14 @@ const expected = [
 assert.deepStrictEqual([...actual].sort(), [...expected].sort());
 assert.strictEqual(subjects.length, names.length, 'source subjects must remain untouched');
 
-const coexist=select({subjects:['问界 M5 2026款','问界 M5 2026款汇总','问界 M5 2025款汇总'].map(name=>({name,type:'generation',parent:'问界'}))});
+const coexist=select({subjects:['问界 M5 2026款','问界 M5 2026款汇总','问界 M5 2025款汇总'].map(name=>({name,type:'generation',has_lock_orders:true,parent:'问界'}))});
 assert.deepStrictEqual(coexist.sort(),['问界 M5 2026款','问界 M5 2026款汇总'].sort());
 
 // Ampersand aggregates stay alongside their individual models, without a
 // synthetic suffix or collision with the ordinary generation shortcut.
 const combinedNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界 Z7&Z7T 2026款','享界 S9&S9T 2026款'];
 const individualNames=['问界 M9 2026款','问界 M9 Ultimate 2026款','尊界 V680 2026款','尊界 V800 2026款','尚界 Z7 2026款','尚界 Z7T 2026款','享界 S9 2026款','享界 S9T 2026款'];
-const combinedSubjects=[...combinedNames,...individualNames,'问界 M9&M9U 2025款汇总'].map(name=>({name,type:'generation',parent:name.slice(0,2)}));
+const combinedSubjects=[...combinedNames,...individualNames,'问界 M9&M9U 2025款汇总'].map(name=>({name,type:'generation',has_lock_orders:true,parent:name.slice(0,2)}));
 assert.deepStrictEqual(select({subjects:combinedSubjects}).sort(),[...combinedNames,...individualNames].sort());
 const helpers=new Function(`${script.slice(start,end)};return {generationShortName,generationAggregate};`)();
 for(const name of combinedNames){

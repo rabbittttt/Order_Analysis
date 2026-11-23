@@ -2,7 +2,7 @@ const fs=require('fs'),path=require('path'),http=require('http'),assert=require(
 const project=path.resolve(__dirname,'../../..'),root=path.resolve(__dirname,'..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const aggregateNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界 Z7&Z7T 2026款','享界 S9&S9T 2026款'];
-const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,modules:['overview','raw']}));
+const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,has_lock_orders:true,modules:['overview','raw']}));
 const generatedTimes={'fixture-v1':'2026-11-10T10:00:00','fixture-v2':'2026-11-10T10:01:00','fixture-v3':'2026-11-10T10:02:00','fixture-v4':'2026-11-10T10:03:00'};
 const generationLabel=version=>'生成时间 '+generatedTimes[version].replace('T',' ');
 const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','raw'],module_labels:{overview:'订单总览',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
@@ -49,6 +49,8 @@ const server=http.createServer(async(req,res)=>{
   await page.goto(base+'?subject=m');await page.waitForSelector('.kpi');
   check('桌面顶部显示当前批次生成时间',await page.locator('#syncStatus').isVisible()&&await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
   check('首屏仅请求当前看板，未请求底表或Excel',requests.filter(r=>r.path.endsWith('/dashboard')).length===1&&!requests.some(r=>/\/(raw|workbook)$/.test(r.path)));
+  await page.waitForSelector('.trend-annotation');
+  await page.locator('[data-trend-annotation-toggle]').click();assert.equal(await page.locator('.trend-annotation').count(),0);
   await page.locator('[data-trend-annotation-toggle]').click();await page.waitForSelector('.trend-annotation');
   check('集团和品牌批注继承到车型',(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('集团事件')&&(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('问界事件'));
   await page.locator('#subjectSelect').selectOption('other');await page.waitForSelector('[data-page-retry]');
@@ -60,7 +62,7 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('#trendAnnotationForm [name="date"]').fill('2026-11-10');await page.locator('#trendAnnotationForm [name="subject"]').selectOption('g');await page.locator('#trendAnnotationForm [name="text"]').fill('共享新增 <b>');await page.locator('#trendAnnotationForm button[type="submit"]').click();
   await page.waitForFunction(()=>document.querySelector('#trendAnnotationList').textContent.includes('共享新增 <b>'));
   check('共享批注写后台且文本转义',notes.some(n=>n.text==='共享新增 <b>')&&await page.locator('#trendAnnotationList b').count()===0);
-  const ctx2=await browser.newContext(),second=await ctx2.newPage();await second.goto(base+'?subject=other');await second.waitForSelector('.kpi');await second.locator('[data-trend-annotation-toggle]').click();await second.waitForSelector('.trend-annotation');
+  const ctx2=await browser.newContext(),second=await ctx2.newPage();await second.goto(base+'?subject=other');await second.waitForSelector('.kpi');await second.waitForSelector('.trend-annotation');
   check('另一浏览器读取共享修改',(await second.locator('.trend-annotation').getAttribute('aria-label')).includes('共享新增 <b>'));
   const row=page.locator('#trendAnnotationList li').filter({hasText:'共享新增 <b>'});await row.getByRole('button',{name:'编辑',exact:true}).click();notes.find(n=>n.text==='共享新增 <b>').version++;
   await page.locator('#trendAnnotationForm [name="text"]').fill('冲突覆盖');await page.locator('#trendAnnotationForm button[type="submit"]').click();await page.waitForSelector('#trendAnnotationError:not([hidden])');

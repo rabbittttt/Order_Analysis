@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import re
+from datetime import date, datetime
 from typing import Iterable
 
 from core.excel import WorkbookStore, clean_text, compact_text, sheet_subject, subject_parent, subject_type
 from core.models import Subject
-from core.model_identity import generation_records, parent_generation
+from core.model_identity import aggregate_members, generation_records, model_key, parent_generation, stage_name
+from core.excel import parse_metric_sheet
 
 
 DEFAULT_MODULE_ORDER = [
@@ -36,6 +38,43 @@ def is_valid_subject_name(name: str) -> bool:
         return True
     # 代号型代际（无款号），含组合代号或版本名；中文指标名仍须排除。
     return bool(re.fullmatch(r"[\u4e00-\u9fff]{1,3}界[A-Za-z0-9]+(?:[&+/][A-Za-z0-9]+)*(?:[\u4e00-\u9fff]{1,8})?", value))
+
+
+def _has_lock_orders(store, name):
+    for grain in ("day", "week", "month"):
+        found = store.find_subject_sheet("锁单选配比例", name, grain)
+        if found and any(row["metrics"].get("交车锁单", 0) > 0 for row in parse_metric_sheet(found[1]).values()):
+            return True
+    return False
+
+
+def catalog_subjects(store, subjects):
+    records = generation_records(store.input_dir)
+    result = []
+    for subject in subjects:
+        item = subject.to_dict()
+        if subject.type == "generation":
+            item["has_lock_orders"] = _has_lock_orders(store, subject.name)
+        names = {model_key(name) for name in [subject.name, *aggregate_members(subject.name)]}
+        events = set()
+        for row in records:
+            if subject.type == "brand" and subject.name != row.get("品牌"):
+                continue
+            if subject.type == "generation" and model_key(row["代际名"]) not in names:
+                continue
+            for field, label in (("小订开始日期", "小订开始"), ("开始大定日期", "大定开始")):
+                value = row.get(field)
+                if isinstance(value, datetime):
+                    value = value.date()
+                elif not isinstance(value, date):
+                    try:
+                        value = date.fromisoformat(str(value).strip().split(" ")[0].replace("/", "-"))
+                    except ValueError:
+                        continue
+                events.add((value.isoformat(), f"{stage_name(row)} {label}"))
+        item["stage_annotations"] = [{"date": day, "text": text} for day, text in sorted(events)]
+        result.append(item)
+    return result
 
 
 def discover_subjects(store: WorkbookStore) -> list[Subject]:

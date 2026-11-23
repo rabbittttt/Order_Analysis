@@ -74,6 +74,27 @@ def _stage_records(path, stamp, size):
         book.close()
 
 
+def aggregate_members(name: str) -> list[str]:
+    clean = re.sub(r"(?:汇总|总计)$", "", name.strip()).strip()
+    match = re.fullmatch(r"(\S+?界)\s*(.+?)(?:\s*(20\d{2}\s*款))?", clean)
+    if not match:
+        return []
+    brand, models, year = match.groups()
+    # Older exports used project codes for the same pairs.
+    legacy = {("问界", "F2N"): "M9&M9U", ("尊界", "X6M"): "V680&V800",
+              ("尚界", "SHB"): "Z7&Z7T", ("享界", "X4"): "S9&S9T"}
+    pair = legacy.get((brand, models), models).split("&")
+    if len(pair) != 2 or not all(part.strip() for part in pair):
+        return []
+    members = []
+    for part in pair:
+        model = part.strip()
+        if brand == "问界" and model == "M9U":
+            model = "M9 Ultimate"
+        members.append(" ".join(filter(None, (brand, model, year))))
+    return members
+
+
 def parent_generation(name, records) -> str:
     key = model_key(name)
     found = next((r for r in records if r.get("二级代际名") and model_key(r["二级代际名"]) == key), None)
