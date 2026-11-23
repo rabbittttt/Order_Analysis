@@ -57,6 +57,26 @@ class MetricBlockOrderTests(unittest.TestCase):
         self.assertEqual(result['metrics'], {'大定': 200})
         self.assertEqual(result['structures']['版本'][0]['count'], 40)
 
+    def test_mix_trends_use_original_counts_and_shares_in_period_order(self):
+        book, _ = self.sheet([
+            ['电池包', '占比', '100度', .6, .4], [None, None, '80度', .4, .6],
+            ['内饰', '数量', '米色', 0, 12], [None, '占比', '米色', 0, .3],
+            [None, None, '黑色', .2, .1],
+        ])
+        store = WorkbookStore(Path('.'))
+        store.items = [WorkbookItem(Path('鸿蒙智行大定选配比例分析.xlsx'), book)]
+        subject = Subject(id='test', name='问界 M9 2026款', type='generation', parent='问界')
+        page = OrderMixModule().build(store, subject).views['week']['pages']['26WK43']
+        battery, count, share = page['sections'][:3]
+        self.assertEqual([item['title'] for item in (battery, count, share)],
+                         ['电池包度数占比趋势', '内饰颜色数量趋势', '内饰颜色占比趋势'])
+        self.assertEqual(battery['data']['periods'], ['26WK42', '26WK43'])
+        self.assertEqual(battery['data']['series'][0], {'name': '80度', 'values': [.4, .6]})
+        self.assertEqual(count['data']['series'][0], {'name': '米色', 'values': [0, 12]})
+        self.assertEqual(share['data']['series'][0], {'name': '米色', 'values': [0, .3]})
+        self.assertFalse(any(item['name'] == '黑色' and any(v is not None for v in item['values'])
+                             for item in count['data']['series']))
+
     def test_order_mix_page_keeps_count_in_ranking(self):
         book, _ = self.sheet([['版本', '数量', 'A', 30, 40], [None, '占比', 'A', .3, .4]])
         store = WorkbookStore(Path('.'))

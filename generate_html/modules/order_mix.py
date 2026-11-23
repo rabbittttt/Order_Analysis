@@ -22,37 +22,27 @@ def _battery_degree(label: str) -> int:
     return int(match.group()) if match else 10**9
 
 
-def _battery_history(parsed: dict, periods: list[str]) -> dict | None:
-    """构建电池包度数环比表(类似最近周期经营表现):行=周期,列=各度数+环比。"""
-    labels: list[str] = []
-    for period in periods:
-        for row in parsed[period].get("structures", {}).get("电池包", []):
-            if row["label"] not in labels:
-                labels.append(row["label"])
-    if not labels:
-        return None
-    labels.sort(key=_battery_degree)
-    columns = ["周期"]
-    for label in labels:
-        columns.extend([label, "环比"])
-    formats = ["text"]
-    for _ in labels:
-        formats.extend(["percent", "signed_percent"])
-    previous_shares: dict[str, float] | None = None
-    rows = []
-    for period in periods:
-        share_map = {row["label"]: row["share"] for row in parsed[period].get("structures", {}).get("电池包", [])}
-        row: list = [period]
-        for label in labels:
-            value = share_map.get(label, 0)
-            row.append(value)
-            if previous_shares is not None and previous_shares.get(label):
-                row.append((value - previous_shares[label]) / abs(previous_shares[label]))
-            else:
-                row.append("—")
-        rows.append(row)
-        previous_shares = share_map
-    return {"columns": columns, "formats": formats, "rows": rows}
+def _mix_trends(parsed: dict, source: SourceRef) -> list[dict]:
+    sections = []
+    for dimension, metric, title in (
+        ("电池包", "share", "电池包度数占比趋势"),
+        ("内饰", "count", "内饰颜色数量趋势"),
+        ("内饰", "share", "内饰颜色占比趋势"),
+    ):
+        history = [
+            {row["label"]: row.get(metric) for row in data["structures"].get(dimension, [])}
+            for data in parsed.values()
+        ]
+        labels = list(dict.fromkeys(label for period in history for label in period))
+        if dimension == "电池包":
+            labels.sort(key=_battery_degree)
+        series = [{"name": label, "values": [period.get(label) for period in history]} for label in labels]
+        series = [item for item in series if any(value is not None for value in item["values"])]
+        if series:
+            sections.append(section("mix_trend", title, {
+                "periods": list(parsed), "series": series, "metric": metric,
+            }, width="full" if dimension == "电池包" else "half", source=source))
+    return sections
 
 
 class MixModule:
@@ -87,18 +77,12 @@ class MixModule:
         if not grains_data:
             return None
 
-        # 电池包度数环比表:周/月两个粒度各一份全量数据,由顶部粒度统一切换
-        battery_options = {
-            grain: history
-            for grain, gd in grains_data.items()
-            if grain in ("week", "month") and (history := _battery_history(gd["parsed"], gd["periods"]))
-        }
-
         views = {}
         for grain, gd in grains_data.items():
             parsed = gd["parsed"]
             periods = gd["periods"]
             data_source = gd["source"]
+            trends = _mix_trends(parsed, data_source)
             pages = {}
             previous = None
             for period in periods:
@@ -143,6 +127,7 @@ class MixModule:
                     for row in sorted(all_rows, key=lambda row: abs(row["change"]), reverse=True)[:18]
                 ]
                 sections = [
+                    *trends,
                     section("structure_cards", "选配结构全景", structures, "选配占比 / 环比变化", source=data_source),
                     section("bars", "各维度首选配置", {"color": "blue", "rows": leader_bars}, "每个选配维度 TOP1", "half", data_source),
                     section("table", "选配偏好变化排行", table(
@@ -151,15 +136,6 @@ class MixModule:
                         formats=["text", "text", "percent", "percent", "signed_percent", "number"],
                     ), "按选配占比变化绝对值排序", "half", data_source),
                 ]
-                if battery_options.get(grain):
-                    sections.append(section(
-                        "history_table",
-                        "电池包度数环比",
-                        {"granularities": battery_options, "default": grain},
-                        "全部周期 · 各度数选配占比环比变化",
-                        "full",
-                        data_source,
-                    ))
                 pages[period] = {
                     "kpis": [
                         kpi("选配维度", dimension_count, "个", "外观 / 内饰 / 版本等", "blue"),

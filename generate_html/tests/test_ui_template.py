@@ -13,6 +13,54 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DashboardTemplateTests(unittest.TestCase):
+    def test_trend_annotations_wrap_complete_text_without_overlaps(self):
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node unavailable')
+        script = (ROOT / 'templates/trend_annotations.js').read_text(encoding='utf-8')
+        checks = r'''
+const assert=require('assert'),render=window.TrendAnnotations.render;
+const notes=[
+  {date:'2026-11-10',text:'政策调整和上市节奏需要完整说明'.repeat(5)},
+  {date:'2026-11-10',text:'同日第二条完整事件'},
+  {date:'2026-11-11',text:'WWWWWWW <img src=x onerror="alert(1)"> & "报价"'},
+  {date:'2026-11-17',text:'下一期短批注'}
+],original=JSON.stringify(notes);
+const decode=text=>text.replace(/&quot;|&#39;|&lt;|&gt;|&amp;/g,value=>({'&quot;':'"','&#39;':"'",'&lt;':'<','&gt;':'>','&amp;':'&'}[value]));
+const attribute=(markup,name)=>Number(markup.match(new RegExp(name+'="([\\d.]+)"'))[1]);
+const periods={day:['2026-11-10','2026-11-11','2026-11-17'],week:['26WK46','2026WK46','26WK47'],month:['2026-11']};
+for(const width of [120,320,768]){
+  for(const grain of ['day','week','month']){
+    const result=render(notes,periods[grain],grain,{left:16,step:(width-32)/periods[grain].length,width});
+    const groups=[...result.markup.matchAll(/<g class="trend-annotation"[\s\S]*?<\/g>/g)].map(match=>match[0]);
+    const rectangles=[];
+    for(const group of groups){
+      const key=group.match(/data-annotation-period="([^"]+)"/)[1];
+      const expected=notes.filter(note=>window.TrendAnnotations.dateKey(note.date,grain)===key).map(note=>note.text).join('');
+      const lines=[...group.matchAll(/<tspan[^>]*>([\s\S]*?)<\/tspan>/g)].map(match=>decode(match[1]));
+      assert.equal(lines.join(''),expected,'Every event remains visible in full');
+      const rect=group.match(/<rect class="trend-annotation-box"([^>]*)>/)[1];
+      const x=attribute(rect,'x'),y=attribute(rect,'y'),w=attribute(rect,'width'),h=attribute(rect,'height');
+      assert(x>=4&&x+w<=width-4+1e-8,'Boxes stay inside the chart');
+      assert(y>=6&&y+h<result.height,'Chart reserves full multiline height');
+      rectangles.push({x,y,w,h});
+    }
+    assert(groups.some(group=>(group.match(/<tspan/g)||[]).length>1),'Long notes wrap');
+    assert.equal(groups.length,grain==='day'?3:grain==='week'?2:1,'Same period is grouped once');
+    for(let i=0;i<rectangles.length;i++)for(let j=i+1;j<rectangles.length;j++){
+      const a=rectangles[i],b=rectangles[j];
+      assert(a.x+a.w+6<=b.x+1e-8||b.x+b.w+6<=a.x+1e-8||a.y+a.h+6<=b.y+1e-8||b.y+b.h+6<=a.y+1e-8,'Annotation cards never overlap');
+    }
+    assert(!result.markup.includes('<img')&&!result.markup.includes('…'),'No injected markup or truncated text');
+  }
+}
+assert.equal(JSON.stringify(notes),original,'Rendering preserves source annotations');
+assert.deepEqual(render(notes,[], 'day',{left:16,step:42,width:320}),{height:0,markup:''});
+'''
+        result = subprocess.run([node, '-e', 'const window={};\n' + script + checks],
+                                text=True, encoding='utf-8', capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_reused_number_formatter_preserves_existing_display(self):
         node = shutil.which('node')
         if not node:

@@ -699,7 +699,9 @@
     if(revision!==pageRevision||moduleId!==state.module||subjectId!==state.subject)return;
     if(!board||!page){$("#page").innerHTML=`<div class="empty-page">当前主体暂无该分析</div>`;return}
     channelPanelData.clear();
-    $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
+    const trends=page.sections.filter(item=>item.kind==='mix_trend');
+    const trendHeader=trends.length?`<div class="sections">${trends.map(item=>renderSection(item,page.sections.indexOf(item))).join('')}</div>`:'';
+    $("#page").innerHTML=`${trendHeader}${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
     bindRhythmCharts();
     bindChannelPanels();
     bindSkuHeatmaps();
@@ -735,7 +737,7 @@
     const rankingIndex=state.module==='cancellation'?items.findIndex(item=>item.kind==='bars'&&item.title==='选配退订率排行'):-1;
     const trendIndex=rankingIndex>=0?items.findIndex(item=>item.kind==='daily_cancel'):-1;
     return items.map((item,index)=>{
-      if(trendIndex>=0&&index===rankingIndex)return '';
+      if(item.kind==='mix_trend'||(trendIndex>=0&&index===rankingIndex))return '';
       const ranking=index===trendIndex?items[rankingIndex]:null;
       const appendix=ranking?`<section class="cancel-ranking" aria-label="${esc(ranking.title)}"><div class="cancel-ranking-head"><div><h3>${esc(ranking.title)}</h3><span>${esc(ranking.meta)}</span></div>${renderPanelSource(ranking,rankingIndex)}</div>${renderBars(ranking.data)}</section>`:'';
       return renderSection(item,index,appendix);
@@ -746,7 +748,7 @@
   }
   function renderSection(item,index,appendix=''){
     const pieBars=item.kind==='bars'&&item.title==='门店渠道订单量';
-    const renderer=pieBars?renderPieChart:({channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
+    const renderer=pieBars?renderPieChart:({mix_trend:renderMixTrend,channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
     const annotationControls=item.kind==="stacked_trend" && item.data?.periods?.length;
     const chartId="trendChart"+index;
     const source=renderPanelSource(item,index);
@@ -928,6 +930,27 @@
         points.forEach((item,slot)=>item.setAttribute('tabindex',slot===next?'0':'-1'));points[next]?.focus({preventScroll:true});points[next]?.scrollIntoView({block:'nearest',inline:'nearest'});
       });
     });
+  }
+  function renderMixTrend({periods,series,metric}){
+    const g=channelChartGeometry(periods,series,false),format=metric==='share'?'percent':'number';
+    const maximum=format==='percent'?1:channelAxisMax(series.flatMap(item=>item.values));
+    const lineColors=['#2866ba','#a5471d','#11735a','#8549a4','#966800','#a03f65','#277685','#5a648a'];
+    const grid=[0,.25,.5,.75,1].map(ratio=>{
+      const y=g.bottom-ratio*(g.bottom-g.top);
+      return `<line x1="0" x2="${g.width}" y1="${y}" y2="${y}"/>`;
+    }).join('');
+    const lines=series.map(({name,values},index)=>{
+      const color=lineColors[index%lineColors.length];
+      const points=values.map((value,i)=>{
+        if(!channelKnown(value))return '';
+        const x=(i+.5)*g.step,y=g.bottom-value/maximum*(g.bottom-g.top);
+        return `<circle cx="${x}" cy="${y}" r="3" fill="${color}"><title>${esc(periods[i])} · ${esc(name)} · ${channelValue(value,format)}</title></circle>`;
+      }).join('');
+      return `<path class="channel-series-line" d="${channelLinePath(values,g,maximum)}" stroke="${color}"/>${points}`;
+    }).join('');
+    const labels=periods.map((period,i)=>`<text class="channel-axis-label" x="${(i+.5)*g.step}" y="${g.bottom+20}" text-anchor="middle">${esc(String(period).replace(/^\d{4}-(\d{2}-\d{2})$/,'$1'))}</text>`).join('');
+    const legend=series.map(({name},i)=>`<span><i style="background:${lineColors[i%lineColors.length]}"></i>${esc(name)}</span>`).join('');
+    return `<div class="channel-chart-frame channel-single-axis" style="--channel-chart-height:${g.height}px">${channelAxisMarkup(maximum,format,g,'left')}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${lines}${labels}</svg></div></div><div class="channel-legend">${legend}</div>`;
   }
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';
