@@ -61,6 +61,8 @@ class OrderProjectIsolationTests(TestCase):
                 SimpleNamespace(id='overview', label='订单总览', build=observe),
             ]))
             manifest, _ = generator.build(root, root / 'dashboard.html')
+            self.assertEqual(set(row[0] for row in manifest["source_signature"]["files"]),
+                             {ordinary.name, STAGE_SOURCE_PATH.name})
             self.assertEqual(observed, [('鸿蒙智行', [ordinary.name])])
             self.assertEqual([s['name'] for s in manifest['subjects']], ['鸿蒙智行'])
             raw_files = manifest['raw_files']

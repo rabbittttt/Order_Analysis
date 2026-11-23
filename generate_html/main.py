@@ -226,6 +226,10 @@ def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None
     manifest_mode = config.get("build_manifest_mode", "compact")
     if manifest_mode not in {"compact", "full", "off"}:
         raise ValueError("config.json 的 build_manifest_mode 必须是 compact、full 或 off")
+    if not static and source_signature is None:
+        # A manual dynamic publication is also the baseline for the next batch.
+        from core.sync import source_signature as input_signature
+        source_signature = input_signature(input_dir, check_ready=False)
     store = WorkbookStore(input_dir, cache_dir=output_file.parent / ".cache" / "excel")
     stage_started = perf_counter()
     # These workbooks describe stage identities or a separate report, not order sheets.

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-from core.sync import calculation_revision, AutoSync, BuildLock, RefreshSchedule, copy_stable_inputs, source_signature, published_signature, run_worker
+from core.sync import BATCH_WORKBOOKS, calculation_revision, AutoSync, BuildLock, RefreshSchedule, copy_stable_inputs, source_signature, published_signature, run_worker
 from core.server import create_app
 
 
@@ -19,18 +19,66 @@ class AutoSyncTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / 'input'
         self.source.mkdir()
-        self.book = self.source / 'orders.xlsx'
-        self.book.write_bytes(b'first')
+        self.books = [self.source / name for name in BATCH_WORKBOOKS]
+        for book in self.books:
+            book.write_bytes(b'first')
+        self.book = self.books[0]
         self.runtime = self.root / 'runtime'
 
     def test_default_timing_and_change_debounce(self):
         schedule = RefreshSchedule()
-        self.assertEqual(schedule.observe('old', 'old', 0), (False, 300))
-        self.assertEqual(schedule.observe('new', 'old', 300), (False, 60))
-        self.assertEqual(schedule.observe('new', 'old', 359), (False, 1))
-        self.assertEqual(schedule.observe('newer', 'old', 360), (False, 60))
-        self.assertEqual(schedule.observe('newer', 'old', 420), (True, 0))
-        self.assertEqual(schedule.observe('newer', 'newer', 900), (False, 300))
+        old = source_signature(self.source)
+        self.assertEqual(schedule.observe(old, old, 0), (False, 300))
+        for book in self.books[:-1]:
+            book.write_bytes(b'updated')
+            self.assertEqual(schedule.observe(source_signature(self.source), old, 300), (False, 300))
+        restarted = RefreshSchedule()
+        self.assertEqual(restarted.observe(source_signature(self.source), old, 600), (False, 300))
+        self.assertEqual(restarted.waiting_for, [self.books[-1].name])
+        self.books[-1].write_bytes(b'updated')
+        complete = source_signature(self.source)
+        self.assertEqual(restarted.observe(complete, old, 900), (False, 60))
+        self.assertEqual(restarted.observe(complete, old, 959), (False, 1))
+        self.book.write_bytes(b'changed again')
+        complete = source_signature(self.source)
+        self.assertEqual(restarted.observe(complete, old, 960), (False, 60))
+        self.assertEqual(restarted.observe(complete, old, 1020), (True, 0))
+        self.assertEqual(restarted.observe(complete, complete, 1021), (False, 300))
+        self.assertEqual(restarted.waiting_for, [])
+
+    def test_one_hour_deadline_survives_restart_and_later_edits(self):
+        old = source_signature(self.source)
+        schedule = RefreshSchedule(runtime=self.runtime)
+        self.book.write_bytes(b'updated')
+        self.assertEqual(schedule.observe(source_signature(self.source), old, 100), (False, 300))
+        self.books[1].write_bytes(b'updated later')
+        partial = source_signature(self.source)
+        restarted = RefreshSchedule(runtime=self.runtime)
+        self.assertEqual(restarted.observe(partial, old, 3650), (False, 50))
+        self.assertEqual(restarted.observe(partial, old, 3700), (False, 60))
+        self.books[1].write_bytes(b'still changing')
+        partial = source_signature(self.source)
+        self.assertEqual(restarted.observe(partial, old, 3760), (False, 60))
+        self.assertEqual(restarted.observe(partial, old, 3820), (True, 0))
+        self.assertEqual(restarted.observe(partial, partial, 3821), (False, 300))
+        self.books[-1].write_bytes(b'next round')
+        next_batch = source_signature(self.source)
+        self.assertEqual(restarted.observe(next_batch, partial, 3900), (False, 300))
+        self.assertEqual(restarted.observe(next_batch, partial, 4200), (False, 300))
+
+    def test_first_batch_requires_all_named_files_and_a_stable_minute(self):
+        self.book.unlink()
+        (self.source / "备份.xlsx").write_bytes(b'extra')
+        schedule = RefreshSchedule()
+        missing = source_signature(self.source)
+        self.assertEqual(schedule.observe(missing, None, 0), (False, 300))
+        self.assertEqual(schedule.waiting_for, [self.book.name])
+        self.book.write_bytes(b'first')
+        complete = source_signature(self.source)
+        self.assertEqual(schedule.observe(complete, None, 300), (False, 60))
+        self.assertEqual(schedule.observe(complete, None, 360), (True, 0))
+        (self.source / "备份.xlsx").unlink()
+        self.assertEqual(schedule.observe(source_signature(self.source), complete, 400), (False, 300))
 
     def test_checks_only_metadata_and_detects_add_edit_delete(self):
         read_bytes = Path.read_bytes
@@ -51,11 +99,17 @@ class AutoSyncTests(unittest.TestCase):
 
     def test_existing_marker_must_advance_for_next_batch(self):
         schedule = RefreshSchedule()
-        old = {"files": ["a"], "ready": [10, 100, 100]}
-        new = {"files": ["b"], "ready": [10, 100, 100]}
+        stamp = time.time_ns() + 10_000_000_000
+        old = {**source_signature(self.source), "ready": [10, stamp, stamp]}
+        for book in self.books:
+            book.write_bytes(b'updated')
+        new = {**source_signature(self.source), "ready": old["ready"]}
         self.assertEqual(schedule.observe(new, old, 300), (False, 300))
         self.assertEqual(schedule.observe(new, old, 600), (False, 300))
-        new = {**new, "ready": [10, 101, 101]}
+        stale = {**new, "ready": [10, 1, 1]}
+        self.assertEqual(schedule.observe(stale, old, 700), (False, 300))
+        self.assertEqual(schedule.waiting_for, ["orders.ready"])
+        new = {**new, "ready": [10, stamp + 1, stamp + 1]}
         self.assertEqual(schedule.observe(new, old, 900), (False, 60))
         self.assertEqual(schedule.observe(new, old, 960), (True, 0))
 
@@ -155,7 +209,8 @@ class AutoSyncTests(unittest.TestCase):
         def build(signature):
             calls.append(signature)
             if len(calls) == 1:
-                self.book.write_bytes(b'second')
+                for book in self.books:
+                    book.write_bytes(b'second')
                 self.book.write_bytes(b'latest')
                 time.sleep(.1)  # longer than both configured intervals
             published[0] = signature
@@ -186,31 +241,13 @@ class CalculationRevisionTests(unittest.TestCase):
                 self.assertNotEqual(calculation_revision(moved),original)
                 target.write_text('v1')
 
-    def test_code_only_upgrade_rebuilds_without_advancing_excel_completion_marker(self):
-        old={'directory':'inputs','files':[['orders.xlsx',10,1,1]],'ready':[1,2,2],'calculation_revision':'old'}
-        new={**old,'calculation_revision':'new'}
-        schedule=RefreshSchedule()
-        self.assertEqual(schedule.observe(new,old,0),(False,60))
-        self.assertEqual(schedule.observe(new,old,60),(True,0))
-        self.assertEqual(schedule.observe(new,new,61),(False,300))
-        # Old catalogs without a recipe are refreshed once after the upgrade.
-        legacy={key:value for key,value in old.items() if key!='calculation_revision'}
-        self.assertEqual(RefreshSchedule().observe(new,legacy,0),(False,60))
-        changed_inputs={**new,'files':[['orders.xlsx',11,1,1]]}
-        self.assertEqual(RefreshSchedule().observe(changed_inputs,old,0),(False,300))
-
-    def test_restart_with_new_recipe_schedules_unchanged_excel(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder);source=root/'input';source.mkdir();(source/'orders.xlsx').write_bytes(b'fixture')
-            runtime=root/'runtime';runtime.mkdir()
-            with patch('core.sync.calculation_revision',return_value='old'):
-                old=source_signature(source)
-            sync=AutoSync(source,runtime,check_seconds=.01,stable_seconds=.01)
-            published=[old];calls=[]
-            def build(signature):
-                calls.append(signature);published[0]=signature;sync.stop_event.set();return True
-            with patch('core.sync.calculation_revision',return_value='new'),patch('core.sync.published_signature',side_effect=lambda _:published[0]),patch.object(sync,'_build',side_effect=build):
-                sync.start();sync.thread.join(timeout=3);sync.stop()
-            self.assertEqual(len(calls),1)
-            self.assertEqual(calls[0]['files'],old['files'])
-            self.assertEqual(calls[0]['calculation_revision'],'new')
+    def test_revision_and_marker_cannot_bypass_batch_rule(self):
+        files = [[name, 10, 1, 1] for name in BATCH_WORKBOOKS]
+        old = {"directory": "inputs", "files": files, "ready": [1, 2, 2], "calculation_revision": "old"}
+        new = {**old, "calculation_revision": "new", "ready": [1, 3, 3]}
+        schedule = RefreshSchedule()
+        self.assertEqual(schedule.observe(new, old, 0), (False, 300))
+        partial = {**new, "files": [[files[0][0], 11, 2, 2], *files[1:]]}
+        self.assertEqual(schedule.observe(partial, old, 300), (False, 300))
+        self.assertEqual(schedule.observe(partial, old, 600), (False, 300))
+        self.assertEqual(schedule.waiting_for, list(BATCH_WORKBOOKS[1:]))
