@@ -18,7 +18,6 @@ from .data_paths import dynamic_log_directory
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_SECONDS = 300
 STABLE_SECONDS = 60
-EXCLUDED = {"鸿蒙智行销量数据汇总.xlsx"}
 BATCH_WORKBOOKS = (
     "小订及首销数据整理.xlsx",
     "鸿蒙智行小订退订分析.xlsx",
@@ -85,7 +84,7 @@ def source_signature(source: Path) -> dict:
         raise FileNotFoundError("订单 Excel 输入目录不存在")
     entries = []
     for path in sorted(source.iterdir(), key=lambda p: p.name):
-        if path.suffix.lower() != ".xlsx" or path.name.startswith("~$") or path.name in EXCLUDED:
+        if path.suffix.lower() != ".xlsx" or path.name.startswith("~$"):
             continue
         if not path.is_file() or path.is_symlink():
             raise ValueError("Excel 输入必须是普通文件")

@@ -1,4 +1,6 @@
 """Order builds exclude auxiliary inputs and never execute the separate prediction app."""
+import base64
+import gzip
 import json
 import subprocess
 import sys
@@ -38,7 +40,7 @@ class OrderProjectIsolationTests(TestCase):
 
         stack.enter_context(patch.object(generator, 'render_dashboard', side_effect=render))
 
-    def test_forecast_workbooks_are_excluded_and_remain_unchanged(self):
+    def test_sales_summary_is_downloadable_and_isolated_from_order_modules(self):
         with TemporaryDirectory() as folder, ExitStack() as stack:
             root = Path(folder)
             ordinary = root / '订单分析.xlsx'
@@ -62,12 +64,19 @@ class OrderProjectIsolationTests(TestCase):
             ]))
             manifest, _ = generator.build(root, root / 'dashboard.html')
             self.assertEqual(set(row[0] for row in manifest["source_signature"]["files"]),
-                             {ordinary.name, STAGE_SOURCE_PATH.name})
+                             {ordinary.name, STAGE_SOURCE_PATH.name, SUMMARY_NAME})
             self.assertEqual(observed, [('鸿蒙智行', [ordinary.name])])
             self.assertEqual([s['name'] for s in manifest['subjects']], ['鸿蒙智行'])
             raw_files = manifest['raw_files']
             self.assertCountEqual([file['name'] for file in raw_files],
-                                  [ordinary.name])
+                                  [ordinary.name, SUMMARY_NAME])
+            summary = next(file for file in raw_files if file['name'] == SUMMARY_NAME)
+            self.assertEqual(base64.b64decode(manifest['raw_blocks'][summary['workbook_key']]), original_bytes[SUMMARY_NAME])
+            sheet, = summary['sheets']
+            self.assertEqual(sheet['source_sheet'], auxiliaries[SUMMARY_NAME])
+            sheet_key = f'{raw_files.index(summary)}|0'
+            block = gzip.decompress(base64.b64decode(manifest['raw_blocks'][sheet_key]))
+            self.assertEqual(json.loads(block)['rows'][1][0], '留存大定')
             self.assertEqual(list(root.glob('*.html')), [])
             self.assertTrue((root / 'runtime/index.html').is_file())
             self.assertFalse((root / 'forecast_assets').exists())

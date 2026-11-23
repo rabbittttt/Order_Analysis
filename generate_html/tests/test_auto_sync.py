@@ -65,8 +65,12 @@ class AutoSyncTests(unittest.TestCase):
         with patch.object(Path, 'read_bytes', autospec=True, side_effect=read_program_only):
             before = source_signature(self.source)
             (self.source / '~$orders.xlsx').write_text('lock')
-            (self.source / '鸿蒙智行销量数据汇总.xlsx').write_text('excluded')
             self.assertEqual(source_signature(self.source), before)
+            (self.source / '鸿蒙智行销量数据汇总.xlsx').write_bytes(b'raw-only')
+            current = source_signature(self.source)
+            self.assertNotEqual(current, before)
+            self.assertEqual(RefreshSchedule().observe(current, before, 0), (False, 300))
+            before = current
             (self.source / 'extra.xlsx').write_text('new')
             self.assertNotEqual(source_signature(self.source), before)
             (self.source / 'extra.xlsx').unlink()

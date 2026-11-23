@@ -1376,6 +1376,7 @@ class WorkbookStore:
         self.input_dir = input_dir
         self.cache_dir = cache_dir
         self.items: list[WorkbookItem] = []
+        self.raw_only_items: list[WorkbookItem] = []
         self.chart_assets: dict[str, str] = {}
         self.load_errors: list[str] = []
         self._find_all_cache: dict[str, list[WorkbookItem]] = {}
@@ -1386,7 +1387,7 @@ class WorkbookStore:
         self._boundary_chart_logs: set[tuple] = set()
         self._chart_conflict_logs: set[tuple] = set()
 
-    def load(self, exclude_names: Iterable[str] = (), *, data_only_view: bool = False) -> None:
+    def load(self, exclude_names: Iterable[str] = (), *, raw_only_names: Iterable[str] = (), data_only_view: bool = False) -> None:
         if not self.input_dir.exists():
             raise FileNotFoundError(f"输入目录不存在: {self.input_dir}")
         self._find_all_cache.clear()
@@ -1397,6 +1398,7 @@ class WorkbookStore:
         self._boundary_chart_logs.clear()
         self._chart_conflict_logs.clear()
         excluded = set(exclude_names)
+        raw_only = set(raw_only_names)
         paths = sorted(path for path in self.input_dir.glob("*.xlsx") if not path.name.startswith("~$") and path.name not in excluded)
         if not paths:
             LOGGER.warning("输入目录中没有找到 .xlsx 文件: %s", self.input_dir)
@@ -1404,7 +1406,8 @@ class WorkbookStore:
             try:
                 workbook = (load_data_workbook(path, self.cache_dir)
                             if data_only_view else load_workbook(path, data_only=True, read_only=False))
-                self.items.append(WorkbookItem(path=path, workbook=workbook))
+                items = self.raw_only_items if path.name in raw_only else self.items
+                items.append(WorkbookItem(path=path, workbook=workbook))
                 LOGGER.debug("已读取 Excel: %s（%d 个 Sheet）", path.name, len(workbook.sheetnames))
             except Exception as exc:
                 message = f"Excel读取失败: {path.name}: {exc}"
@@ -1412,7 +1415,7 @@ class WorkbookStore:
                 LOGGER.exception(message)
 
     def close(self) -> None:
-        for item in self.items:
+        for item in (*self.items, *self.raw_only_items):
             item.workbook.close()
 
     def find(self, keyword: str) -> WorkbookItem | None:

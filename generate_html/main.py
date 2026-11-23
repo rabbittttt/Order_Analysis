@@ -154,11 +154,11 @@ def split_parallel_blocks(name: str, rows: list[list]) -> list[dict[str, Any]]:
     return blocks
 
 
-def raw_tables(store: WorkbookStore) -> tuple[list[dict[str, Any]], dict[str, str]]:
+def raw_tables(store: WorkbookStore, *, additional_items=()) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """按需加载的底表行块及原始 XLSX 快照；下载快照保留全部 Sheet 和格式。"""
     files = []
     blocks: dict[str, str] = {}
-    for file_index, item in enumerate(store.items):
+    for file_index, item in enumerate((*store.items, *additional_items)):
         sheets = []
         for sheet in item.workbook.worksheets:
             if getattr(sheet, "sheet_state", "visible") != "visible":
@@ -232,14 +232,14 @@ def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None
         source_signature = input_signature(input_dir)
     store = WorkbookStore(input_dir, cache_dir=output_file.parent / ".cache" / "excel")
     stage_started = perf_counter()
-    # These workbooks describe stage identities or a separate report, not order sheets.
-    excluded_names = {"鸿蒙智行销量数据汇总.xlsx", STAGE_SOURCE_NAME}
-    store.load(exclude_names=excluded_names, data_only_view=config.get("chart_render_mode") == "generated")
+    store.load(exclude_names={STAGE_SOURCE_NAME}, raw_only_names={"鸿蒙智行销量数据汇总.xlsx"},
+               data_only_view=config.get("chart_render_mode") == "generated")
     load_seconds = perf_counter() - stage_started
     if store.load_errors:
         store.close()
         raise RuntimeError("Excel 读取不完整：" + "；".join(store.load_errors))
     if not store.items:
+        store.close()
         details = "；".join(store.load_errors) if store.load_errors else "目录中没有xlsx文件"
         raise RuntimeError(f"没有成功读取任何Excel，无法生成看板：{details}")
     try:
@@ -293,7 +293,7 @@ def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None
             LOGGER.info("多文件来源：%d类，共%d个文件匹配项参与合并；详细文件名可使用 --debug 查看",
                         len(store.multi_source_groups), sum(store.multi_source_groups.values()))
         stage_started = perf_counter()
-        raw_files, raw_blocks = raw_tables(store)
+        raw_files, raw_blocks = raw_tables(store, additional_items=store.raw_only_items)
         raw_seconds = perf_counter() - stage_started
         manifest = {
             "meta": {
