@@ -1042,7 +1042,7 @@ button {
   --muted-2:#696f7d;
   --line:#e5e7ed;
   --line-strong:#d7dbe4;
-  --page:#f3f4f6;
+  --page:#F4F6F9;
   --card:#fff;
   --shadow-sm:0 1px 2px rgba(11,13,23,.04);
   --shadow-md:0 8px 24px rgba(11,13,23,.08);
@@ -2977,6 +2977,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 :root {
   --ui-font:"Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei UI", sans-serif;
   --surface-muted:#f7f8fa;
+  --surface-hover:#f3f4f6;
   --positive:#14764a;
   --positive-soft:#eaf7ef;
   --negative:#b72d59;
@@ -3039,7 +3040,7 @@ button,select,input {font-family:inherit}
   transition:background-color 160ms ease,color 160ms ease,box-shadow 160ms ease;
 }
 .module-bar .module-nav button:not(:disabled):hover,
-.mobile-module-picker select:hover {background:var(--page);color:var(--ink);transform:none}
+.mobile-module-picker select:hover {background:var(--surface-hover);color:var(--ink);transform:none}
 .module-bar .module-nav button.active:not(:disabled) {background:var(--primary-soft);color:var(--primary-strong);font-weight:600;box-shadow:none}
 .module-bar .module-nav button:focus-visible,
 .mobile-module-picker select:focus-visible {outline:2px solid var(--primary);outline-offset:2px}
