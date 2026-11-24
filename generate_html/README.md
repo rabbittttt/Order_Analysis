@@ -1,8 +1,8 @@
 # 鸿蒙智行订单分析
 
-动态运行与批注统一存放在同级 `工作台数据/database/orderiq/`；可通过 `PLANHUB_DATA_ROOT` 覆盖根目录，相对值按订单项目根解析。静态导出仍可选择输出文件。发布版使用包外 `planhub-runtime/database/orderiq/`。首次升级先运行门户的 `迁移持久数据.cmd`，旧库保留为恢复备份。
+动态运行与批注统一存放在同级 `工作台数据/database/orderiq/`；可通过 `PLANHUB_DATA_ROOT` 覆盖根目录，相对值按订单项目根解析。静态导出仍可选择输出文件。发布版使用包外 `planhub-runtime/database/orderiq/`。从旧目录升级时，先停服备份，按计划工作台的 `integration/storage-migration.example.json` 准备实际迁移清单。用 `scripts/migrate-storage.py <清单>` 预览，经核对后加 `--apply` 执行。
 
-订单分析与同级 `销量预测/` 项目已完全分开：两者独立维护代码、配置、模板、生成结果和缓存。它们只读取相同的共享业务输入，不互相导入代码，不调用对方入口。销量预测的完整使用说明位于其项目 `scripts/generate_html/README.md`。
+订单分析与同级 `销量预测/` 项目已完全分开：两者独立维护代码、配置、模板、生成结果和缓存。它们只读取相同的共享业务输入，不互相导入代码，不调用对方入口。销量预测的完整使用说明位于同级项目 `销量预测/README.md`。
 
 本项目已移除预测模块、刷新工具、汇总处理、双页面输出、预测计算及参数导入代码，测试只维护订单分析范围。后续预测功能修改应在 `销量预测/` 项目单独进行。
 
@@ -207,10 +207,10 @@ SKU是配置组合，不等于单一外观或内饰选项。长尾分布关注�
 修改代码前阅读 `README_AI.md`，保持 core/modules/templates 三层结构。仅修改本项目文件；预测项目需要独立修改和验证，不同步复制回另一项目。
 
 ```powershell
-python -m compileall core modules main.py
+..\..\..\.venv\Scripts\python.exe -m compileall core modules main.py
 node --check templates/dashboard.js
-python main.py --check --no-open
-python -m unittest discover -s tests
+..\..\..\.venv\Scripts\python.exe main.py --check --no-open
+..\..\..\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
 浏览器验收包括主体切换、模块切换、日周月切换、来源定位、底表搜索及 Excel 导出。业务数据和生成报告不纳入 Git。

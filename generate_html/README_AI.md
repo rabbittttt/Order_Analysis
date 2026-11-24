@@ -8,7 +8,7 @@
 2. `modules/`：一个业务标签一个文件，看板口径和排布都在这里。
 3. `templates/`：页面外壳、样式和通用组件渲染。
 
-`main.py` 只编排订单分析生成流程，`config.json` 放标签顺序和显示名称。`main.py --static` 复用同一业务计算，调用离线渲染器生成单文件 HTML；默认动态模式及自动同步不变。静态生成不得发布或覆盖 runtime 的入口和当前批次。不要直接修改 `output/` 中的生成文件。
+`main.py` 只编排订单分析生成流程，`config.json` 放标签顺序和显示名称。`main.py --static` 复用同一业务计算，调用离线渲染器生成单文件 HTML；默认动态模式及自动同步不变。静态生成不得发布或覆盖 runtime 的入口和当前批次。静态网页默认写入订单项目的 `output_file/`，动态批次写入工作台数据的 `database/orderiq/runtime/`。调整输出内容时修改生成器或模板。
 
 ## 常见修改
 
@@ -62,11 +62,11 @@ class XxxModule:
 requirements.txt 列出服务运行依赖。下面额外安装的 httpx2 供 Starlette 的 TestClient 运行接口测试。
 
 ```powershell
-python -m pip install -r requirements.txt "httpx2>=2,<3"
-python -m compileall core modules main.py server.py package_release.py
+..\..\..\.venv\Scripts\python.exe -m pip install -r requirements.txt "httpx2>=2,<3"
+..\..\..\.venv\Scripts\python.exe -m compileall core modules main.py server.py package_release.py
 node --check templates\dashboard.js
-python main.py --check --no-open
-python -m unittest discover -s tests
+..\..\..\.venv\Scripts\python.exe main.py --check --no-open
+..\..\..\.venv\Scripts\python.exe -m unittest discover -s tests
 ```
 
 检查本次 `generate_html_YYYYMMDD_HHMMSS.log` 中没有异常，并在浏览器测试主体切换、标签置灰、日/周/月和底表搜索。
@@ -76,6 +76,6 @@ python -m unittest discover -s tests
 生成时间可打开本页刷新诊断。服务与文件对照见 SERVER.md。推送后运行仓库根的「交付回执.ps1」并在交付消息中引用结果，读取本地与远端提交、指定服务的运行指纹和批次。
 共享业务规则的本机文件为 scripts/config/shared_config.py。配置管理维护该文件，SOP 与门户 SOP 启动器消费同一路径；备份应随本机业务配置执行。迁移时先验证三个消费者，再停用旧路径。
 
-阅读热点按问题定位：Excel 合并查 core/excel.py 的 merge_source_sheets，源表格式查 core/excel_format.py 的 format_excel_cell；底表交互查 dashboard.js 的 renderRaw，批次切换查 synchronizeDataset。大体积离线 HTML 在浏览器中打开，销量规律历史证据按 JSON 键查阅。
+阅读热点按问题定位：Excel 合并查 core/excel.py 的 merge_source_sheets，源表格式查 core/excel_format.py 的 format_excel_cell；底表交互查 dashboard.js 的 renderRaw，批次切换查 synchronizeDataset。大体积离线 HTML 在浏览器中打开。
 
 视觉检查使用固定样例对比基准提交与当前模板并输出前后截图、差异图及 JSON。运行 node tests/ui_visual_regression.cjs --baseline-ref HEAD^ --output-dir <临时目录>。推送与拉取请求会上传 order-visual 供核对；有意调整样式时仍应检查差异图。

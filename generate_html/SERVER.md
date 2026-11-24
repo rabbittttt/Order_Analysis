@@ -1,6 +1,6 @@
 # 订单看板动态服务
 
-动态运行与批注统一存放在同级 `工作台数据/database/orderiq/`；可通过 `PLANHUB_DATA_ROOT` 覆盖根目录，相对值按订单项目根解析。静态导出仍可选择输出文件。发布版使用包外 `planhub-runtime/database/orderiq/`。首次升级先运行门户的 `迁移持久数据.cmd`，旧库保留为恢复备份。
+动态运行与批注统一存放在同级 `工作台数据/database/orderiq/`；可通过 `PLANHUB_DATA_ROOT` 覆盖根目录，相对值按订单项目根解析。静态导出仍可选择输出文件。发布版使用包外 `planhub-runtime/database/orderiq/`。从旧目录升级时，先停服备份，按计划工作台的 `integration/storage-migration.example.json` 准备实际迁移清单。用 `scripts/migrate-storage.py <清单>` 预览，经核对后加 `--apply` 执行。
 
 数据来自当前汇总 Excel，默认输入为共享目录 `工作台数据/shared/订单汇总`。后台自动检查文件变化，由独立低优先级进程复用现有业务模块，生成不可变数据批次；HTTP 请求只读取已完成数据，不解析 Excel。
 
@@ -11,19 +11,19 @@
 在 `generate_html` 目录执行（使用项目 Python 环境）：
 
 ```powershell
-python -m pip install -r requirements.txt
-python server.py --open
+..\..\..\.venv\Scripts\python.exe -m pip install -r requirements.txt
+..\..\..\.venv\Scripts\python.exe server.py --open
 ```
 
-使用共享 `Project/.venv` 时，也在该环境中执行安装命令，以 `requirements.txt` 声明的服务依赖版本为准。
+以上路径从源码树的 `订单分析/scripts/generate_html/` 定位共享解释器。
 
 通过 `http://127.0.0.1:8767/` 打开页面。后台日志位于 `工作台数据/logs/orderiq/order_server.log`，自动处理日志为 `auto_sync.log` 及每批 `generate_html_*.log`。相同代码、输入/数据目录和同步间隔的运行服务会复用；升级代码后需先停止旧订单服务，再启动新版本。首次没有数据时页面自动等待，已有数据立即展示。
 
 手动重建/检查（排错时使用）与直接运行：
 
 ```powershell
-python main.py --check --no-open
-python server.py --host 127.0.0.1 --port 8767
+..\..\..\.venv\Scripts\python.exe main.py --check --no-open
+..\..\..\.venv\Scripts\python.exe server.py --host 127.0.0.1 --port 8767
 ```
 
 `--check` 遇到数据校验警告返回非零；无生成错误时仍发布完整数据。生成错误不会切换当前批次。Excel 更新后由后台自动处理；网页可见时，前台每 15 秒检查一次版本；隐藏时暂停，切回或聚焦时立即检查。发现新版本后，预加载当前看板成功后统一切换，看板、底表和导出保持同一批次。保留主体、标签、粒度、周期以及底表搜索和分页；批注编辑中延后切换，提交/取消后关闭编辑器即可同步。动态与静态看板顶部均显示“生成时间 YYYY-MM-DD HH:mm:ss”，取当前数据批次的生成时间；动态切换新批次时一并更新时间，异常时保留原时间并附简短状态。
@@ -31,7 +31,7 @@ python server.py --host 127.0.0.1 --port 8767
 动态看板通过服务网址访问。需要离线文件时，双击 `scripts/生成订单分析静态网页.cmd`，按菜单选择共享订单汇总、本项目 `output_file` 或自定义 Excel 目录；共享目录遵循 `SHARED_DATA_ROOT` 配置，默认选项为共享订单汇总。自定义目录可粘贴带双引号的路径，输入 `0` 可取消。通过 CMD 传入 `--input` 时跳过选择，其他生成参数继续传递。也可执行：
 
 ```powershell
-python main.py --static
+..\..\..\.venv\Scripts\python.exe main.py --static
 ```
 
 默认生成 `output_file/鸿蒙智行订单分析汇总_静态版.html` 并打开，可复制到其他电脑直接用浏览器查看。数据、图表、底表和原始 Excel 下载内容均嵌入一个 HTML，不需要后台服务；此入口不发布动态数据批次。输入目录与动态生成保持一致，可用 `--input` 指定，`--output` 指定 HTML 路径，`--no-open` 只生成文件。静态页的数据是生成时的快照，Excel 更新后需重新生成；批注仅保存在当前浏览器本地，不与动态服务共享。
@@ -68,7 +68,7 @@ HTTP 仅公开页面、资源和业务接口，不挂载整个数据目录。看
 更新代码后直接生成服务发布目录，无需先运行 `main.py` 或准备 Excel：
 
 ```powershell
-python package_release.py --output ../../releases/order-dashboard-v1
+..\..\..\.venv\Scripts\python.exe package_release.py --output ../../releases/order-dashboard-v1
 ```
 
 发布目录含服务代码、Excel 读取和计算模块、模板、配置、依赖清单及同版前端，拒绝覆盖已有目录，不包含原始业务数据、数据快照或批注数据库。可交给门户的 `New-AppRelease.ps1` 封装，类型 service、入口 server.py、dataMode external、healthPath /health。
