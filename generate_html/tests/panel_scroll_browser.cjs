@@ -1,7 +1,7 @@
 // Run after main.py. PANEL_USE_TEMPLATE_CSS=1 checks pending CSS on the formal page.
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{pathToFileURL}=require('node:url');
 const root=path.resolve(__dirname,'..'),{chromium}=require(process.env.PLAYWRIGHT_MODULE||path.resolve(root,'../../.test_runtime/node_modules/playwright'));
-const html=process.argv[2]||path.resolve(root,'../../output_file/鸿蒙智行订单分析汇总.html');
+const html=require('./static_report.cjs')(process.argv[2]);
 const css=fs.readFileSync(path.join(root,'templates/dashboard.css'),'utf8');
 const output=process.env.PANEL_ARTIFACT_DIR||path.join(process.env.TEMP||'/tmp','order-panel-scroll');
 const ready=page=>page.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false');

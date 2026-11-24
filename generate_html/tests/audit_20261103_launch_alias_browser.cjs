@@ -35,7 +35,7 @@ finally:t.doCleanups()
     };
    },scenario);
    const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
-   const url=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+   const url=pathToFileURL(require('./static_report.cjs')());
    url.search=new URLSearchParams({subject:'问界 M9 2026款',module:'launch_rhythm',grain:scenario.grain});
    await page.goto(url.href);await page.waitForSelector('[data-launch-rate="smallRate"]');
    assert.equal(await page.locator('.kpi').nth(2).locator('strong').textContent(),String(scenario.expected),name);

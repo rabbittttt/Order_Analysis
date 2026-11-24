@@ -492,7 +492,7 @@
     const newestYear=new Map();
     candidates.forEach(item=>{const key=quickGenerationFamilyKey(item.name);newestYear.set(key,Math.max(newestYear.get(key)||0,generationYear(item.name)))});
     const latest=new Map();
-    candidates.forEach(item=>{const year=generationYear(item.name);if(year<newestYear.get(quickGenerationFamilyKey(item.name)))return;const key=generationModelKey(item.name)+'|'+generationAggregate(item.name),old=latest.get(key);if(!old||year>generationYear(old.name)||(year===generationYear(old.name)&&item.name.localeCompare(old.name,'zh-CN')<0))latest.set(key,item)});
+    candidates.forEach(item=>{const year=generationYear(item.name);if(year<newestYear.get(quickGenerationFamilyKey(item.name)))return;const key=generationModelKey(item.name)+'|'+(item.is_aggregate??generationAggregate(item.name)),old=latest.get(key);if(!old||year>generationYear(old.name)||(year===generationYear(old.name)&&item.name.localeCompare(old.name,'zh-CN')<0))latest.set(key,item)});
     return [...latest.values()].filter(item=>item.has_lock_orders===true).sort((left,right)=>{const brandLeft=quickBrandOrder.indexOf(left.parent),brandRight=quickBrandOrder.indexOf(right.parent);return (brandLeft<0?quickBrandOrder.length:brandLeft)-(brandRight<0?quickBrandOrder.length:brandRight)||generationModelKey(left.name).localeCompare(generationModelKey(right.name),'en')||left.name.localeCompare(right.name,'zh-CN')});
   }
   function syncTopbarQuickLayout(){
@@ -1343,7 +1343,24 @@
     const generatedAt=DATA.meta?.generated_at;
     const time=generatedAt?`生成时间 ${String(generatedAt).replace('T',' ')}`:'';
     const labels=[[time,'sync-time'],[message?(time?' · ':'')+message:'','sync-message']].filter(([text])=>text);
-    node.replaceChildren(...labels.map(([text,className])=>{const label=document.createElement('span');label.className=className;label.textContent=text;return label;}));
+    const diagnosticUrl=DYNAMIC?apiUrl('diagnostics',{dataset:null,page_dataset:DATA.dataset_id}).href:'';
+    if(node.textContent===labels.map(([text])=>text).join('') && (!diagnosticUrl||node.querySelector('a')?.href===diagnosticUrl))return;
+    node.replaceChildren(...labels.map(([text,className])=>{
+      const label=document.createElement('span');
+      label.className=className;
+      if(className==='sync-time'&&diagnosticUrl){
+        const link=document.createElement('a');
+        link.dataset.syncDiagnostics='';
+        link.target='_blank';
+        link.rel='noopener';
+        link.style.cssText='color:inherit;text-decoration:none;font:inherit';
+        link.title='查看刷新诊断';
+        link.href=diagnosticUrl;
+        link.textContent=text;
+        label.append(link);
+      }else label.textContent=text;
+      return label;
+    }));
     node.hidden=!labels.length;
   }
   async function synchronizeDataset(){

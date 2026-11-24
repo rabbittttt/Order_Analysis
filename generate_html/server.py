@@ -8,6 +8,7 @@ from pathlib import Path
 
 import uvicorn
 
+from core.sync import CHECK_SECONDS, STABLE_SECONDS
 from core.server import DEFAULT_DATA_DIR, DEFAULT_STATE_DIR, PROJECT_ROOT, create_app
 from core.data_paths import orders_input_directory
 
@@ -22,8 +23,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--allowed-host", action="append", help="额外允许的公共主机名，可重复指定，本机健康检查始终允许 localhost/127.0.0.1")
     parser.add_argument("--allowed-origin", action="append", default=[], help="允许的公共站点完整来源，例如 https://portal.example，可重复指定")
     parser.add_argument("--input", type=Path, default=orders_input_directory(PROJECT_ROOT), help="订单汇总 Excel 目录，默认同级共享数据/订单汇总")
-    parser.add_argument("--check-seconds", type=float, default=300)
-    parser.add_argument("--stable-seconds", type=float, default=60)
+    parser.add_argument("--check-seconds", type=float, default=CHECK_SECONDS)
+    parser.add_argument("--stable-seconds", type=float, default=STABLE_SECONDS)
     parser.add_argument("--no-sync", action="store_true", help="只读取已发布数据，不自动处理 Excel")
     parser.add_argument("--open", action="store_true", help="启动或复用后台并打开网页")
     parser.add_argument("--no-open", action="store_true", help="配合 --open 启动后台但不打开浏览器")

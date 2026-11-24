@@ -7,7 +7,7 @@ from datetime import date
 
 from core.components import kpi, section
 from core.discovery import BRAND_ORDER
-from core.excel import GRAIN_LABELS, WorkbookStore, _source_date_range, compact_text, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_parent, subject_type
+from core.excel import AGGREGATE_MARKERS, latest_detail_period, GRAIN_LABELS, WorkbookStore, _source_date_range, compact_text, grain_from_sheet, is_aggregate_generation, parse_metric_sheet, sheet_subject, subject_parent, subject_type
 from core.model_identity import aggregate_members
 from core.models import Dashboard, SourceRef, Subject
 
@@ -16,16 +16,7 @@ COLORS = ["blue", "green", "orange", "purple"]
 HISTORY_COLUMNS = ["周期", "大定", "环比", "留存大定", "环比", "交车锁单", "环比", "已交付", "环比"]
 HISTORY_FORMATS = ["text", "number", "signed_percent", "number", "signed_percent", "number", "signed_percent", "number", "signed_percent"]
 LOGGER = logging.getLogger(__name__)
-AGGREGATE_MARKERS = ("近", "汇总", "累计", "总计")
 MODEL_YEAR_PATTERN = re.compile(r"20\d{2}\s*款")
-
-
-def _latest_detail_period(periods: list[str]) -> str:
-    """默认展示最新的日期/周/月。"""
-    return next(
-        (period for period in reversed(periods) if not any(marker in str(period) for marker in AGGREGATE_MARKERS)),
-        periods[-1],
-    )
 
 
 def _metric_value(metrics: dict, *names: str, default: float | None = 0) -> float | None:
@@ -623,5 +614,5 @@ class OverviewModule:
                             gd["lock_source"],
                         ))
             _log_lock_share_issues(subject, grain, periods, lock_share_issues)
-            views[grain] = {"periods": periods, "default_period": _latest_detail_period(periods), "pages": pages}
+            views[grain] = {"periods": periods, "default_period": latest_detail_period(periods), "pages": pages}
         return Dashboard(self.id, subject.id, views, sources) if views else None

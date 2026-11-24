@@ -41,7 +41,7 @@ function sourceRatios(part){
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1100}});
   page.on('pageerror',error=>errors.push(error.message));
-  const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+  const base=pathToFileURL(require('./static_report.cjs')());
   const ready=()=>page.waitForFunction(()=>document.querySelector('#page')?.getAttribute('aria-busy')==='false');
   await page.goto(base.href);await ready();
   const blocks=await page.evaluate(()=>window.DASHBOARD_BLOCKS_B64);

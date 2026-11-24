@@ -18,12 +18,15 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
+from core.sync import BATCH_WORKBOOKS, CHECK_SECONDS, STABLE_SECONDS
+from core.revision import source_commit
 from core.annotations import create_annotations_router
 
 
 DATASET_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
 ROOT = Path(__file__).resolve().parents[1]
-SERVICE_SOURCE_FILES = ("server.py", "core/server.py", "core/annotations.py", "core/sync.py", "core/renderer.py", "core/data_paths.py", "main.py", "config.json", "requirements.txt")
+SERVICE_COMMIT = source_commit(ROOT)
+SERVICE_SOURCE_FILES = ("core/revision.py", "server.py", "core/server.py", "core/annotations.py", "core/sync.py", "core/renderer.py", "core/data_paths.py", "main.py", "config.json", "requirements.txt")
 # Keep the running process identity fixed even when a newer release is written.
 SERVICE_FINGERPRINT = hashlib.sha256(
     b"".join((ROOT / name).read_bytes() for name in SERVICE_SOURCE_FILES)
@@ -190,8 +193,8 @@ def create_app(
     allowed_hosts: Sequence[str] | None = None,
     allowed_origins: Sequence[str] = (),
     input_dir: Path | str | None = None,
-    check_seconds: float = 300,
-    stable_seconds: float = 60,
+    check_seconds: float = CHECK_SECONDS,
+    stable_seconds: float = STABLE_SECONDS,
 ) -> FastAPI:
     store = SnapshotStore(Path(data_dir or DEFAULT_DATA_DIR))
     web_root = Path(web_dir).resolve() if web_dir else store.data_dir
@@ -229,7 +232,7 @@ def create_app(
 
     @app.api_route("/health", methods=["GET", "HEAD"])
     @app.api_route("/api/health", methods=["GET", "HEAD"])
-    def health():
+    def health(request: Request):
         try:
             dataset_id = store.current_id()
         except HTTPException:
@@ -239,9 +242,11 @@ def create_app(
         return {
             "status": "ok",
             "application": "order-dashboard",
+            "service_port": (request.scope.get("server") or (None, None))[1],
             "dataset_id": dataset_id,
             "data_fingerprint": data_fingerprint(store.data_dir),
             "service_fingerprint": SERVICE_FINGERPRINT,
+            "commit": SERVICE_COMMIT,
             "input_fingerprint": data_fingerprint(sync.source) if sync else None,
             "check_seconds": sync.schedule.check_seconds if sync else None,
             "stable_seconds": sync.schedule.stable_seconds if sync else None,
@@ -254,6 +259,36 @@ def create_app(
         except HTTPException:
             dataset = None
         return {"dataset_id": dataset, **(sync.status() if sync else {"phase": "idle", "error": None})}
+
+    @app.get("/api/diagnostics")
+    def diagnostics(request: Request, page_dataset: str | None = Query(default=None, pattern=DATASET_PATTERN)):
+        """Read the watched file timestamps only when someone opens diagnostics."""
+        info = health(request)
+        dataset = info["dataset_id"]
+        baseline = None
+        if dataset:
+            catalog = load_json(store.dataset_file(dataset, "catalog.json"))
+            baseline = catalog.get("source_signature")
+        baseline_dir = (baseline or {}).get("directory")
+        same_input = bool(sync and baseline_dir and
+                          data_fingerprint(Path(baseline_dir)) == info["input_fingerprint"])
+        previous = {row[0]: row[2] for row in (baseline or {}).get("files", [])}
+        files = []
+        if sync:
+            for name in BATCH_WORKBOOKS:
+                try:
+                    current = (sync.source / name).stat().st_mtime_ns
+                except FileNotFoundError:
+                    current = None
+                except OSError:
+                    files.append({"name": name, "state": "unreadable"})
+                    continue
+                files.append({"name": name, "current_mtime_ns": str(current) if current is not None else None,
+                              "published_mtime_ns": str(previous[name]) if name in previous else None,
+                              "changed": (current != previous.get(name)) if same_input else None})
+        return {**info, "sync": sync.status() if sync else {"phase": "disabled"},
+                "page_dataset": page_dataset, "page_is_current": page_dataset == dataset if page_dataset else None,
+                "published_input_matches": same_input if sync and baseline else None, "watched_files": files}
 
     @app.api_route("/api/catalog", methods=["GET", "HEAD"])
     def catalog():

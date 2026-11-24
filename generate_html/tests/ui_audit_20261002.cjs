@@ -4,7 +4,7 @@ const project=path.resolve(__dirname,'../../..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const phase=process.argv.includes('--before')?'before':'after';
 const output=path.join(project,'.test_outputs/ui_audit_20261002',phase);
-const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+const base=pathToFileURL(require('./static_report.cjs')());
 const results={phase,pages:[],errors:[]};
 (async()=>{
  fs.mkdirSync(output,{recursive:true});

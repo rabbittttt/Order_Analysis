@@ -14,6 +14,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
+from core.sync import CHECK_SECONDS, STABLE_SECONDS
 from core.components import add_kpi_comparisons
 from core.config import load_config
 from core.data_paths import orders_input_directory, dynamic_log_directory
@@ -422,7 +423,7 @@ def cleanup_input_cache(input_dir: Path) -> None:
         LOGGER.warning("运行缓存未能清理: %s（%s）；可在文件占用结束后手动删除", cache_dir, exc)
 
 
-def open_dynamic_dashboard(data_dir: Path, port: int, *, input_dir: Path | None = None, open_browser: bool = True, check_seconds: float = 300, stable_seconds: float = 60, no_sync: bool = False) -> None:
+def open_dynamic_dashboard(data_dir: Path, port: int, *, input_dir: Path | None = None, open_browser: bool = True, check_seconds: float = CHECK_SECONDS, stable_seconds: float = STABLE_SECONDS, no_sync: bool = False) -> None:
     import subprocess
     import time
     import urllib.error

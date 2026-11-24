@@ -87,3 +87,8 @@ python server.py --input <汇总Excel目录> --data-dir <持久数据目录/runt
 
 
 计算批次同时记录输入文件签名与自动计算的程序指纹（main/server、core、modules、templates、config.json 和 requirements.txt）。程序版本变化也会在稳定后重新计算。额外工作簿和 orders.ready 不参与触发判断。同版同输入重启继续复用，失败保留上次成功批次与批注。手动动态生成会记录本次输入，作为后续自动更新的基准。共享原始文件不改写，源码联调改动后仍需重启服务加载同版前后端。
+
+## 刷新诊断
+
+动态页点击生成时间，在新标签打开当前页与后台的只读对照。直接请求路径为 `api/diagnostics`，门户路径为 `/orderiq/api/diagnostics`。接口仅在请求时读取九个文件的修改时间。watched_files 的 changed 为 true 表示与已发布批次不同，null 表示基线缺失或目录不同。修改时间以纳秒整数字符串返回，避免浏览器舍入。
+page_dataset 为点击时页面批次，dataset_id 为服务当前批次；page_is_current 对比两者。sync.phase 记录空闲、等待、生成或错误。input_fingerprint 可跨入口比较监听位置。commit 缺失表示运行源码版本未核实。此诊断不触发构建。

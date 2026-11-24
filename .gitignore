@@ -1,0 +1,11 @@
+# Local business configuration is not versioned.
+/config/
+
+# Local audit logs, screenshots, caches, and migration snapshots.
+/.test_outputs/
+
+# Local update helper.
+update_script.bat
+
+# Offline storage migration recovery copies.
+*.pre-central-*/

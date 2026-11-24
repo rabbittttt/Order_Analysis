@@ -10,7 +10,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(root,'.test_ru
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
-  const current=process.env.UI_AUDIT_FINAL?path.join(root,'output_file/鸿蒙智行订单分析汇总.html'):path.join(out,'preview.html');
+  const current=(process.env.ORDER_TEST_HTML||process.env.UI_AUDIT_FINAL)?require('./static_report.cjs')():path.join(out,'preview.html');
   await page.goto(pathToFileURL(current).href);await page.waitForSelector('.kpi');
   const modules=await page.evaluate(()=>window.DASHBOARD_DATA.config.module_order.map(id=>{
    const data=window.DASHBOARD_DATA,subject=data.subjects.find(s=>s.type==='generation'&&s.modules.includes(id))||data.subjects.find(s=>s.modules.includes(id));

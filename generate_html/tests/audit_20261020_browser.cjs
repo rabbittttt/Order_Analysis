@@ -9,7 +9,7 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
   "import json;from tests.test_audit_20261020 import ConversionMissingFactsTests; t=ConversionMissingFactsTests(); result={};\ntry:\n for key,values in [('middle',[100,90,None,80,75,70,60]),('delivery',[100,90,85,80,75,70,None]),('base',[None,90,85,80,75,70,60]),('zero',[100,90,0,0,0,0,0]),('complete',[100,90,85,80,75,70,60])]:\n  page=t.build_page(values,(0,0) if key=='zero' else (3.5,18) if key=='complete' else (None,'#DIV/0!'));result[key]={'periods':['26WK40'],'default_period':'26WK40','pages':{'26WK40':page}}\n print(json.dumps(result,ensure_ascii=False))\nfinally:t.doCleanups()"
  ],{cwd:root,encoding:'utf8',env:{...process.env,PYTHONUTF8:'1'}});
  const scenarios=JSON.parse(fixture),browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[];
- const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+ const base=pathToFileURL(require('./static_report.cjs')());
  const artifact=process.env.AUDIT_ARTIFACT_DIR;if(artifact)fs.mkdirSync(artifact,{recursive:true});
  let checks=0;const check=(name,passed)=>{assert(passed,name);checks++;console.log('PASS '+name)};
  try{

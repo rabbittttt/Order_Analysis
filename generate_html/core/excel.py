@@ -21,6 +21,8 @@ from types import SimpleNamespace
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles.numbers import is_date_format
+
+from core.excel_format import clean_text, format_excel_cell, format_excel_value
 from openpyxl.utils.cell import get_column_letter, coordinate_to_tuple
 
 
@@ -62,12 +64,6 @@ def compact_diagnostic_ranges(labels):
             first, last = values[numbers[0]], values[numbers[-1]]
             result.append(first if first == last else f"{first}～{last}")
     return "、".join(result + sorted(other, key=_period_sort))
-
-
-def clean_text(value: Any) -> str:
-    if value is None:
-        return ""
-    return re.sub(r"\s+", " ", str(value).replace("\u2011", "-")).strip()
 
 
 def compact_text(value: Any) -> str:
@@ -121,64 +117,6 @@ def cell_number(cell: Any, rate: bool = False, default: float = 0.0) -> float:
     return value
 
 
-def _format_precision(number_format: str, marker: str = "") -> int:
-    section = number_format.split(";", 1)[0]
-    if marker and marker in section:
-        section = section.split(marker, 1)[0]
-    match = re.search(r"[0#](?:\.([0#]+))?[^0#]*$", section)
-    return len(match.group(1) or "") if match else 0
-
-
-def _format_date(value: date | datetime, number_format: str) -> str:
-    fmt = number_format.lower().replace("\\", "")
-    has_time = any(token in fmt for token in ("h", "s", "am/pm"))
-    has_day = "d" in fmt
-    has_month = "m" in fmt
-    has_year = "y" in fmt
-    separator = "/" if "/" in fmt else "." if "." in fmt else "-"
-    if has_year and has_month and has_day:
-        result = value.strftime(f"%Y{separator}%m{separator}%d")
-    elif has_year and has_month:
-        result = value.strftime(f"%Y{separator}%m")
-    elif has_month and has_day:
-        result = value.strftime(f"%m{separator}%d")
-    else:
-        result = value.isoformat()
-    if has_time and isinstance(value, datetime):
-        time_text = value.strftime("%H:%M:%S" if "s" in fmt else "%H:%M")
-        result = f"{result} {time_text}" if has_year or has_month or has_day else time_text
-    return result
-
-
-def format_excel_value(value: Any, number_format: str = "General") -> str:
-    """Render common Excel formats without assuming fixed precision or date syntax."""
-    if value is None:
-        return ""
-    if isinstance(value, (datetime, date)):
-        return _format_date(value, number_format)
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if not isinstance(value, (int, float)):
-        return clean_text(value)
-    fmt = clean_text(number_format or "General")
-    if fmt.lower() == "general" or fmt == "@":
-        return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
-    if is_date_format(fmt):
-        return str(value)
-    if "%" in fmt:
-        precision = _format_precision(fmt, "%")
-        return f"{value * 100:,.{precision}f}%"
-    precision = _format_precision(fmt)
-    grouping = "," in fmt.split(";", 1)[0]
-    rendered = f"{value:,.{precision}f}" if grouping else f"{value:.{precision}f}"
-    currency = next((symbol for symbol in ("￥", "¥", "$", "€", "£") if symbol in fmt), "")
-    return f"{currency}{rendered}"
-
-
-def format_excel_cell(cell: Any) -> str:
-    return format_excel_value(cell.value, getattr(cell, "number_format", "General"))
-
-
 def safe_rate(numerator: Any, denominator: Any) -> float:
     den = safe_number(denominator)
     return safe_number(numerator) / den if den else 0.0
@@ -200,9 +138,9 @@ def sheet_subject(name: str) -> str:
     subject_prefixes = [
         # “总计/汇总”可以是代际名称本身的一部分，例如“问界 M9 2026款总计”。
         # 只清理它后面的分析后缀，不要把它误当作汇总周期截掉。
-        r"^(.+?20\d{2}\s*款(?:\s*(?:总计|汇总))?)\s*[_\-—]\s*.+$",
+        r"^(.+?20\d{2}\s*款(?:\s*(?:总计|汇总|合计))?)\s*[_\-—]\s*.+$",
         # 代号型代际（无款号），包括“尊界 V680&V800”等组合代号。
-        r"^([\u4e00-\u9fff]{1,3}界\s*[A-Za-z0-9]+(?:\s*[&+/]\s*[A-Za-z0-9]+)*(?:\s*20\d{2}\s*款)?(?:\s*(?:总计|汇总))?)\s*[_\-—]\s*.+$",
+        r"^([\u4e00-\u9fff]{1,3}界\s*[A-Za-z0-9]+(?:\s*[&+/]\s*[A-Za-z0-9]+)*(?:\s*20\d{2}\s*款)?(?:\s*(?:总计|汇总|合计))?)\s*[_\-—]\s*.+$",
         r"^(鸿蒙智行)\s*[_\-—]\s*.+$",
         r"^([\u4e00-\u9fff]{1,3}界)\s*[_\-—]\s*.+$",
     ]
@@ -214,10 +152,22 @@ def sheet_subject(name: str) -> str:
     return clean_text(value.rstrip("_"))
 
 
+AGGREGATE_MARKERS = ("近", "汇总", "累计", "总计")
+
+
+def latest_detail_period(periods: list[str]) -> str:
+    """默认展示最新的日期/周/月。"""
+    return next(
+        (period for period in reversed(periods) if not any(marker in str(period) for marker in AGGREGATE_MARKERS)),
+        periods[-1],
+    )
+
+
+
 def is_aggregate_generation(name: str) -> bool:
-    """含 & 的组合代际为聚合视图；兼容旧总计/汇总后缀，品牌统计须排除。"""
+    """含 & 的组合代际为聚合视图；兼容总计/汇总/合计后缀，品牌统计须排除。"""
     value = clean_text(name)
-    return "&" in value or value.endswith(("总计", "汇总"))
+    return "&" in value or value.endswith(("总计", "汇总", "合计"))
 
 
 def subject_type(name: str) -> str:

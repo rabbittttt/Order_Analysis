@@ -50,7 +50,7 @@ class AmpersandAggregateTests(TestCase):
 
     def test_combination_marker_and_legacy_suffixes_preserve_classification(self):
         for name in (*COMBINED, "尊界 V680&V800", "问界 M9 & M9U 2026款",
-                     "问界 F2N 2026款汇总", "问界 M9 2026款总计"):
+                     "问界 F2N 2026款汇总", "问界 M9 2026款总计", "问界 M9 2026款合计"):
             with self.subTest(name=name):
                 self.assertTrue(is_aggregate_generation(name))
                 self.assertTrue(is_valid_subject_name(name))

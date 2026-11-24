@@ -1,0 +1,51 @@
+name: 订单看板检查
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  fixture-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: generate_html
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -r requirements.txt 'httpx2>=2,<3'
+      - run: |
+          node --check templates/dashboard.js
+          node --check templates/trend_annotations.js
+          node tests/quick_generations.cjs
+          python -m unittest discover -s tests -p test_ampersand_aggregates.py
+          python -m unittest discover -s tests -p test_update_diagnostics.py
+  visual-diff:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 安装视觉检查工具
+        shell: pwsh
+        run: npm install --prefix "$env:RUNNER_TEMP/tools" --no-save playwright@1.56.1
+      - name: 比较标题栏和趋势图
+        shell: pwsh
+        env:
+          PREVIOUS: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          $base = $env:PREVIOUS
+          if (-not $base -or $base -match '^0+$') { $base = 'HEAD^' }
+          $env:PLAYWRIGHT_MODULE = "$env:RUNNER_TEMP/tools/node_modules/playwright"
+          node generate_html/tests/ui_visual_regression.cjs --baseline-ref $base --output-dir "$env:RUNNER_TEMP/order-visual"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: order-visual
+          path: ${{ runner.temp }}/order-visual

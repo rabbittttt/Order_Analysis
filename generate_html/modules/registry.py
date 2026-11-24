@@ -1,3 +1,4 @@
+from modules.base import DashboardModule
 from modules.cancellation import CancellationModule
 from modules.channel_analysis import ChannelAnalysisModule
 from modules.conversion import ConversionModule
@@ -9,7 +10,7 @@ from modules.overview import OverviewModule
 from modules.sku import SkuModule
 
 
-MODULES = [
+MODULES: list[DashboardModule] = [
     OverviewModule(),
     ChannelAnalysisModule(),
     LaunchRhythmModule(),

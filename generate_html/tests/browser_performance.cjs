@@ -5,7 +5,7 @@ const project=path.resolve(__dirname,'../../..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const arg=(key,fallback)=>process.argv.find(s=>s.startsWith('--'+key+'='))?.split('=').slice(1).join('=')||fallback;
 const label=arg('label','baseline'),runs=Number(arg('runs','5')),profile=process.argv.includes('--profile');
-const file=path.join(project,'output_file/鸿蒙智行订单分析汇总.html');
+const file=require('./static_report.cjs')();
 const out=path.join(project,'.test_outputs/performance_20261002');
 const report={label,profile,runs,created:new Date().toISOString(),environment:{cpu:os.cpus()[0]?.model,logicalCpus:os.cpus().length,totalMemoryMiB:os.totalmem()/1048576,platform:os.platform(),viewport:'1440x1000',headless:true,reducedMotion:'reduce',htmlBytes:fs.statSync(file).size,htmlSha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')},samples:[],errors:[]};
 const url=params=>{const u=pathToFileURL(file);u.search=new URLSearchParams(params);return u.href};

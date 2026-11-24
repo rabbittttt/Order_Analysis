@@ -3,17 +3,8 @@ from __future__ import annotations
 import re
 
 from core.components import kpi, section, table
-from core.excel import WorkbookStore, parse_metric_sheet
+from core.excel import WorkbookStore, latest_detail_period, parse_metric_sheet
 from core.models import Dashboard, SourceRef, Subject
-
-
-def _latest_detail_period(periods: list[str]) -> str:
-    """默认展示最新明细周期，总计/汇总仍保留在下拉选项中。"""
-    aggregate_markers = ("近", "汇总", "累计", "总计")
-    return next(
-        (period for period in reversed(periods) if not any(marker in str(period) for marker in aggregate_markers)),
-        periods[-1],
-    )
 
 
 def _battery_degree(label: str) -> int:
@@ -166,7 +157,7 @@ class MixModule:
                     "sections": sections,
                 }
                 previous = data
-            views[grain] = {"periods": periods, "default_period": _latest_detail_period(periods), "pages": pages}
+            views[grain] = {"periods": periods, "default_period": latest_detail_period(periods), "pages": pages}
         return Dashboard(self.id, subject.id, views, sources) if views else None
 
 

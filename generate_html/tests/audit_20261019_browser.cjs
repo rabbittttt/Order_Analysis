@@ -5,7 +5,7 @@ const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[];let checks=0;
  const check=(name,value)=>{assert(value,name);checks++;console.log('PASS '+name)};
- const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+ const base=pathToFileURL(require('./static_report.cjs')());
  const artifact=process.env.AUDIT_ARTIFACT_DIR;if(artifact)fs.mkdirSync(artifact,{recursive:true});
  try{
   const fixture=execFileSync(require('./shared_python.cjs')(process.env.PYTHON_EXE),['-c',

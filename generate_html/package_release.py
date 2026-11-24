@@ -5,6 +5,7 @@ import json
 import shutil
 from pathlib import Path
 
+from core.revision import source_commit
 from core.renderer import render_dynamic_shell
 
 ROOT = Path(__file__).resolve().parent
@@ -28,7 +29,7 @@ def package(destination: Path, runtime: Path | None = None) -> None:
     # No Excel input, dataset pointer or previously generated report is read.
     render_dynamic_shell(destination / "templates", web)
     (destination / "release-info.json").write_text(json.dumps({
-        "application": "order-dashboard", "data_mode": "external",
+        "application": "order-dashboard", "commit": source_commit(ROOT), "data_mode": "external",
         "entry": "server.py", "web_dir": "web",
         "required_arguments": ["--input", "--data-dir", "--state-dir", "--web-dir"],
     }, indent=2), encoding="utf-8")

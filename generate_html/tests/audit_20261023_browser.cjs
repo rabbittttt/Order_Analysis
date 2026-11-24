@@ -2,7 +2,7 @@
 const path=require('path'),assert=require('assert'),{pathToFileURL}=require('url');
 const project=path.resolve(__dirname,'../../..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
-const base=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+const base=pathToFileURL(require('./static_report.cjs')());
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'}),errors=[];let checks=0;
  const check=(label,ok)=>{assert(ok,label);checks++;console.log('PASS '+label)};

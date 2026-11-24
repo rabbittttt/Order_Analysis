@@ -7,7 +7,7 @@ const {chromium}=require(path.join(project,'.test_runtime/node_modules/playwrigh
  try{
   const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
   page.on('pageerror',error=>errors.push(error.message));
-  const url=pathToFileURL(path.join(project,'output_file/鸿蒙智行订单分析汇总.html'));
+  const url=pathToFileURL(require('./static_report.cjs')());
   url.search='?module=overview';await page.goto(url.href);
   await page.waitForFunction(()=>window.DASHBOARD_DATA&&document.querySelector('#page').getAttribute('aria-busy')==='false');
   const ids=await page.evaluate(async()=>{

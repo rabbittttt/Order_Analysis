@@ -8,7 +8,7 @@ from typing import Iterable
 from core.excel import WorkbookStore, clean_text, compact_text, sheet_subject, subject_parent, subject_type
 from core.models import Subject
 from core.model_identity import aggregate_members, generation_records, model_key, parent_generation, stage_name
-from core.excel import parse_metric_sheet
+from core.excel import parse_metric_sheet, is_aggregate_generation
 
 
 DEFAULT_MODULE_ORDER = [
@@ -34,7 +34,7 @@ def is_valid_subject_name(name: str) -> bool:
         return True
     if re.fullmatch(r"[\u4e00-\u9fff]{1,3}界", value):
         return True
-    if re.fullmatch(r"[\u4e00-\u9fff]{1,3}界.+20\d{2}款(?:总计|汇总)?", value, flags=re.IGNORECASE):
+    if re.fullmatch(r"[\u4e00-\u9fff]{1,3}界.+20\d{2}款(?:总计|汇总|合计)?", value, flags=re.IGNORECASE):
         return True
     # 代号型代际（无款号），含组合代号或版本名；中文指标名仍须排除。
     return bool(re.fullmatch(r"[\u4e00-\u9fff]{1,3}界[A-Za-z0-9]+(?:[&+/][A-Za-z0-9]+)*(?:[\u4e00-\u9fff]{1,8})?", value))
@@ -54,6 +54,7 @@ def catalog_subjects(store, subjects):
     for subject in subjects:
         item = subject.to_dict()
         if subject.type == "generation":
+            item["is_aggregate"] = is_aggregate_generation(subject.name)
             item["has_lock_orders"] = _has_lock_orders(store, subject.name)
         names = {model_key(name) for name in [subject.name, *aggregate_members(subject.name)]}
         events = set()

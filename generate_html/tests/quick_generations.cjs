@@ -41,6 +41,11 @@ const expected = [
 assert.deepStrictEqual([...actual].sort(), [...expected].sort());
 assert.strictEqual(subjects.length, names.length, 'source subjects must remain untouched');
 
+// The current catalog owns classification; fall back to the name only for older snapshots.
+assert.equal(select({subjects:['问界 M5 2026款','问界 M5 2026款合计'].map(name=>({
+  name,type:'generation',parent:'问界',has_lock_orders:true,is_aggregate:false
+}))}).length,1);
+
 const coexist=select({subjects:['问界 M5 2026款','问界 M5 2026款汇总','问界 M5 2025款汇总'].map(name=>({name,type:'generation',has_lock_orders:true,parent:'问界'}))});
 assert.deepStrictEqual(coexist.sort(),['问界 M5 2026款','问界 M5 2026款汇总'].sort());
 

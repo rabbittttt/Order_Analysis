@@ -43,7 +43,7 @@ class XxxModule:
 - `小订及首销数据整理.xlsx` 仍供公共阶段身份读取，其 Sheet 不展示在底表中心。`鸿蒙智行销量数据汇总.xlsx` 作为只读底表随批次发布，供查询和下载。
 
 - 集团固定为“鸿蒙智行”，品牌和代际动态识别。
-- 代际名含 ASCII `&` 即视为汇总代际，如 `问界 M9&M9U 2026款`，无需“汇总”后缀；兼容旧“总计/汇总”名称。品牌和集团按明细代际统计时必须排除此类代际，避免重复计数。保持 Excel 内 Sheet、图表数据及相关映射的主体名称一致。
+- 代际名含 ASCII `&` 即视为汇总代际，如 `问界 M9&M9U 2026款`，无需“汇总”后缀；兼容旧“总计/汇总/合计”名称。品牌和集团按明细代际统计时必须排除此类代际，避免重复计数。保持 Excel 内 Sheet、图表数据及相关映射的主体名称一致。
 - 主体类型不同，可用看板可以不同；不要强行补齐空看板。
 - 大定、锁单、小订的趋势图统一读取“图表”Sheet 中的表数据生成。
 - SKU、首销节奏、小订退订主要按单代际展示；如未来新增专门汇总 Sheet，按 Sheet 实际主体展示。
@@ -70,3 +70,12 @@ python -m unittest discover -s tests
 ```
 
 检查本次 `generate_html_YYYYMMDD_HHMMSS.log` 中没有异常，并在浏览器测试主体切换、标签置灰、日/周/月和底表搜索。
+
+## 故障与交付定位
+
+生成时间可打开本页刷新诊断。服务与文件对照见 SERVER.md。推送后运行仓库根的「交付回执.ps1」并在交付消息中引用结果，读取本地与远端提交、指定服务的运行指纹和批次。
+共享业务规则的本机文件为 scripts/config/shared_config.py。配置管理维护该文件，SOP 与门户 SOP 启动器消费同一路径；备份应随本机业务配置执行。迁移时先验证三个消费者，再停用旧路径。
+
+阅读热点按问题定位：Excel 合并查 core/excel.py 的 merge_source_sheets，源表格式查 core/excel_format.py 的 format_excel_cell；底表交互查 dashboard.js 的 renderRaw，批次切换查 synchronizeDataset。大体积离线 HTML 在浏览器中打开，销量规律历史证据按 JSON 键查阅。
+
+视觉检查使用固定样例对比基准提交与当前模板并输出前后截图、差异图及 JSON。运行 node tests/ui_visual_regression.cjs --baseline-ref HEAD^ --output-dir <临时目录>。推送与拉取请求会上传 order-visual 供核对；有意调整样式时仍应检查差异图。

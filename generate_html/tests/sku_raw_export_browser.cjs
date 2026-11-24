@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
 const {pathToFileURL}=require('node:url'),{createHash}=require('node:crypto');
 const root=path.resolve(__dirname,'..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.resolve(root,'../../.test_runtime/node_modules/playwright'));
-const html=process.argv[2]||path.resolve(root,'../../output_file/鸿蒙智行订单分析汇总.html');
+const html=require('./static_report.cjs')(process.argv[2]);
 const inputDir=process.argv[3]||path.dirname(html);
 const source=fs.readFileSync(path.join(root,'templates/dashboard.js'),'utf8');
 const css=fs.readFileSync(path.join(root,'templates/dashboard.css'),'utf8');

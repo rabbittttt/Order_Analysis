@@ -20,9 +20,9 @@ function buildPreview(){
  for(const [key,value] of Object.entries(values))html=html.replace(key,()=>value);
  fs.writeFileSync(preview,html);
 }
-if(!process.env.UI_AUDIT_FINAL)buildPreview();
+if(!process.env.ORDER_TEST_HTML&&!process.env.UI_AUDIT_FINAL)buildPreview();
 if(process.argv.includes('--build-only'))process.exit(0);
-const file=process.env.UI_AUDIT_FINAL?path.join(root,'output_file/鸿蒙智行订单分析汇总.html'):preview;
+const file=(process.env.ORDER_TEST_HTML||process.env.UI_AUDIT_FINAL)?require('./static_report.cjs')():preview;
 const results={checks:[],screenshots:[],metrics:[],errors:[]};
 const check=(name,value)=>{assert(value,name);results.checks.push(name);};
 const urlFor=(file,params={})=>{const url=pathToFileURL(file);url.search=new URLSearchParams(params);return url.href;};
@@ -62,5 +62,5 @@ const urlFor=(file,params={})=>{const url=pathToFileURL(file);url.search=new URL
  const checkbox=await page.locator('#rawFreezeRow').boundingBox();check('手机底表勾选框尺寸正常',checkbox.width<=22&&checkbox.height<=22);
  check('浏览器无脚本异常',results.errors.length===0);
  console.log(JSON.stringify({checks:results.checks.length,metrics:results.metrics,errors:results.errors},null,2));
- }finally{await browser.close();fs.writeFileSync(path.join(output,process.env.UI_AUDIT_FINAL?'verification-final.json':'verification-preview.json'),JSON.stringify(results,null,2));}
+ }finally{await browser.close();fs.writeFileSync(path.join(output,(process.env.ORDER_TEST_HTML||process.env.UI_AUDIT_FINAL)?'verification-final.json':'verification-preview.json'),JSON.stringify(results,null,2));}
 })().catch(error=>{console.error(error);process.exitCode=1});
