@@ -17,7 +17,7 @@ from typing import Any
 from core.sync import CHECK_SECONDS, STABLE_SECONDS
 from core.components import add_kpi_comparisons
 from core.config import load_config
-from core.data_paths import orders_input_directory, dynamic_log_directory
+from core.data_paths import PROJECT_ROOT, orders_input_directory, dynamic_log_directory
 from core.discovery import catalog_subjects, discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
 from core.model_identity import STAGE_SOURCE_NAME
@@ -27,8 +27,6 @@ from modules.registry import MODULES
 
 
 ROOT = Path(__file__).resolve().parent
-CODE_ROOT = ROOT.parent
-PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
 AUTO_OPEN_HTML = True
 LOGGER = logging.getLogger("order_analysis")
 BUILD_DIAGNOSTICS: list[str] = []

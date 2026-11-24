@@ -5,11 +5,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from core.data_paths import orders_input_directory
+from core.data_paths import PROJECT_ROOT, orders_input_directory
 
 
-CODE_ROOT = Path(__file__).resolve().parents[2]
-PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
 STAGE_SOURCE_NAME = "小订及首销数据整理.xlsx"
 STAGE_SOURCE_PATH = orders_input_directory(PROJECT_ROOT) / STAGE_SOURCE_NAME
 

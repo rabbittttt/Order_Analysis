@@ -31,9 +31,7 @@ SERVICE_SOURCE_FILES = ("core/revision.py", "server.py", "core/server.py", "core
 SERVICE_FINGERPRINT = hashlib.sha256(
     b"".join((ROOT / name).read_bytes() for name in SERVICE_SOURCE_FILES)
 ).hexdigest()[:16]
-CODE_ROOT = ROOT.parent
-PROJECT_ROOT = CODE_ROOT.parent if CODE_ROOT.name.lower() == "scripts" else CODE_ROOT
-from core.data_paths import persistent_directory
+from core.data_paths import PROJECT_ROOT, persistent_directory
 DEFAULT_DATA_DIR = persistent_directory(PROJECT_ROOT) / "runtime"
 DEFAULT_STATE_DIR = persistent_directory(PROJECT_ROOT) / "annotations"
 LEGACY_ENTRY = "鸿蒙智行订单分析汇总.html"

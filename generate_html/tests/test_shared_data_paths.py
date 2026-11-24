@@ -13,6 +13,17 @@ from core.data_paths import orders_input_directory, shared_data_root
 
 
 class SharedDataPathsTests(TestCase):
+    def test_input_state_and_logs_agree_on_workbench_root(self):
+        from core.data_paths import dynamic_log_directory, persistent_directory
+        with TemporaryDirectory() as tmp, patch.dict(os.environ, {
+                "PLANHUB_DATA_ROOT": "  ../内网 工作台  ", "SHARED_DATA_ROOT": "",
+                "PLANHUB_APP_LOG_DIR": "", "ORDER_DASHBOARD_INPUT": ""}):
+            project = Path(tmp) / "订单分析"
+            root = Path(tmp).resolve() / "内网 工作台"
+            self.assertEqual(orders_input_directory(project), root / "shared" / "订单汇总")
+            self.assertEqual(dynamic_log_directory(project), root / "logs" / "orderiq")
+            self.assertEqual(persistent_directory(project), root / "database" / "orderiq")
+
     def test_standalone_project_keeps_existing_defaults(self):
         with TemporaryDirectory() as folder, patch.dict(os.environ, {"SHARED_DATA_ROOT": ""}):
             project = Path(folder) / "订单分析"
