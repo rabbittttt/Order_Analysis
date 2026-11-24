@@ -699,9 +699,7 @@
     if(revision!==pageRevision||moduleId!==state.module||subjectId!==state.subject)return;
     if(!board||!page){$("#page").innerHTML=`<div class="empty-page">当前主体暂无该分析</div>`;return}
     channelPanelData.clear();
-    const trends=page.sections.filter(item=>item.kind==='mix_trend');
-    const trendHeader=trends.length?`<div class="sections">${trends.map(item=>renderSection(item,page.sections.indexOf(item))).join('')}</div>`:'';
-    $("#page").innerHTML=`${trendHeader}${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
+    $("#page").innerHTML=`${renderKpis(page.kpis)}<div class="sections">${renderSections(page.sections)}</div>`;
     bindRhythmCharts();
     bindChannelPanels();
     bindSkuHeatmaps();
@@ -737,7 +735,7 @@
     const rankingIndex=state.module==='cancellation'?items.findIndex(item=>item.kind==='bars'&&item.title==='选配退订率排行'):-1;
     const trendIndex=rankingIndex>=0?items.findIndex(item=>item.kind==='daily_cancel'):-1;
     return items.map((item,index)=>{
-      if(item.kind==='mix_trend'||(trendIndex>=0&&index===rankingIndex))return '';
+      if(trendIndex>=0&&index===rankingIndex)return '';
       const ranking=index===trendIndex?items[rankingIndex]:null;
       const appendix=ranking?`<section class="cancel-ranking" aria-label="${esc(ranking.title)}"><div class="cancel-ranking-head"><div><h3>${esc(ranking.title)}</h3><span>${esc(ranking.meta)}</span></div>${renderPanelSource(ranking,rankingIndex)}</div>${renderBars(ranking.data)}</section>`:'';
       return renderSection(item,index,appendix);
@@ -748,7 +746,7 @@
   }
   function renderSection(item,index,appendix=''){
     const pieBars=item.kind==='bars'&&item.title==='门店渠道订单量';
-    const renderer=pieBars?renderPieChart:({mix_trend:renderMixTrend,channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
+    const renderer=pieBars?renderPieChart:({mix_trend:renderMixTrend,mix_combo_trend:renderMixTrend,channel_panel:renderChannelPanel,stacked_trend:renderStackedTrend,table:renderTable,bars:renderBars,donut:renderPieChart,structure_cards:renderStructureCards,funnel:renderFunnel,cohort_matrix:renderCohortMatrix,rank_cards:renderRankCards,rise_rank_cards:data=>renderRankCards(data,'rise'),drop_rank_cards:data=>renderRankCards(data,'drop'),rights:renderRights,fee_band_structure:renderFeeBandStructure,fee_period_bands:renderFeePeriodBands,fee_heatmap:renderFeeHeatmap,heat_table:renderTable,sku_heatmap:renderSkuHeatmap,combo_matrix:renderComboMatrix,tail_distribution:renderTailDistribution,launch_composite:renderLaunch,launch_hourly:renderLaunchHourly,matrix:renderTable,trend:renderTrend,hourly:renderHourly,small_order_rhythm:renderSmallOrderRhythm,cancel_cards:renderCancelCards,history_table:renderHistoryTable,daily_cancel:renderDailyCancel}[item.kind]||renderUnknown);
     const annotationControls=item.kind==="stacked_trend" && item.data?.periods?.length;
     const chartId="trendChart"+index;
     const source=renderPanelSource(item,index);
@@ -932,31 +930,52 @@
     });
   }
   function renderMixTrend({periods,series,metric}){
-    const g=channelChartGeometry(periods,series,false),format=metric==='share'?'percent':'number';
-    const maximum=format==='percent'?1:channelAxisMax(series.flatMap(item=>item.values));
+    const g=channelChartGeometry(periods,series,false),plotHeight=g.bottom-g.top;
+    // Previously generated single-metric sections carry a metric and a values array.
+    const combined=!metric,lineFormat=metric==='share'?'percent':'number';
+    const linesFor=item=>combined?item.counts:item.values;
+    const countMax=channelAxisMax(series.flatMap(linesFor));
+    const lineMax=combined?4*Math.ceil(countMax/4):(lineFormat==='percent'?1:countMax);
     const lineColors=['#2866ba','#a5471d','#11735a','#8549a4','#966800','#a03f65','#277685','#5a648a'];
+    const colorFor=index=>lineColors[index%lineColors.length];
+    const describe=(item,i)=>combined
+      ?`${esc(periods[i])} · ${esc(item.name)} · 占比 ${channelValue(item.shares[i],'percent')} · 数量 ${channelValue(item.counts[i])}`
+      :`${esc(periods[i])} · ${esc(item.name)} · ${channelValue(item.values[i],lineFormat)}`;
+    const totals=combined?periods.map((_,i)=>series.reduce((sum,item)=>sum+(item.shares[i]??0),0)):[];
+    const shareMax=Math.max(1,Math.ceil(Math.max(0,...totals)*4-1e-10)/4);
+    const stacked=periods.map(()=>0),barWidth=stackedBarWidth(g.step);
+    const bars=combined?series.map((item,index)=>item.shares.map((share,i)=>{
+      if(!channelKnown(share))return '';
+      stacked[i]+=share;
+      const x=(i+.5)*g.step-barWidth/2,y=g.bottom-stacked[i]/shareMax*plotHeight;
+      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${share/shareMax*plotHeight}" fill="${colorFor(index)}" fill-opacity=".42"><title>${describe(item,i)}</title></rect>`;
+    }).join('')).join(''):'';
     const grid=[0,.25,.5,.75,1].map(ratio=>{
       const y=g.bottom-ratio*(g.bottom-g.top);
       return `<line x1="0" x2="${g.width}" y1="${y}" y2="${y}"/>`;
     }).join('');
-    const lines=series.map(({name,values},index)=>{
-      const color=lineColors[index%lineColors.length];
+    const lines=series.map((item,index)=>{
+      const color=colorFor(index),values=linesFor(item);
       const points=values.map((value,i)=>{
         if(!channelKnown(value))return '';
-        const x=(i+.5)*g.step,y=g.bottom-value/maximum*(g.bottom-g.top);
-        return `<circle cx="${x}" cy="${y}" r="3" fill="${color}"><title>${esc(periods[i])} · ${esc(name)} · ${channelValue(value,format)}</title></circle>`;
+        const x=(i+.5)*g.step,y=g.bottom-value/lineMax*plotHeight;
+        return `<circle cx="${x}" cy="${y}" r="3" fill="${color}"><title>${describe(item,i)}</title></circle>`;
       }).join('');
-      return `<path class="channel-series-line" d="${channelLinePath(values,g,maximum)}" stroke="${color}"/>${points}`;
+      return `<path class="channel-series-line" d="${channelLinePath(values,g,lineMax)}" stroke="${color}"/>${points}`;
     }).join('');
     const labels=periods.map((period,i)=>`<text class="channel-axis-label" x="${(i+.5)*g.step}" y="${g.bottom+20}" text-anchor="middle">${esc(String(period).replace(/^\d{4}-(\d{2}-\d{2})$/,'$1'))}</text>`).join('');
-    const legend=series.map(({name},i)=>`<span><i style="background:${lineColors[i%lineColors.length]}"></i>${esc(name)}</span>`).join('');
-    return `<div class="channel-chart-frame channel-single-axis" style="--channel-chart-height:${g.height}px">${channelAxisMarkup(maximum,format,g,'left')}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${lines}${labels}</svg></div></div><div class="channel-legend">${legend}</div>`;
+    const legend=series.map(({name},i)=>`<span><i style="background:${colorFor(i)}"></i>${esc(name)}</span>`).join('');
+    const units=combined?'<div class="channel-axis-units"><span>柱 · 占比（%）</span><span>线 · 数量（单）</span></div>':'';
+    const leftAxis=channelAxisMarkup(combined?shareMax:lineMax,combined?'percent':lineFormat,g,'left');
+    const rightAxis=combined?channelAxisMarkup(lineMax,'number',g,'right'):'';
+    return `${units}<div class="channel-chart-frame ${combined?'channel-dual-axis':'channel-single-axis'}" style="--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${bars}${lines}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div>`;
   }
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';
     const originalImage=DATA.chart_assets?.[data.image_key];
 
     const trendLine=colors.blue,seriesFill=index=>stackedTrendPalette[index%stackedTrendPalette.length],periods=data.periods,series=data.series||[],totals=data.totals||[],maxTotal=chartMax(totals),labelMax=Math.max(...periods.map(period=>String(period||"").length),1),left=52,bottom=252,plotH=218,step=Math.max(42,Math.min(labelMax*4.8,90)),W=Math.max(380,periods.length*step+50),H=Math.max(310,bottom+Math.min(labelMax*4.2,80)+14),barW=stackedBarWidth(step);
+    const plotTop=bottom-plotH;
     const annotations=trendAnnotationState.visible
       ? window.TrendAnnotations.render([...trendAnnotationsFor(state.subject),...(subject()?.stage_annotations||[])],periods,state.grain,{left,step,width:W})
       : {height:0,markup:""};
@@ -966,8 +985,8 @@
     const points=totals.map((value,index)=>`${left+index*step+step/2},${bottom-Number(value)/maxTotal*plotH}`).join(" ");
     const values=totals.map((value,index)=>{const baseY=bottom-Number(value)/maxTotal*plotH-8,labelY=avoidLabelY(baseY,segmentLabelYs[index],12,bottom-8);return `<text class="chart-data-label total-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${fmt(value)}</text>`}).join("");
     const legend=series.map((item,index)=>`<span><i style="background:${seriesFill(index)}"></i>${esc(item.name)}</span>`).join("")+`<span><i class="line-key"></i>总计</span>`;
-    const height=H+annotations.height;
-    return `<div class="stacked-chart"><svg viewBox="0 0 ${W} ${height}" style="width:${W}px;height:${height}px">${annotations.markup}<g transform="translate(0 ${annotations.height})"><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
+    const annotationOffset=Math.max(0,annotations.height-plotTop),height=H+annotationOffset;
+    return `<div class="stacked-chart" style="height:${H}px"><svg viewBox="0 0 ${W} ${height}" style="width:${W}px;height:${height}px">${annotations.markup}<g transform="translate(0 ${annotationOffset})"><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
   }
   function renderTable(data){
     if(!data?.columns)return '<div class="empty-image">暂无表格数据</div>';

@@ -66,7 +66,14 @@ const server=http.createServer(async(req,res)=>{
     check('顶部按后台状态显示并恢复 '+phase,await page.locator('#syncStatus').isVisible());
   }
   await page.waitForSelector('.trend-annotation');
+  const chartHeights=()=>page.locator('[data-trend-chart]').evaluate(chart=>({
+    card:chart.closest('.panel').getBoundingClientRect().height,
+    bars:[...chart.querySelectorAll('rect[fill]')].map(bar=>bar.getBoundingClientRect().height)
+  }));
+  const annotated=await chartHeights();
+  assert(annotated.bars.some(height=>height>0));
   await page.locator('[data-trend-annotation-toggle]').click();assert.equal(await page.locator('.trend-annotation').count(),0);
+  assert.deepStrictEqual(await chartHeights(),annotated,'显示与隐藏批注时，卡片和柱子的高度一致');
   await page.locator('[data-trend-annotation-toggle]').click();await page.waitForSelector('.trend-annotation');
   check('集团和品牌批注继承到车型',(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('集团事件')&&(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('问界事件'));
   await page.locator('#subjectSelect').selectOption('other');await page.waitForSelector('[data-page-retry]');

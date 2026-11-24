@@ -129,11 +129,11 @@
       lane.y = height;
       height += lane.height + gap;
     }
-    height += 10;
-    const stems = markers.map(({ x, cardHeight, lane }) =>
-      '<line class="trend-annotation-stem" x1="' + x + '" x2="' + x + '" y1="' + (lanes[lane].y + cardHeight) + '" y2="' + (height + 22) + '"/>' +
-      '<path class="trend-annotation-tip" d="M ' + (x - 4) + ' ' + (height + 22) + ' h 8 l -4 6 Z"/>'
-    ).join("");
+    const stems = markers.map(({ x, cardHeight, lane }) => {
+      const start = lanes[lane].y + cardHeight, tip = start + 3;
+      return '<line class="trend-annotation-stem" x1="' + x + '" x2="' + x + '" y1="' + start + '" y2="' + tip + '"/>' +
+        '<path class="trend-annotation-tip" d="M ' + (x - 3) + ' ' + tip + ' h 6 l -3 3 Z"/>';
+    }).join("");
     const labels = markers.map(({ key, boxX, boxWidth, cardHeight, lane, lines, description }) => {
       const accessibleText = escapeMarkup(description), y = lanes[lane].y, center = boxX + boxWidth / 2;
       return '<g class="trend-annotation" data-annotation-period="' + key + '" tabindex="0" role="img" aria-label="' + accessibleText + '">' +
