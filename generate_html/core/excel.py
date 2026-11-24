@@ -1832,7 +1832,8 @@ def parse_metric_sheet(sheet: Any) -> dict[str, dict[str, Any]]:
                 )
             elif current_stat == "数量":
                 result[period]["structures"].setdefault(current_metric, [])
-                counts[period, current_metric, category] = cell_number(cell)
+                default_count = None if current_metric == "电池包" else 0.0
+                counts[period, current_metric, category] = cell_number(cell, default=default_count)
     # Counts and shares are independent blocks; their row order is not a contract.
     for period, data in result.items():
         for metric, rows in data["structures"].items():

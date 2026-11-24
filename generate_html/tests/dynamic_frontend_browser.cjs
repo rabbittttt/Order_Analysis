@@ -2,14 +2,23 @@ const fs=require('fs'),path=require('path'),http=require('http'),assert=require(
 const project=path.resolve(__dirname,'../../..'),root=path.resolve(__dirname,'..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const aggregateNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界 Z7&Z7T 2026款','享界 S9&S9T 2026款'];
-const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,has_lock_orders:true,modules:['overview','raw']}));
+const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,has_lock_orders:true,modules:s.id==='m'?['overview','order_mix','raw']:['overview','raw']}));
 const generatedTimes={'fixture-v1':'2026-11-10T10:00:00','fixture-v2':'2026-11-10T10:01:00','fixture-v3':'2026-11-10T10:02:00','fixture-v4':'2026-11-10T10:03:00'};
 const generationLabel=version=>'生成时间 '+generatedTimes[version].replace('T',' ');
-const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','raw'],module_labels:{overview:'订单总览',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
+const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','order_mix','raw'],module_labels:{overview:'订单总览',order_mix:'大定选配',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
 const header=['序号','格式值'],allRows=Array.from({length:450},(_,i)=>[i+1,`${i%2?'odd':'even'} 12.30%`]),xlsx=Buffer.from('fixture-original-xlsx');
 let currentVersion='fixture-v1',failNewBoard=false,syncPhase='idle';
 let notes=[{id:'group',subject:'g',date:'2026-11-10',text:'集团事件',version:1},{id:'brand',subject:'b',date:'2026-11-10',text:'问界事件',version:1}],failSubject='other',requests=[],nextId=1;
 const view={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[{label:'合计',value:123,unit:'辆'}],sections:[{title:'留存大定趋势',kind:'stacked_trend',data:{periods:['26WK46'],totals:[123],series:[{name:'增程',values:[1]}]},source:{file:'fixture.xlsx',sheet:'数据'}}]}}};
+const batteryPeriods=['26WK42','26WK43','26WK44','26WK45','26WK46'];
+const batterySection={
+  kind:'mix_combo_trend',title:'电池包度数 · 数量与占比',
+  data:{periods:batteryPeriods,series:[
+    {name:'80度',shares:[.6,0,.6,0,null],counts:[120,0,740,0,null]},
+    {name:'100度',shares:[.4,1,.4,0,null],counts:[80,null,494,0,null]}
+  ]}
+};
+const batteryView={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[],sections:[batterySection]}}};
 let shell=fs.readFileSync(path.join(root,'templates/dashboard.html'),'utf8').replace('<script>window.DASHBOARD_DATA_B64="__DASHBOARD_DATA__";</script>','<script>window.ORDER_DASHBOARD_API_BASE="api/";</script>').replace('__DASHBOARD_RAW__','{}').replace('__DASHBOARD_BLOCKS__','{}').replace('__DASHBOARD_CSS__',()=>fs.readFileSync(path.join(root,'templates/dashboard.css'),'utf8')).replace('__DASHBOARD_JS__',()=>fs.readFileSync(path.join(root,'templates/dashboard.js'),'utf8')).replace('__TREND_ANNOTATIONS_JS__',()=>fs.readFileSync(path.join(root,'templates/trend_annotations.js'),'utf8')).replace('__BRAND_LOGO__','data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7');
 const server=http.createServer(async(req,res)=>{
  const url=new URL(req.url,'http://localhost'),p=url.pathname;requests.push({path:p,query:Object.fromEntries(url.searchParams),method:req.method});
@@ -22,6 +31,7 @@ const server=http.createServer(async(req,res)=>{
  if(route==='dashboard'){
    if(failNewBoard&&url.searchParams.get('dataset')!=='fixture-v1')return send({detail:'new batch unavailable'},503);
    if(url.searchParams.get('subject')===failSubject){failSubject=null;return send({detail:'看板读取失败'},503)}
+   if(url.searchParams.get('module')==='order_mix')return send({views:{week:batteryView},sources:[]});
    return send({views:{week:view,day:{...view,periods:['2026-11-10'],default_period:'2026-11-10',pages:{'2026-11-10':view.pages['26WK46']}},month:view},sources:[]});
  }
  if(route==='raw'||route==='export/csv'){
@@ -153,6 +163,19 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');
   await page.locator('#subjectSelect').selectOption('aggregate0');await page.waitForFunction(()=>new URL(location).searchParams.get('subject')==='aggregate0');
   check('组合代际可选择并加载',await page.locator('.kpi').count()>0&&await page.locator('#subjectSelect').inputValue()==='aggregate0');
+  await page.goto(base+'?subject=m&module=order_mix&grain=week');
+  const battery=page.locator('[data-section-kind="mix_combo_trend"]');
+  await battery.waitFor();
+  const labelText=selector=>battery.locator(selector).evaluateAll(nodes=>nodes.map(node=>
+    Array.from(node.childNodes).filter(child=>child.nodeType===Node.TEXT_NODE).map(child=>child.textContent).join('')
+  ));
+  const shares=await labelText('.stack-segment-label');
+  assert.deepStrictEqual(shares.sort(),['60%（120单）','0%（0单）','60%（740单）','0%（0单）','40%（80单）','100%（—）','40%（494单）','0%（0单）'].sort());
+  check('电池包柱段显示占比和数量，区分零与缺失',await battery.locator('rect[fill]').count()===shares.length);
+  assert.deepStrictEqual(await labelText('.total-label'),['200','1,234','0']);
+  const totalLine=battery.locator('svg path');
+  check('电池包总量只画一条线，数据缺失时断开',await totalLine.count()===1&&(await totalLine.getAttribute('d')).split('M').length===3&&await battery.locator('circle').count()===3);
+  check('电池包占比与总量分别使用左右轴',await battery.locator('.channel-y-axis.left').count()===1&&await battery.locator('.channel-y-axis.right').count()===1);
   check('无浏览器异常',errors.length===0);await ctx2.close();
  }finally{await browser.close();await new Promise(r=>server.close(r));}
  console.log(JSON.stringify({checks:checks.length,errors}));

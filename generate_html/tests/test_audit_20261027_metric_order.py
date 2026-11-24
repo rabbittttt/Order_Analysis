@@ -60,7 +60,7 @@ class MetricBlockOrderTests(unittest.TestCase):
     def test_battery_trend_is_full_width_and_keeps_counts_and_shares(self):
         book, _ = self.sheet([
             ['电池包', '占比', '100度', .6, .4], [None, None, '80度', .4, .6],
-            ['电池包', '数量', '100度', 6, 4],
+            ['电池包', '数量', '100度', 6, 4], [None, None, '80度', None, 0],
             ['内饰', '数量', '米色', 0, 12], [None, '占比', '米色', 0, .3],
             [None, None, '黑色', .2, .1],
         ])
@@ -74,7 +74,7 @@ class MetricBlockOrderTests(unittest.TestCase):
         self.assertEqual(battery['width'], 'full')
         self.assertEqual(battery['data']['periods'], ['26WK42', '26WK43'])
         self.assertEqual(battery['data']['series'], [
-            {'name': '80度', 'shares': [.4, .6], 'counts': [None, None]},
+            {'name': '80度', 'shares': [.4, .6], 'counts': [None, 0]},
             {'name': '100度', 'shares': [.6, .4], 'counts': [6, 4]},
         ])
         self.assertEqual(structures['kind'], 'structure_cards')
