@@ -945,8 +945,8 @@
       ?`${esc(periods[i])} · ${esc(item.name)} · 占比 ${channelValue(item.shares[i],'percent')} · 数量 ${channelValue(item.counts[i])}`
       :`${esc(periods[i])} · ${esc(item.name)} · ${channelValue(item.values[i],lineFormat)}`;
     const valueText=value=>lineFormat==='percent'?`${(value*100).toFixed(0)}%`:fmt(value);
-    const labelStep=Math.max(52,...series.flatMap(item=>linesFor(item).filter(channelKnown).map(value=>valueText(value).length*8+12)));
-    g.width=Math.max(g.width,periods.length*labelStep);g.step=g.width/Math.max(periods.length,1);
+    const labelStep=Math.max(52,...periods.map(period=>rhythmTextWidth(rhythmAxisText(period),12)+12),...series.flatMap(item=>linesFor(item).filter(channelKnown).map(value=>valueText(value).length*8+12)));
+    g.width=Math.max(periods.length,1)*labelStep;g.step=labelStep;
     const plotHeight=g.bottom-g.top,labelYs=periods.map(()=>[]),barLabels=[],lineLabels=[];
     const placeLabel=(index,baseY)=>{
       const occupied=labelYs[index],min=16,max=g.bottom-8,gap=18;
@@ -983,10 +983,11 @@
     const units=combined?'<div class="channel-axis-units"><span>柱 · 占比（%）</span><span>线 · 数量（单）</span></div>':'';
     const leftAxis=channelAxisMarkup(combined?1:lineMax,combined?'percent':lineFormat,g,'left');
     const rightAxis=combined?channelAxisMarkup(lineMax,'number',g,'right'):'';
-    const axisColumns=combined?`grid-template-columns:52px minmax(0,1fr) ${Math.max(58,fmt(lineMax).length*8+12)}px;`:'';
+    const rightAxisWidth=Math.max(58,fmt(lineMax).length*8+12),chartWidth=Math.max(combined?200:0,g.width+52+(combined?rightAxisWidth:0)+2);
+    const axisColumns=combined?`grid-template-columns:52px minmax(0,1fr) ${rightAxisWidth}px;`:'';
     const clipId='mixPlot'+(renderMixTrend.nextId=(renderMixTrend.nextId||0)+1);
     const clippedBars=combined?`<defs><clipPath id="${clipId}"><rect x="0" y="${g.top}" width="${g.width}" height="${plotHeight}"/></clipPath></defs><g clip-path="url(#${clipId})">${bars}</g>`:'';
-    return `${units}<div class="channel-chart-frame ${combined?'channel-dual-axis':'channel-single-axis'}" style="${axisColumns}--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${clippedBars}${lines}${barLabels.join('')}${lineLabels.join('')}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div>`;
+    return `<div class="mix-trend-chart" style="--mix-chart-width:${chartWidth}px">${units}<div class="channel-chart-frame ${combined?'channel-dual-axis':'channel-single-axis'}" style="${axisColumns}--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${clippedBars}${lines}${barLabels.join('')}${lineLabels.join('')}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div></div>`;
   }
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';
