@@ -57,9 +57,10 @@ class MetricBlockOrderTests(unittest.TestCase):
         self.assertEqual(result['metrics'], {'大定': 200})
         self.assertEqual(result['structures']['版本'][0]['count'], 40)
 
-    def test_mix_combo_trends_use_original_counts_and_shares_in_period_order(self):
+    def test_battery_trend_is_full_width_and_keeps_counts_and_shares(self):
         book, _ = self.sheet([
             ['电池包', '占比', '100度', .6, .4], [None, None, '80度', .4, .6],
+            ['电池包', '数量', '100度', 6, 4],
             ['内饰', '数量', '米色', 0, 12], [None, '占比', '米色', 0, .3],
             [None, None, '黑色', .2, .1],
         ])
@@ -67,22 +68,17 @@ class MetricBlockOrderTests(unittest.TestCase):
         store.items = [WorkbookItem(Path('鸿蒙智行大定选配比例分析.xlsx'), book)]
         subject = Subject(id='test', name='问界 M9 2026款', type='generation', parent='问界')
         page = OrderMixModule().build(store, subject).views['week']['pages']['26WK43']
-        battery, interior = page['sections'][:2]
-        self.assertEqual([item['title'] for item in (battery, interior)],
-                         ['电池包度数 · 数量与占比', '内饰颜色 · 数量与占比'])
+        battery, structures = page['sections'][:2]
+        self.assertEqual([s['kind'] for s in page['sections']].count('mix_combo_trend'), 1)
+        self.assertEqual(battery['title'], '电池包度数 · 数量与占比')
+        self.assertEqual(battery['width'], 'full')
         self.assertEqual(battery['data']['periods'], ['26WK42', '26WK43'])
-        self.assertEqual(battery['kind'], 'mix_combo_trend')
-        self.assertEqual(battery['width'], 'half')
-        self.assertEqual(battery['data']['series'][0], {
-            'name': '80度', 'shares': [.4, .6], 'counts': [None, None],
-        })
-        self.assertEqual(interior['data']['series'][0], {
-            'name': '米色', 'shares': [0, .3], 'counts': [0, 12],
-        })
-        self.assertFalse(any(
-            item['name'] == '黑色' and any(value is not None for value in item['counts'])
-            for item in interior['data']['series']
-        ))
+        self.assertEqual(battery['data']['series'], [
+            {'name': '80度', 'shares': [.4, .6], 'counts': [None, None]},
+            {'name': '100度', 'shares': [.6, .4], 'counts': [6, 4]},
+        ])
+        self.assertEqual(structures['kind'], 'structure_cards')
+        self.assertIn('内饰', [group['name'] for group in structures['data']])
 
     def test_order_mix_page_keeps_count_in_ranking(self):
         book, _ = self.sheet([['版本', '数量', 'A', 30, 40], [None, '占比', 'A', .3, .4]])

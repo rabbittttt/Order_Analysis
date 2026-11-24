@@ -735,6 +735,9 @@
     const rankingIndex=state.module==='cancellation'?items.findIndex(item=>item.kind==='bars'&&item.title==='选配退订率排行'):-1;
     const trendIndex=rankingIndex>=0?items.findIndex(item=>item.kind==='daily_cancel'):-1;
     return items.map((item,index)=>{
+      const mixTrend=['order_mix','lock_mix','small_order_mix'].includes(state.module)&&['mix_trend','mix_combo_trend'].includes(item.kind);
+      if(mixTrend&&['内饰颜色 · 数量与占比','内饰颜色数量趋势','内饰颜色占比趋势'].includes(item.title))return '';
+      if(mixTrend&&['电池包度数 · 数量与占比','电池包度数占比趋势'].includes(item.title))item={...item,width:'full'};
       if(trendIndex>=0&&index===rankingIndex)return '';
       const ranking=index===trendIndex?items[rankingIndex]:null;
       const appendix=ranking?`<section class="cancel-ranking" aria-label="${esc(ranking.title)}"><div class="cancel-ranking-head"><div><h3>${esc(ranking.title)}</h3><span>${esc(ranking.meta)}</span></div>${renderPanelSource(ranking,rankingIndex)}</div>${renderBars(ranking.data)}</section>`:'';
@@ -930,7 +933,7 @@
     });
   }
   function renderMixTrend({periods,series,metric}){
-    const g=channelChartGeometry(periods,series,false),plotHeight=g.bottom-g.top;
+    const g=channelChartGeometry(periods,series,false);
     // Previously generated single-metric sections carry a metric and a values array.
     const combined=!metric,lineFormat=metric==='share'?'percent':'number';
     const linesFor=item=>combined?item.counts:item.values;
@@ -941,24 +944,36 @@
     const describe=(item,i)=>combined
       ?`${esc(periods[i])} · ${esc(item.name)} · 占比 ${channelValue(item.shares[i],'percent')} · 数量 ${channelValue(item.counts[i])}`
       :`${esc(periods[i])} · ${esc(item.name)} · ${channelValue(item.values[i],lineFormat)}`;
-    const totals=combined?periods.map((_,i)=>series.reduce((sum,item)=>sum+(item.shares[i]??0),0)):[];
-    const shareMax=Math.max(1,Math.ceil(Math.max(0,...totals)*4-1e-10)/4);
+    const valueText=value=>lineFormat==='percent'?`${(value*100).toFixed(0)}%`:fmt(value);
+    const labelStep=Math.max(52,...series.flatMap(item=>linesFor(item).filter(channelKnown).map(value=>valueText(value).length*8+12)));
+    g.width=Math.max(g.width,periods.length*labelStep);g.step=g.width/Math.max(periods.length,1);
+    const plotHeight=g.bottom-g.top,labelYs=periods.map(()=>[]),barLabels=[],lineLabels=[];
+    const placeLabel=(index,baseY)=>{
+      const occupied=labelYs[index],min=16,max=g.bottom-8,gap=18;
+      const candidates=[Math.max(min,Math.min(Math.round(baseY),max)),...occupied.flatMap(y=>[y-gap,y+gap])]
+        .filter(y=>y>=min&&y<=max&&occupied.every(other=>Math.abs(other-y)>=gap));
+      const y=candidates.sort((a,b)=>Math.abs(a-baseY)-Math.abs(b-baseY))[0]??avoidLabelY(baseY,occupied,min,max,gap);
+      occupied.push(y);return y;
+    };
     const stacked=periods.map(()=>0),barWidth=stackedBarWidth(g.step);
     const bars=combined?series.map((item,index)=>item.shares.map((share,i)=>{
       if(!channelKnown(share))return '';
       stacked[i]+=share;
-      const x=(i+.5)*g.step-barWidth/2,y=g.bottom-stacked[i]/shareMax*plotHeight;
-      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${share/shareMax*plotHeight}" fill="${colorFor(index)}" fill-opacity=".42"><title>${describe(item,i)}</title></rect>`;
+      const x=(i+.5)*g.step-barWidth/2,y=g.bottom-stacked[i]*plotHeight,height=share*plotHeight;
+      const labelY=placeLabel(i,y+height/2);
+      barLabels.push(`<text class="chart-data-label stack-segment-label" x="${(i+.5)*g.step}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${(share*100).toFixed(0)}%</text>`);
+      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${colorFor(index)}" fill-opacity=".42"><title>${describe(item,i)}</title></rect>`;
     }).join('')).join(''):'';
     const grid=[0,.25,.5,.75,1].map(ratio=>{
-      const y=g.bottom-ratio*(g.bottom-g.top);
+      const y=g.bottom-ratio*plotHeight;
       return `<line x1="0" x2="${g.width}" y1="${y}" y2="${y}"/>`;
     }).join('');
     const lines=series.map((item,index)=>{
       const color=colorFor(index),values=linesFor(item);
       const points=values.map((value,i)=>{
         if(!channelKnown(value))return '';
-        const x=(i+.5)*g.step,y=g.bottom-value/lineMax*plotHeight;
+        const x=(i+.5)*g.step,y=g.bottom-value/lineMax*plotHeight,labelY=placeLabel(i,y-8);
+        lineLabels.push(`<text class="chart-data-label ${lineFormat==='percent'?'stack-segment-label':'total-label'}" x="${x}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${valueText(value)}</text>`);
         return `<circle cx="${x}" cy="${y}" r="3" fill="${color}"><title>${describe(item,i)}</title></circle>`;
       }).join('');
       return `<path class="channel-series-line" d="${channelLinePath(values,g,lineMax)}" stroke="${color}"/>${points}`;
@@ -966,9 +981,12 @@
     const labels=periods.map((period,i)=>`<text class="channel-axis-label" x="${(i+.5)*g.step}" y="${g.bottom+20}" text-anchor="middle">${esc(String(period).replace(/^\d{4}-(\d{2}-\d{2})$/,'$1'))}</text>`).join('');
     const legend=series.map(({name},i)=>`<span><i style="background:${colorFor(i)}"></i>${esc(name)}</span>`).join('');
     const units=combined?'<div class="channel-axis-units"><span>柱 · 占比（%）</span><span>线 · 数量（单）</span></div>':'';
-    const leftAxis=channelAxisMarkup(combined?shareMax:lineMax,combined?'percent':lineFormat,g,'left');
+    const leftAxis=channelAxisMarkup(combined?1:lineMax,combined?'percent':lineFormat,g,'left');
     const rightAxis=combined?channelAxisMarkup(lineMax,'number',g,'right'):'';
-    return `${units}<div class="channel-chart-frame ${combined?'channel-dual-axis':'channel-single-axis'}" style="--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${bars}${lines}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div>`;
+    const axisColumns=combined?`grid-template-columns:52px minmax(0,1fr) ${Math.max(58,fmt(lineMax).length*8+12)}px;`:'';
+    const clipId='mixPlot'+(renderMixTrend.nextId=(renderMixTrend.nextId||0)+1);
+    const clippedBars=combined?`<defs><clipPath id="${clipId}"><rect x="0" y="${g.top}" width="${g.width}" height="${plotHeight}"/></clipPath></defs><g clip-path="url(#${clipId})">${bars}</g>`:'';
+    return `${units}<div class="channel-chart-frame ${combined?'channel-dual-axis':'channel-single-axis'}" style="${axisColumns}--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${clippedBars}${lines}${barLabels.join('')}${lineLabels.join('')}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div>`;
   }
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';

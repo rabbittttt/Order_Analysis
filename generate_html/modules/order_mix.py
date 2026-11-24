@@ -13,46 +13,23 @@ def _battery_degree(label: str) -> int:
     return int(match.group()) if match else 10**9
 
 
-def _mix_combo_trends(parsed: dict, source: SourceRef) -> list[dict]:
-    """Build one dual-axis trend card for each requested option dimension.
-
-    A row can carry either metric or both metrics depending on the source
-    workbook. Keep both arrays aligned to the same period and option labels so
-    the renderer can use bars for shares and a line for counts.
-    """
-    sections = []
-    for dimension, title in (
-        ("电池包", "电池包度数 · 数量与占比"),
-        ("内饰", "内饰颜色 · 数量与占比"),
-    ):
-        history = [
-            {row["label"]: row for row in data["structures"].get(dimension, [])}
-            for data in parsed.values()
-        ]
-        labels = list(dict.fromkeys(label for period in history for label in period))
-        if dimension == "电池包":
-            labels.sort(key=_battery_degree)
-        series = [
-            {
-                "name": label,
-                "shares": [period.get(label, {}).get("share") for period in history],
-                "counts": [period.get(label, {}).get("count") for period in history],
-            }
-            for label in labels
-        ]
-        series = [
-            item for item in series
-            if any(value is not None for value in item["shares"] + item["counts"])
-        ]
-        if series:
-            sections.append(section(
-                "mix_combo_trend",
-                title,
-                {"periods": list(parsed), "series": series},
-                width="half",
-                source=source,
-            ))
-    return sections
+def _battery_trend(parsed: dict, source: SourceRef) -> dict | None:
+    history = [
+        {row["label"]: row for row in data["structures"].get("电池包", [])}
+        for data in parsed.values()
+    ]
+    labels = dict.fromkeys(label for period in history for label in period)
+    series = []
+    for label in sorted(labels, key=_battery_degree):
+        values = [period.get(label, {}) for period in history]
+        shares = [row.get("share") for row in values]
+        counts = [row.get("count") for row in values]
+        if any(value is not None for value in shares + counts):
+            series.append({"name": label, "shares": shares, "counts": counts})
+    if not series:
+        return None
+    return section("mix_combo_trend", "电池包度数 · 数量与占比",
+                   {"periods": list(parsed), "series": series}, width="full", source=source)
 
 
 class MixModule:
@@ -92,7 +69,7 @@ class MixModule:
             parsed = gd["parsed"]
             periods = gd["periods"]
             data_source = gd["source"]
-            trends = _mix_combo_trends(parsed, data_source)
+            battery = _battery_trend(parsed, data_source)
             pages = {}
             previous = None
             for period in periods:
@@ -137,7 +114,6 @@ class MixModule:
                     for row in sorted(all_rows, key=lambda row: abs(row["change"]), reverse=True)[:18]
                 ]
                 sections = [
-                    *trends,
                     section("structure_cards", "选配结构全景", structures, "选配占比 / 环比变化", source=data_source),
                     section("bars", "各维度首选配置", {"color": "blue", "rows": leader_bars}, "每个选配维度 TOP1", "half", data_source),
                     section("table", "选配偏好变化排行", table(
@@ -146,6 +122,8 @@ class MixModule:
                         formats=["text", "text", "percent", "percent", "signed_percent", "number"],
                     ), "按选配占比变化绝对值排序", "half", data_source),
                 ]
+                if battery:
+                    sections.insert(0, battery)
                 pages[period] = {
                     "kpis": [
                         kpi("选配维度", dimension_count, "个", "外观 / 内饰 / 版本等", "blue"),
