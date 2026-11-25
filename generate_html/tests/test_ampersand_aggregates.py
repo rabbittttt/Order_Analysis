@@ -101,12 +101,17 @@ class AmpersandAggregateTests(TestCase):
             self.assertEqual(trend["totals"], [55, 55])
             stages = [{"代际名": name, "小订开始日期": "2026-01-01", "开始大定日期": "2026-01-05"}
                       for name in [FIRST, SECOND, "问界 M8 2026款"]]
+            stages[0]["首销结束日期"] = "2026-01-12"
+            stages[2]["首销结束日期"] = "2026-01-13"
             with patch("core.discovery.generation_records", return_value=stages):
                 combined, zero = catalog_subjects(store, [subject, Subject("first", FIRST, "generation")])
             self.assertTrue(combined["has_lock_orders"])
             self.assertFalse(zero["has_lock_orders"])
-            self.assertEqual(len(combined["stage_annotations"]), 4)
-            self.assertEqual(len(zero["stage_annotations"]), 2)
+            for item in (combined, zero):
+                self.assertEqual([note for note in item["stage_annotations"] if note["text"].endswith("首销结束")],
+                                 [{"date": "2026-01-12", "text": f"{FIRST} 首销结束"}])
+            self.assertEqual(len(combined["stage_annotations"]), 5)
+            self.assertEqual(len(zero["stage_annotations"]), 3)
             self.assertTrue(all(FIRST in note["text"] for note in zero["stage_annotations"]))
 
     def test_brand_lock_share_excludes_combined_and_legacy_aggregate_counts(self):

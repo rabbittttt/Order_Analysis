@@ -57,24 +57,22 @@
     };
   }
 
-  function wrapLabel(text, maxWidth, measure) {
-    const lines = [];
-    for (const paragraph of text.split(/\r?\n/)) {
-      let line = "";
-      for (const char of paragraph) {
-        if (line && measure(line + char) > maxWidth) {
-          lines.push(line);
-          line = char;
-        } else {
-          line += char;
-        }
-      }
-      lines.push(line);
+  function compactLabel(events, available, measure) {
+    const text = events[0].text.trim();
+    let candidates;
+    if (events.length > 1) {
+      candidates = [events.length + "条", String(events.length)];
+    } else if (text.endsWith("首销结束")) {
+      candidates = ["首销结束", "结束"];
+    } else if (text.endsWith("小订开始") || text.endsWith("大定开始")) {
+      candidates = [text.slice(-4, -2)];
+    } else {
+      candidates = [text.replace(/\s+/g, " "), "批注"];
     }
-    return lines;
+    return candidates.find(label => measure(label) <= available) || "·";
   }
 
-  function render(notes, periods, grain, { left, step, width }) {
+  function render(notes, periods, grain, { left, step, width, anchorYs }) {
     const groups = new Map();
     for (const note of notes) {
       const key = dateKey(note?.date, grain);
@@ -85,12 +83,13 @@
     }
     if (!groups.size) return { height: 0, markup: "" };
 
+    const top = 4;
     const gap = 6;
-    const top = 6;
-    const paddingX = 6;
-    const paddingY = 3;
-    const { measure, lineHeight } = labelMetrics();
-    const lanes = [];
+    const paddingX = 4;
+    const markerHeight = 20;
+    const stemLength = 4;
+    const markerGap = 6;
+    const { measure } = labelMetrics();
     const markers = [];
     const seen = new Set();
     periods.forEach((period, index) => {
@@ -100,7 +99,8 @@
       seen.add(key);
       events.sort((a, b) => a.date.localeCompare(b.date));
       markers.push({
-        key, events, x: left + (index + 0.5) * step,
+        key, events, index, x: left + (index + 0.5) * step,
+        anchorY: Number.isFinite(anchorYs?.[index]) ? Number(anchorYs[index]) : 44,
         description: events.map(event => event.date + " " + event.text).join("\n")
       });
     });
@@ -109,40 +109,33 @@
     markers.forEach((marker, index) => {
       const previous = markers[index - 1], next = markers[index + 1];
       const distance = Math.min(previous ? marker.x - previous.x : Infinity, next ? next.x - marker.x : Infinity);
-      const maxWidth = Math.min(width - 8, Math.max(156, Math.min(320, distance - gap)));
-      const lines = marker.events.flatMap(event => wrapLabel(event.text, maxWidth - paddingX * 2, measure));
-      const boxWidth = Math.max(...lines.map(measure)) + paddingX * 2;
+      const spacingWidth = Number.isFinite(distance) ? distance - gap : Infinity;
+      const edgeWidth = 2 * Math.min(marker.x - 4, width - 4 - marker.x);
+      const maxWidth = Math.max(14, Math.min(120, edgeWidth, spacingWidth));
+      const label = compactLabel(marker.events, maxWidth - 2 * paddingX, measure);
+      const boxWidth = Math.max(14, Math.min(maxWidth, measure(label) + paddingX * 2));
       const boxX = Math.max(4, Math.min(marker.x - boxWidth / 2, width - boxWidth - 4));
-      const cardHeight = Math.max(22, lines.length * lineHeight + paddingY * 2);
-      let lane = lanes.findIndex(row => row.end + gap <= boxX);
-      if (lane < 0) {
-        lane = lanes.length;
-        lanes.push({ end: 0, height: 0, y: 0 });
-      }
-      lanes[lane].end = boxX + boxWidth;
-      lanes[lane].height = Math.max(lanes[lane].height, cardHeight);
-      Object.assign(marker, { lines, boxX, boxWidth, cardHeight, lane });
+      const boxY = Math.max(top, marker.anchorY - markerGap - stemLength - markerHeight);
+      const stemStart = boxY + markerHeight;
+      const stemEnd = Math.max(stemStart, marker.anchorY - markerGap);
+      Object.assign(marker, { label, boxX, boxWidth, boxY, stemStart, stemEnd });
     });
 
-    let height = top;
-    for (const lane of lanes) {
-      lane.y = height;
-      height += lane.height + gap;
-    }
-    const stems = markers.map(({ x, cardHeight, lane }) => {
-      const start = lanes[lane].y + cardHeight, tip = start + 3;
-      return '<line class="trend-annotation-stem" x1="' + x + '" x2="' + x + '" y1="' + start + '" y2="' + tip + '"/>' +
+    const stems = markers.map(({ x, stemStart, stemEnd }) => {
+      const tip = stemEnd + 3;
+      return '<line class="trend-annotation-stem" x1="' + x + '" x2="' + x + '" y1="' + stemStart + '" y2="' + stemEnd + '"/>' +
         '<path class="trend-annotation-tip" d="M ' + (x - 3) + ' ' + tip + ' h 6 l -3 3 Z"/>';
     }).join("");
-    const labels = markers.map(({ key, boxX, boxWidth, cardHeight, lane, lines, description }) => {
-      const accessibleText = escapeMarkup(description), y = lanes[lane].y, center = boxX + boxWidth / 2;
+    const labels = markers.map(({ key, boxX, boxWidth, boxY, label, description }) => {
+      const accessibleText = escapeMarkup(description), center = boxX + boxWidth / 2;
       return '<g class="trend-annotation" data-annotation-period="' + key + '" tabindex="0" role="img" aria-label="' + accessibleText + '">' +
         '<title>' + accessibleText + '</title>' +
-        '<rect class="trend-annotation-box" x="' + boxX + '" y="' + y + '" width="' + boxWidth + '" height="' + cardHeight + '" rx="5"/>' +
-        '<text class="trend-annotation-label" text-anchor="middle" dominant-baseline="central">' +
-        lines.map((line, index) => '<tspan x="' + center + '" y="' + (y + paddingY + lineHeight * (index + 0.5)) + '">' + escapeMarkup(line) + '</tspan>').join("") +
+        '<rect class="trend-annotation-box" x="' + boxX + '" y="' + boxY + '" width="' + boxWidth + '" height="' + markerHeight + '" rx="10"/>' +
+        '<text class="trend-annotation-label" x="' + center + '" y="' + (boxY + markerHeight / 2) + '" text-anchor="middle" dominant-baseline="central">' +
+        escapeMarkup(label) +
         '</text></g>';
     }).join("");
+    const height = Math.max(...markers.map(marker => marker.boxY + markerHeight), 0);
     return { height, markup: '<g aria-hidden="true">' + stems + '</g>' + labels };
   }
 

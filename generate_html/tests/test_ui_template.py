@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DashboardTemplateTests(unittest.TestCase):
-    def test_trend_annotations_wrap_complete_text_without_overlaps(self):
+    def test_trend_annotations_use_compact_markers_with_complete_details(self):
         node = shutil.which('node')
         if not node:
             self.skipTest('Node unavailable')
@@ -31,27 +31,35 @@ const attribute=(markup,name)=>Number(markup.match(new RegExp(name+'="([\\d.]+)"
 const periods={day:['2026-11-10','2026-11-11','2026-11-17'],week:['26WK46','2026WK46','26WK47'],month:['2026-11']};
 for(const width of [120,320,768]){
   for(const grain of ['day','week','month']){
-    const result=render(notes,periods[grain],grain,{left:16,step:(width-32)/periods[grain].length,width});
+    const anchorYs=periods[grain].map((_,index)=>34+index*20);
+    const result=render(notes,periods[grain],grain,{left:16,step:(width-32)/periods[grain].length,width,anchorYs});
     const groups=[...result.markup.matchAll(/<g class="trend-annotation"[\s\S]*?<\/g>/g)].map(match=>match[0]);
     const rectangles=[];
     for(const group of groups){
       const key=group.match(/data-annotation-period="([^"]+)"/)[1];
-      const expected=notes.filter(note=>window.TrendAnnotations.dateKey(note.date,grain)===key).map(note=>note.text).join('');
-      const lines=[...group.matchAll(/<tspan[^>]*>([\s\S]*?)<\/tspan>/g)].map(match=>decode(match[1]));
-      assert.equal(lines.join(''),expected,'Every event remains visible in full');
+      const expected=notes.filter(note=>window.TrendAnnotations.dateKey(note.date,grain)===key).map(note=>note.date+' '+note.text).join('\n');
+      const aria=decode(group.match(/aria-label="([^"]*)"/)[1]);
+      const title=decode(group.match(/<title>([\s\S]*?)<\/title>/)[1]);
+      assert.equal(aria,expected,'Full details remain available to assistive technology');
+      assert.equal(title,expected,'Full details remain available in the native tooltip');
+      const label=decode(group.match(/<text[^>]*>([\s\S]*?)<\/text>/)[1]);
+      assert(label.length>0&&label.length<expected.length,'Visible marker stays compact');
       const rect=group.match(/<rect class="trend-annotation-box"([^>]*)>/)[1];
       const x=attribute(rect,'x'),y=attribute(rect,'y'),w=attribute(rect,'width'),h=attribute(rect,'height');
       assert(x>=4&&x+w<=width-4+1e-8,'Boxes stay inside the chart');
-      assert(y>=6&&y+h<result.height,'Chart reserves full multiline height');
+      assert(y>=4&&h<=20,'Markers use a fixed compact height');
+      const indices={day:[0,1,2],week:[0,2],month:[0]};
+      const index=indices[grain][rectangles.length];
+      assert(Math.abs(anchorYs[index]-y-h-10)<1e-8,'Each marker stays ten pixels above its own bar');
+      assert(Math.abs(x+w/2-(16+(index+.5)*(width-32)/periods[grain].length))<1e-8,'Marker stays centered on its period');
       rectangles.push({x,y,w,h});
     }
-    assert(groups.some(group=>(group.match(/<tspan/g)||[]).length>1),'Long notes wrap');
     assert.equal(groups.length,grain==='day'?3:grain==='week'?2:1,'Same period is grouped once');
     for(let i=0;i<rectangles.length;i++)for(let j=i+1;j<rectangles.length;j++){
       const a=rectangles[i],b=rectangles[j];
-      assert(a.x+a.w+6<=b.x+1e-8||b.x+b.w+6<=a.x+1e-8||a.y+a.h+6<=b.y+1e-8||b.y+b.h+6<=a.y+1e-8,'Annotation cards never overlap');
+      assert(a.x+a.w+6<=b.x+1e-8||b.x+b.w+6<=a.x+1e-8,'Adjacent markers keep a horizontal gap');
     }
-    assert(!result.markup.includes('<img')&&!result.markup.includes('…'),'No injected markup or truncated text');
+    assert(!result.markup.includes('<img'),'No injected markup');
   }
 }
 assert.equal(JSON.stringify(notes),original,'Rendering preserves source annotations');

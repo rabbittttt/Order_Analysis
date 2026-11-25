@@ -63,7 +63,7 @@ def catalog_subjects(store, subjects):
                 continue
             if subject.type == "generation" and model_key(row["代际名"]) not in names:
                 continue
-            for field, label in (("小订开始日期", "小订开始"), ("开始大定日期", "大定开始")):
+            for field, label in (("小订开始日期", "小订开始"), ("开始大定日期", "大定开始"), ("首销结束日期", "首销结束")):
                 value = row.get(field)
                 if isinstance(value, datetime):
                     value = value.date()

@@ -1013,18 +1013,17 @@
     const originalImage=DATA.chart_assets?.[data.image_key];
 
     const trendLine=colors.blue,seriesFill=index=>stackedTrendPalette[index%stackedTrendPalette.length],periods=data.periods,series=data.series||[],totals=data.totals||[],maxTotal=chartMax(totals),labelMax=Math.max(...periods.map(period=>String(period||"").length),1),left=52,bottom=252,plotH=218,step=Math.max(42,Math.min(labelMax*4.8,90)),W=Math.max(380,periods.length*step+50),H=Math.max(310,bottom+Math.min(labelMax*4.2,80)+14),barW=stackedBarWidth(step);
-    const plotTop=bottom-plotH;
-    const annotations=trendAnnotationState.visible
-      ? window.TrendAnnotations.render([...trendAnnotationsFor(state.subject),...(subject()?.stage_annotations||[])],periods,state.grain,{left,step,width:W})
-      : {height:0,markup:""};
-    if(!annotations.height&&window.CHART_RENDER_MODE==="original"&&originalImage)return `<div class="original-chart"><img src="${originalImage}" alt="${esc(data.headline||"Excel原始图表")}"/></div>`;
+    const barTops=[];
     const segmentLabelYs=periods.map(()=>[]);
-    const bars=periods.map((period,index)=>{const rates=series.map(item=>Math.max(0,Number(item.values[index]||0))),stackHeight=rates.reduce((sum,rate)=>sum+rate,0)*plotH;let y=bottom-stackHeight;const stacks=series.map((item,sIndex)=>{const rate=rates[sIndex],height=rate*plotH,segmentY=y;y+=height;if(!rate)return "";const labelY=avoidLabelY(segmentY+height/2,segmentLabelYs[index],12,bottom-4,12);segmentLabelYs[index].push(labelY);return `<rect x="${left+index*step+(step-barW)/2}" y="${segmentY}" width="${barW}" height="${height}" fill="${seriesFill(sIndex)}"/><text class="chart-data-label stack-segment-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${(rate*100).toFixed(0)}%</text>`}).join("");const lx=left+index*step+step-2,ly=bottom+13;return `${stacks}<text x="${lx}" y="${ly}" text-anchor="end" transform="rotate(-40 ${lx} ${ly})" font-size="12" fill="#718396">${esc(period)}</text>`}).join("");
+    const bars=periods.map((period,index)=>{const rates=series.map(item=>Math.max(0,Number(item.values[index]||0))),stackHeight=rates.reduce((sum,rate)=>sum+rate,0)*plotH;let y=bottom-stackHeight;barTops.push(y);const stacks=series.map((item,sIndex)=>{const rate=rates[sIndex],height=rate*plotH,segmentY=y;y+=height;if(!rate)return "";const labelY=avoidLabelY(segmentY+height/2,segmentLabelYs[index],12,bottom-4,12);segmentLabelYs[index].push(labelY);return `<rect x="${left+index*step+(step-barW)/2}" y="${segmentY}" width="${barW}" height="${height}" fill="${seriesFill(sIndex)}"/><text class="chart-data-label stack-segment-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${(rate*100).toFixed(0)}%</text>`}).join("");const lx=left+index*step+step-2,ly=bottom+13;return `${stacks}<text x="${lx}" y="${ly}" text-anchor="end" transform="rotate(-40 ${lx} ${ly})" font-size="12" fill="#718396">${esc(period)}</text>`}).join("");
+    const annotations=trendAnnotationState.visible
+      ? window.TrendAnnotations.render([...trendAnnotationsFor(state.subject),...(subject()?.stage_annotations||[])],periods,state.grain,{left,step,width:W,anchorYs:barTops})
+      : {height:0,markup:""};
+    if(!annotations.markup&&window.CHART_RENDER_MODE==="original"&&originalImage)return `<div class="original-chart"><img src="${originalImage}" alt="${esc(data.headline||"Excel原始图表")}"/></div>`;
     const points=totals.map((value,index)=>`${left+index*step+step/2},${bottom-Number(value)/maxTotal*plotH}`).join(" ");
     const values=totals.map((value,index)=>{const baseY=bottom-Number(value)/maxTotal*plotH-8,labelY=avoidLabelY(baseY,segmentLabelYs[index],12,bottom-8);return `<text class="chart-data-label total-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${fmt(value)}</text>`}).join("");
     const legend=series.map((item,index)=>`<span><i style="background:${seriesFill(index)}"></i>${esc(item.name)}</span>`).join("")+`<span><i class="line-key"></i>总计</span>`;
-    const annotationOffset=Math.max(0,annotations.height-plotTop),height=H+annotationOffset,containerHeight=state.module==='overview'?'auto':H+'px';
-    return `<div class="stacked-chart" style="height:${containerHeight}"><svg viewBox="0 0 ${W} ${height}" style="width:${W}px;height:${height}px">${annotations.markup}<g transform="translate(0 ${annotationOffset})"><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
+    return `<div class="stacked-chart" style="height:${H}px;max-height:${H}px"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px">${annotations.markup}<g><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
   }
   function renderTable(data){
     if(!data?.columns)return '<div class="empty-image">暂无表格数据</div>';

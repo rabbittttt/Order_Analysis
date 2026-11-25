@@ -86,7 +86,7 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('[data-trend-annotation-toggle]').click();assert.equal(await page.locator('.trend-annotation').count(),0);
   const hidden=await chartHeights();
   assert.deepStrictEqual(hidden.bars,annotated.bars,'显示批注时保持柱高');
-  check('批注展开时卡片增高',annotated.card>hidden.card);
+  check('切换批注时保持卡片高度',annotated.card===hidden.card);
   await page.locator('[data-trend-annotation-toggle]').click();await page.waitForSelector('.trend-annotation');
   await page.locator('[data-trend-annotation-toggle]').click();
   await page.reload();await page.waitForSelector('.trend-annotation');
