@@ -2997,6 +2997,7 @@ button,select,input {font-family:inherit}
 .topbar .brand {color:var(--ink)}
 .topbar .brand strong {font-size:19px;font-weight:700;line-height:1.15;letter-spacing:normal}
 .topbar .brand-mark {width:28px;height:28px;flex-basis:28px;border:0;border-radius:10px;box-shadow:none}
+.planhub-embedded .topbar > .brand > .brand-mark {display:none}
 .topbar .filters select,.topbar .segments,.topbar .quick-generation-button {
   border:1px solid var(--line);
   border-radius:999px;
