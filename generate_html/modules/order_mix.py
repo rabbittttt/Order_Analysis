@@ -32,6 +32,10 @@ def _battery_trend(parsed: dict, source: SourceRef) -> dict | None:
                    {"periods": list(parsed), "series": series}, width="full", source=source)
 
 
+def _visible_option(dimension: str, row: dict) -> bool:
+    return "电池包" not in dimension or row["share"] != 0
+
+
 class MixModule:
     def __init__(self, kind: str):
         self.kind = kind
@@ -107,14 +111,20 @@ class MixModule:
                 max_change = max((abs(row["change"]) for row in all_rows), default=0)
                 leader_bars = [
                     {"label": f'{row["structure"]} · {row["label"]}', "share": row["share"], "count": row.get("count")}
-                    for row in leaders
+                    for row in leaders if _visible_option(row["structure"], row)
                 ]
+                visible_rows = (row for row in all_rows if _visible_option(row["structure"], row))
                 change_rows = [
                     [row["structure"], row["label"], row["share"], row["previous"], row["change"], row.get("count")]
-                    for row in sorted(all_rows, key=lambda row: abs(row["change"]), reverse=True)[:18]
+                    for row in sorted(visible_rows, key=lambda row: abs(row["change"]), reverse=True)[:18]
                 ]
+                visible_structures = []
+                for group in structures:
+                    rows = [row for row in group["rows"] if _visible_option(group["name"], row)]
+                    if rows or "电池包" not in group["name"]:
+                        visible_structures.append({**group, "rows": rows})
                 sections = [
-                    section("structure_cards", "选配结构全景", structures, "选配占比 / 环比变化", source=data_source),
+                    section("structure_cards", "选配结构全景", visible_structures, "选配占比 / 环比变化", source=data_source),
                     section("bars", "各维度首选配置", {"color": "blue", "rows": leader_bars}, "每个选配维度 TOP1", "half", data_source),
                     section("table", "选配偏好变化排行", table(
                         ["选配维度", "配置", "本期占比", "上期占比", "变化", "选配数"],

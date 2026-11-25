@@ -7,7 +7,7 @@ from openpyxl import Workbook
 
 from core.excel import WorkbookItem, WorkbookStore, parse_metric_sheet
 from core.models import Subject
-from modules.order_mix import OrderMixModule
+from modules.order_mix import MixModule, OrderMixModule
 
 
 class MetricBlockOrderTests(unittest.TestCase):
@@ -89,6 +89,20 @@ class MetricBlockOrderTests(unittest.TestCase):
         page = board['views']['week']['pages']['26WK43']
         ranking = next(section for section in page['sections'] if section['title'] == '选配偏好变化排行')
         self.assertEqual(ranking['data']['rows'][0][-1], 40)
+
+    def test_zero_battery_option_hidden_only_in_its_zero_period(self):
+        book, _ = self.sheet([['电池包', '占比', '80度', .7, 1], [None, None, '100度', .3, 0]])
+        subject = Subject(id='test', name='问界 M9 2026款', type='generation', parent='问界')
+        for kind in ('order', 'lock', 'small'):
+            with self.subTest(kind=kind):
+                module = MixModule(kind)
+                store = WorkbookStore(Path('.'))
+                store.items = [WorkbookItem(Path(f'鸿蒙智行{module.keyword}分析.xlsx'), book)]
+                pages = module.build(store, subject).views['week']['pages']
+                for period, labels in [('26WK42', {'80度', '100度'}), ('26WK43', {'80度'})]:
+                    sections = {part['kind']: part['data'] for part in pages[period]['sections']}
+                    self.assertEqual({row['label'] for row in sections['structure_cards'][0]['rows']}, labels)
+                    self.assertEqual({row[1] for row in sections['table']['rows']}, labels)
 
 
 if __name__ == '__main__':

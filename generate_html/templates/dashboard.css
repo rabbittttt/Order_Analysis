@@ -2252,6 +2252,8 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   fill:#C00000;
 }
 
+.mix-trend-chart .chart-data-label.total-label {fill:#172f4a}
+
 .chart-data-label.stack-segment-label {
   font-size:var(--font-caption);
   font-weight:400;

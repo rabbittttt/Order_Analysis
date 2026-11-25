@@ -14,8 +14,10 @@ const batteryPeriods=['26WK42','26WK43','26WK44','26WK45','26WK46'];
 const batterySection={
   kind:'mix_combo_trend',title:'电池包度数 · 数量与占比',
   data:{periods:batteryPeriods,series:[
-    {name:'80度',shares:[.6,0,.6,0,null],counts:[120,0,740,0,null]},
-    {name:'100度',shares:[.4,1,.4,0,null],counts:[80,null,494,0,null]}
+    {name:'80度',shares:[.59,0,.6,0,null],counts:[590,0,740,0,null]},
+    {name:'100度',shares:[.4,1,.4,0,null],counts:[400,null,494,0,null]},
+    {name:'130度',shares:[0,0,0,0,null],counts:[0,0,0,0,null]},
+    ...Array.from({length:10},(_,i)=>({name:`${40+i}度`,shares:[.001],counts:[1]}))
   ]}
 };
 const batteryView={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[],sections:[batterySection]}}};
@@ -176,9 +178,16 @@ const server=http.createServer(async(req,res)=>{
     Array.from(node.childNodes).filter(child=>child.nodeType===Node.TEXT_NODE).map(child=>child.textContent).join('')
   ));
   const shares=await labelText('.stack-segment-label');
-  assert.deepStrictEqual(shares.sort(),['60%','0%','60%','0%','40%','100%','40%','0%'].sort());
-  check('电池包柱段只标占比，悬停可查看数量',await battery.locator('rect[fill]').count()===shares.length&&(await battery.locator('rect[fill] title').first().textContent()).includes('数量 120'));
-  assert.deepStrictEqual(await labelText('.total-label'),['200','1,234','0']);
+  assert.deepStrictEqual(shares.sort(),['59%','60%','40%','100%','40%',...Array(10).fill('<1%')].sort());
+  check('电池包省略零占比，悬停可查看数量',await battery.locator('rect[fill]').count()===shares.length&&(await battery.locator('rect[fill] title').first().textContent()).includes('数量 590'));
+  check('全期为零的容量不进入图例',!(await battery.locator('.channel-legend').innerText()).includes('130度'));
+  const fillColors=await battery.locator('rect[fill]').evaluateAll(bars=>bars.map(bar=>getComputedStyle(bar).fill));
+  const legendColors=await battery.locator('.channel-legend span:not(.channel-total-key) i').evaluateAll(keys=>keys.map(key=>getComputedStyle(key).backgroundColor));
+  assert.equal(new Set(fillColors).size,12);
+  assert.deepStrictEqual(new Set(fillColors),new Set(legendColors));
+  assert.deepStrictEqual(await labelText('.total-label'),['1,000','1,234','0']);
+  assert.equal(await battery.locator('.total-label').first().evaluate(node=>getComputedStyle(node).fill),
+    await battery.locator('.channel-total-line').evaluate(node=>getComputedStyle(node).stroke));
   const totalLine=battery.locator('svg path');
   check('电池包总量只画一条线，数据缺失时断开',await totalLine.count()===1&&(await totalLine.getAttribute('d')).split('M').length===3&&await battery.locator('circle').count()===3);
   check('电池包占比与总量分别使用左右轴',await battery.locator('.channel-y-axis.left').count()===1&&await battery.locator('.channel-y-axis.right').count()===1);

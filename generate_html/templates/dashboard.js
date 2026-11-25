@@ -270,6 +270,21 @@
   const chartPalette = {blue:"#BDD7EE",cyan:"#B5DDE5",green:"#C6E0B4",yellow:"#FFE699",orange:"#F8CBAD",rose:"#F0CCCC",violet:"#CCC0DA"};
   // 留存大定/锁单堆叠趋势图按系列出现顺序取色，不按能源类型固定颜色。
   const stackedTrendPalette=["#FFF2CC","#E2F0D9","#C8E8E8","#A8D8EA","#A0C1E8","#DCC5ED","#F0C8C8","#F8D8B0"];
+  // 选配电池容量需要跨周期保持同色，扩展柔和色板避免多容量回到前三色循环。
+  const optionColorPalette=["#6F9FC6","#8DBFA6","#D9A06F","#9C8BC2","#C97878","#75AEB7","#B5A070","#7F89B2","#86B89A","#C28FA8","#B88D70","#7398A8","#A8A06D","#8A9CC7","#C58A7C","#7CABAE","#A789B1","#B99A72","#6F9AAB","#AA8E9A"];
+  const optionColorAssignments=new Map();
+  const optionColorKey=value=>{
+    const key=String(value??"").trim().replace(/\s+/g,"").toLowerCase(),capacity=key.match(/^(\d+(?:\.\d+)?)(?:度|kwh|千瓦时)$/);
+    return capacity?`battery:${Number(capacity[1])}`:key;
+  };
+  const optionColor=value=>{
+    const key=optionColorKey(value),existing=optionColorAssignments.get(key);
+    if(existing)return existing;
+    const index=optionColorAssignments.size,color=index<optionColorPalette.length
+      ? optionColorPalette[index]
+      : `hsl(${((index*137.508)%360).toFixed(1)}, 36%, 64%)`;
+    optionColorAssignments.set(key,color);return color;
+  };
   let moduleLabels = DATA.config.module_labels;
   const state = {subject:null,module:"overview",grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawOffset:0,rawFreezeRow:true,rawFreezeColumn:false,rawFreezeFirstColumn:true};
   const boardCache={};
@@ -945,18 +960,18 @@
     const totals=combined?batteryPeriodTotals(periods,series):[],showTotals=totals.some(channelKnown);
     const valuesFor=item=>(combined?item.shares:item.values)||[];
     if(stackedShares){
-      series=series.filter(item=>valuesFor(item).some(channelKnown));
+      series=series.filter(item=>valuesFor(item).some(value=>channelKnown(value)&&value>0));
       if(!series.length&&!showTotals)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';
     }
     const lineMax=stackedShares?1:channelAxisMax(series.flatMap(valuesFor));
     const totalMax=showTotals?4*Math.ceil(channelAxisMax(totals)/4):1;
     const lineColors=['#2866ba','#a5471d','#11735a','#8549a4','#966800','#a03f65','#277685','#5a648a'];
-    const colorFor=index=>lineColors[index%lineColors.length];
+    const colorFor=(item,index)=>stackedShares?optionColor(item.name):lineColors[index%lineColors.length];
     const describe=(item,i)=>combined
       ?`${esc(periods[i])} · ${esc(item.name)} · 占比 ${channelValue(item.shares?.[i],'percent')} · 数量 ${channelValue(item.counts?.[i])}`
       :`${esc(periods[i])} · ${esc(item.name)} · ${channelValue(item.values?.[i],stackedShares?'percent':'number')}`;
     const totalDescription=i=>`${esc(periods[i])} · 电池包总量 ${channelValue(totals[i])} 单`;
-    const shareLabel=value=>`${(value*100).toFixed(0)}%`;
+    const shareLabel=value=>value>0&&value<0.005?'<1%':`${(value*100).toFixed(0)}%`;
     const labelWidths=series.flatMap(item=>valuesFor(item).flatMap((value,i)=>channelKnown(value)?[stackedShares?rhythmTextWidth(shareLabel(value),12)+12:fmt(value).length*8+12]:[]));
     const labelStep=Math.max(42,...periods.map(period=>rhythmTextWidth(rhythmAxisText(period),12)+8),...labelWidths,...totals.filter(channelKnown).map(value=>fmt(value).length*8+12));
     g.width=Math.max(periods.length,1)*labelStep;g.step=labelStep;
@@ -970,19 +985,19 @@
     };
     const stacked=periods.map(()=>0),barWidth=stackedBarWidth(g.step);
     const bars=stackedShares?series.map((item,index)=>valuesFor(item).map((share,i)=>{
-      if(!channelKnown(share))return '';
+      if(!channelKnown(share)||share<=0)return '';
       stacked[i]+=share;
       const x=(i+.5)*g.step-barWidth/2,y=g.bottom-stacked[i]*plotHeight,height=share*plotHeight;
       const labelY=placeLabel(i,y+height/2);
-      barLabels.push(`<text class="chart-data-label stack-segment-label" x="${(i+.5)*g.step}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${shareLabel(share)}</text>`);
-      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${colorFor(index)}" fill-opacity=".42"><title>${describe(item,i)}</title></rect>`;
+      barLabels.push(`<text class="chart-data-label stack-segment-label" x="${(i+.5)*g.step}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${esc(shareLabel(share))}</text>`);
+      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${colorFor(item,index)}"><title>${describe(item,i)}</title></rect>`;
     }).join('')).join(''):'';
     const grid=[0,.25,.5,.75,1].map(ratio=>{
       const y=g.bottom-ratio*plotHeight;
       return `<line x1="0" x2="${g.width}" y1="${y}" y2="${y}"/>`;
     }).join('');
     const lines=stackedShares?'':series.map((item,index)=>{
-      const color=colorFor(index),values=valuesFor(item);
+      const color=colorFor(item,index),values=valuesFor(item);
       const points=values.map((value,i)=>{
         if(!channelKnown(value))return '';
         const x=(i+.5)*g.step,y=g.bottom-value/lineMax*plotHeight,labelY=placeLabel(i,y-8);
@@ -998,7 +1013,7 @@
       return `<circle class="channel-total-point" cx="${x}" cy="${y}" r="3.5"><title>${totalDescription(i)}</title></circle>`;
     }).join(''):'';
     const labels=periods.map((period,i)=>`<text class="channel-axis-label" x="${(i+.5)*g.step}" y="${g.bottom+20}" text-anchor="middle">${esc(String(period).replace(/^\d{4}-(\d{2}-\d{2})$/,'$1'))}</text>`).join('');
-    const legend=series.map(({name},i)=>`<span><i style="background:${colorFor(i)}"></i>${esc(name)}</span>`).join('')+(showTotals?'<span class="channel-total-key"><i aria-hidden="true"></i>总量（右轴）</span>':'');
+    const legend=series.map((item,i)=>`<span><i style="background:${colorFor(item,i)}"></i>${esc(item.name)}</span>`).join('')+(showTotals?'<span class="channel-total-key"><i aria-hidden="true"></i>总量（右轴）</span>':'');
     const units=stackedShares?`<div class="channel-axis-units"><span>占比（%）</span>${showTotals?'<span>总量（单）</span>':''}</div>`:'';
     const leftAxis=channelAxisMarkup(lineMax,stackedShares?'percent':'number',g,'left');
     const rightAxis=showTotals?channelAxisMarkup(totalMax,'number',g,'right'):'';
@@ -1057,7 +1072,7 @@
     const legend=source.map((row,index)=>{const percent=row.value/total*100,count=Number.isFinite(Number(row.count))?` · ${fmt(Number(row.count))}单`:'';return `<div class="pie-legend-row"><span><i style="background:${palette[index%palette.length]}"></i><b title="${esc(row.label)}">${esc(row.label)}</b></span><strong>${percent.toFixed(1)}%${count}</strong></div>`}).join('');
     return `<div class="pie-chart"><div class="pie-visual"><svg viewBox="0 0 200 200" role="img" aria-label="占比圆环图"><circle class="pie-track" cx="100" cy="100" r="${radius}"/><g transform="rotate(-90 100 100)">${slices}</g><g class="pie-slice-labels">${sliceLabels}</g><text class="pie-total" x="100" y="96" text-anchor="middle">${totalCount!=null?fmt(totalCount):`${total.toFixed(1)}%`}</text><text class="pie-total-label" x="100" y="113" text-anchor="middle">${totalCount!=null?'合计':'占比'}</text></svg></div><div class="pie-legend">${legend}</div></div>`;
   }
-  function renderStructureCards(groups){return `<div class="structure-grid">${groups.map((group,index)=>`<section class="structure-card"><h3>${esc(group.name)}</h3><div class="bars">${group.rows.map(row=>{const value=shareValue(row),change=Number(row.change||0)*100;return `<div class="bar-row"><label>${esc(row.label)}<span class="change ${change>=0?"pos":"neg"}">${change>=0?"+":""}${change.toFixed(1)}%</span></label><div class="track"><div class="fill" style="width:${Math.min(value,100)}%;background:${Object.values(colors)[index%5]}"></div></div><b>${value.toFixed(1)}%</b></div>`}).join("")}</div></section>`).join("")}</div>`}
+  function renderStructureCards(groups){return `<div class="structure-grid">${groups.map((group,index)=>{const battery=/电池包/.test(String(group.name||""));return `<section class="structure-card"><h3>${esc(group.name)}</h3><div class="bars">${group.rows.map(row=>{const value=shareValue(row),change=Number(row.change||0)*100,color=battery?optionColor(row.label):Object.values(colors)[index%5];return `<div class="bar-row"><label>${esc(row.label)}<span class="change ${change>=0?"pos":"neg"}">${change>=0?"+":""}${change.toFixed(1)}%</span></label><div class="track"><div class="fill" style="width:${Math.min(value,100)}%;background:${color}"></div></div><b>${value.toFixed(1)}%</b></div>`}).join("")}</div></section>`}).join("")}</div>`}
   function renderFunnel(stages){
     const palette=Object.values(colors),rate=value=>Number.isFinite(value)?`${(value*100).toFixed(1)}%`:'—',quantity=value=>Number.isFinite(value)?fmt(value):'—';
     return `<div class="funnel"><div class="funnel-row head"><span>阶段</span><span>规模</span><span>数量</span><span>总占比</span><span>阶段转化</span><span>流失</span></div>${stages.map((stage,index)=>`<div class="funnel-row"><span>${esc(stage.label)}</span><div class="funnel-track">${Number.isFinite(stage.total_rate)?`<div class="funnel-fill" style="width:${Math.max(stage.total_rate*100,1)}%;background:${palette[index%palette.length]}">${rate(stage.total_rate)}</div>`:'<span title="数据缺失或分母为0">—</span>'}</div><b>${quantity(stage.value)}</b><b>${rate(stage.total_rate)}</b><b>${rate(stage.stage_rate)}</b><b>${quantity(stage.loss)}</b></div>`).join("")}</div>`}
