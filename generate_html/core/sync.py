@@ -19,7 +19,6 @@ ROOT = Path(__file__).resolve().parents[1]
 CHECK_SECONDS = 300
 STABLE_SECONDS = 60
 BATCH_WORKBOOKS = (
-    "小订及首销数据整理.xlsx",
     "鸿蒙智行小订退订分析.xlsx",
     "鸿蒙智行小订选配比例分析.xlsx",
     "鸿蒙智行首销期订单节奏.xlsx",

@@ -38,6 +38,27 @@ class AutoSyncTests(unittest.TestCase):
                 self.assertEqual(schedule.observe(new, old, 60), (True, 0))
                 self.assertEqual(schedule.observe(new, new, 61), (False, 300))
 
+    def test_stage_workbook_edit_waits_for_next_order_batch(self):
+        stage = self.source / '小订及首销数据整理.xlsx'
+        stage.write_bytes(b'previous')
+        published = source_signature(self.source)
+        stage.write_bytes(b'updated stage dates')
+        stamp = stage.stat().st_mtime_ns + 2_000_000_000
+        os.utime(stage, ns=(stamp, stamp))
+        schedule = RefreshSchedule()
+        self.assertEqual(schedule.observe(source_signature(self.source), published, 0), (False, 300))
+
+        rhythm = self.source / '鸿蒙智行首销期订单节奏.xlsx'
+        stamp = rhythm.stat().st_mtime_ns + 2_000_000_000
+        os.utime(rhythm, ns=(stamp, stamp))
+        current = source_signature(self.source)
+        self.assertEqual(schedule.observe(current, published, 300), (False, 60))
+        self.assertEqual(schedule.observe(current, published, 360), (True, 0))
+        snapshot = self.root / 'snapshot'
+        snapshot.mkdir()
+        copy_stable_inputs(self.source, snapshot, current)
+        self.assertEqual((snapshot / stage.name).read_bytes(), b'updated stage dates')
+
     def test_stale_marker_and_absent_peer_do_not_block_resaved_file(self):
         self.books[-1].unlink()
         marker = self.source / "orders.ready"
@@ -87,7 +108,8 @@ class AutoSyncTests(unittest.TestCase):
         original_copy = shutil.copy2
         def changing_copy(src, dst):
             original_copy(src, dst)
-            self.book.write_bytes(b'changed while copying')
+            if src == self.book:
+                self.book.write_bytes(b'changed while copying')
         with patch('core.sync.shutil.copy2', side_effect=changing_copy):
             with self.assertRaisesRegex(RuntimeError, '复制期间'):
                 copy_stable_inputs(self.source, destination, expected)
