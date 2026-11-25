@@ -962,9 +962,9 @@
       ?`${esc(periods[i])} · ${esc(item.name)} · 占比 ${channelValue(item.shares?.[i],'percent')} · 数量 ${channelValue(item.counts?.[i])}`
       :`${esc(periods[i])} · ${esc(item.name)} · ${channelValue(item.values?.[i],stackedShares?'percent':'number')}`;
     const totalDescription=i=>`${esc(periods[i])} · 电池包总量 ${channelValue(totals[i])} 单`;
-    const shareLabel=(item,i,value)=>`${(value*100).toFixed(0)}%${combined?`（${channelKnown(item.counts?.[i])?fmt(item.counts[i])+'单':'—'}）`:''}`;
-    const labelWidths=series.flatMap(item=>valuesFor(item).flatMap((value,i)=>channelKnown(value)?[stackedShares?rhythmTextWidth(shareLabel(item,i,value),12)+16:fmt(value).length*8+12]:[]));
-    const labelStep=Math.max(52,...periods.map(period=>rhythmTextWidth(rhythmAxisText(period),12)+12),...labelWidths,...totals.filter(channelKnown).map(value=>fmt(value).length*8+12));
+    const shareLabel=value=>`${(value*100).toFixed(0)}%`;
+    const labelWidths=series.flatMap(item=>valuesFor(item).flatMap((value,i)=>channelKnown(value)?[stackedShares?rhythmTextWidth(shareLabel(value),12)+12:fmt(value).length*8+12]:[]));
+    const labelStep=Math.max(42,...periods.map(period=>rhythmTextWidth(rhythmAxisText(period),12)+8),...labelWidths,...totals.filter(channelKnown).map(value=>fmt(value).length*8+12));
     g.width=Math.max(periods.length,1)*labelStep;g.step=labelStep;
     const plotHeight=g.bottom-g.top,labelYs=periods.map(()=>[]),barLabels=[],lineLabels=[];
     const placeLabel=(index,baseY)=>{
@@ -980,7 +980,7 @@
       stacked[i]+=share;
       const x=(i+.5)*g.step-barWidth/2,y=g.bottom-stacked[i]*plotHeight,height=share*plotHeight;
       const labelY=placeLabel(i,y+height/2);
-      barLabels.push(`<text class="chart-data-label stack-segment-label" x="${(i+.5)*g.step}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${shareLabel(item,i,share)}</text>`);
+      barLabels.push(`<text class="chart-data-label stack-segment-label" x="${(i+.5)*g.step}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${shareLabel(share)}</text>`);
       return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${colorFor(index)}" fill-opacity=".42"><title>${describe(item,i)}</title></rect>`;
     }).join('')).join(''):'';
     const grid=[0,.25,.5,.75,1].map(ratio=>{

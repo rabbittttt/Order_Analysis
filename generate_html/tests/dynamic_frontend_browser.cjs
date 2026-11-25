@@ -170,8 +170,8 @@ const server=http.createServer(async(req,res)=>{
     Array.from(node.childNodes).filter(child=>child.nodeType===Node.TEXT_NODE).map(child=>child.textContent).join('')
   ));
   const shares=await labelText('.stack-segment-label');
-  assert.deepStrictEqual(shares.sort(),['60%（120单）','0%（0单）','60%（740单）','0%（0单）','40%（80单）','100%（—）','40%（494单）','0%（0单）'].sort());
-  check('电池包柱段显示占比和数量，区分零与缺失',await battery.locator('rect[fill]').count()===shares.length);
+  assert.deepStrictEqual(shares.sort(),['60%','0%','60%','0%','40%','100%','40%','0%'].sort());
+  check('电池包柱段只标占比，悬停可查看数量',await battery.locator('rect[fill]').count()===shares.length&&(await battery.locator('rect[fill] title').first().textContent()).includes('数量 120'));
   assert.deepStrictEqual(await labelText('.total-label'),['200','1,234','0']);
   const totalLine=battery.locator('svg path');
   check('电池包总量只画一条线，数据缺失时断开',await totalLine.count()===1&&(await totalLine.getAttribute('d')).split('M').length===3&&await battery.locator('circle').count()===3);

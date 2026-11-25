@@ -3236,8 +3236,9 @@ body {
   .module-bar {padding-inline:20px}
   .workspace {padding:16px 24px}
 }
-@media (min-width:1280px) {
-  #page[data-view-key$="|overview"]>.sections {grid-template-columns:minmax(0,1.2fr) minmax(0,1fr)}
+#page[data-view-key$="|overview"]>.sections>.panel:not(.full) {max-height:none;align-self:stretch}
+@media (min-width:781px) {
+  #page[data-view-key$="|overview"]>.sections {grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:640px) {
   body {height:auto;display:block;overflow:visible}
