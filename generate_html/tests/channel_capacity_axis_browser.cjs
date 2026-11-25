@@ -30,7 +30,7 @@ function fixture(mode='normal',grain='week',end=39){
  let checks=0;
  const check=(value,label)=>{assert(value,label);checks++};
  try{
-  await page.setContent('<!doctype html><meta charset="utf-8"><main id="fixture" style="padding:20px;max-width:1600px;margin:auto"></main>');
+  await page.setContent('<!doctype html><meta charset="utf-8"><main id="fixture" style="padding:20px;width:min(100vw,1600px);margin:auto"></main>');
   await page.addStyleTag({content:css+'\nhtml,body{height:auto;min-height:100%;overflow:auto}'});
   await page.addScriptTag({content:formatter+'\n'+component+`
    window.renderFixture=panels=>{
@@ -65,6 +65,18 @@ function fixture(mode='normal',grain='week',end=39){
    check(!!state.clip,label+' plot clipping is present');
   };
   await render(fixture());
+  const palette=['rgb(255, 242, 204)','rgb(226, 240, 217)'];
+  for(const [index,name] of channels.entries()){
+   const swatch=palette[index];
+   const color=async(selector,property)=>page.locator(selector).first().evaluate((el,prop)=>getComputedStyle(el)[prop],property);
+   for(const metric of ['sales','stores','capacity']){
+    const panel=`[data-channel-metric="${metric}"]`;
+    check(await color(panel+` tr[data-channel="${name}"] i`,'backgroundColor')===swatch,metric+' table key matches palette');
+    check(await color(panel+` .channel-legend>span:nth-child(${index+1}) i`,'backgroundColor')===swatch,metric+' legend matches palette');
+    const mark=metric==='sales'?'rect':'path',property=metric==='sales'?'fill':'stroke';
+    check(await color(panel+` ${mark}[data-channel="${name}"]`,property)===swatch,metric+' series matches palette');
+   }
+  }
   const initial=await snapshot(),others=await otherGraphs();
   check(initial.maximum>=6&&initial.maximum<=10,'Tail ignores offscreen 100 and uses a readable scale');
   check(Math.abs(initial.left+initial.width-initial.scrollWidth)<=2,'Initial view remains at latest period');
@@ -134,6 +146,16 @@ function fixture(mode='normal',grain='week',end=39){
   check((await snapshot()).empty,'All-missing data retains existing empty state');
   await page.setViewportSize({width:390,height:900});await settle();
   check((await snapshot()).empty,'All-missing data remains stable after resize');
+  await page.setViewportSize({width:1440,height:1000});
+  await render(fixture('normal','week',2));
+  for(const chart of await page.locator('.channel-chart-block').all()){
+   const margins=await chart.evaluate(block=>{
+    const container=block.getBoundingClientRect(),frame=block.querySelector('.channel-chart-frame').getBoundingClientRect();
+    return {left:frame.left-container.left,right:container.right-frame.right,frameWidth:frame.width,containerWidth:container.width};
+   });
+   check(margins.left>10&&Math.abs(margins.left-margins.right)<2,'Short channel histories center the plot with its axes '+JSON.stringify(margins));
+  }
+  await page.setViewportSize({width:390,height:900});
   const visibility=fixture();
   for(const panel of visibility){
    for(const entry of panel.history){

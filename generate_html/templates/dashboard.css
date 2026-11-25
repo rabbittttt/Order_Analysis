@@ -248,6 +248,9 @@ button {
   font-size:var(--font-caption);
 }
 .channel-chart-frame {display:grid;min-width:0}
+.channel-chart-visual {width:fit-content;max-width:100%;margin-inline:auto}
+.channel-chart-visual>.channel-axis-units,.channel-chart-visual>.channel-legend {contain:inline-size}
+.channel-chart-visual>.channel-legend {justify-content:center}
 .mix-trend-chart {width:min(100%,var(--mix-chart-width));min-width:0;margin-inline:auto}
 .mix-trend-chart .channel-legend {justify-content:center}
 .mix-trend-chart .channel-plot-scroll svg {margin-inline:auto}
@@ -270,18 +273,18 @@ button {
 .channel-plot-scroll svg {display:block;max-width:none}
 .channel-chart-grid line {stroke:var(--line);stroke-dasharray:3 4}
 .channel-axis-label {fill:var(--muted);font:var(--font-caption) "Microsoft YaHei","微软雅黑",sans-serif}
-.channel-stack-label {fill:#fff;font:700 var(--font-caption) "Microsoft YaHei","微软雅黑",sans-serif;paint-order:stroke;stroke:rgba(0,0,0,.15);stroke-width:1px;pointer-events:none}
+.channel-stack-label {fill:#23405a;font:700 var(--font-caption) "Microsoft YaHei","微软雅黑",sans-serif;paint-order:stroke;stroke:rgba(255,255,255,.86);stroke-width:1px;pointer-events:none}
 .channel-missing-mark {fill:var(--muted-2);font:var(--font-caption) "Microsoft YaHei","微软雅黑",sans-serif}
-.channel-total-line {stroke:#172f4a;stroke-width:2.5;fill:none;stroke-linejoin:round}
-.channel-total-point {fill:#172f4a;stroke:#fff;stroke-width:1.4}
-.channel-series-line {stroke-width:2.2;fill:none;stroke-linejoin:round}
+.channel-total-line {stroke:#A0C1E8;stroke-width:2.5;fill:none;stroke-linejoin:round;filter:drop-shadow(0 1px 0 rgba(255,255,255,.92)) drop-shadow(0 -1px 0 rgba(255,255,255,.92))}
+.channel-total-point {fill:#A0C1E8;stroke:#fff;stroke-width:1.4}
+.channel-series-line {stroke-width:2.4;fill:none;stroke-linejoin:round}
 .channel-series-point {stroke:#fff;stroke-width:.8}
 .channel-period-target {cursor:crosshair;outline:none}
 .channel-period-target:focus-visible rect {stroke:#1469ba;stroke-width:1.5;fill:rgba(35,119,202,.055)}
 .channel-legend {display:flex;flex-wrap:wrap;gap:7px 12px;margin-top:12px;color:var(--muted);font-size:var(--font-caption)}
 .channel-legend>span {display:inline-flex;align-items:center;gap:5px;max-width:100%;overflow-wrap:anywhere}
 .channel-legend i {width:9px;height:9px;border-radius:2px;flex:0 0 auto}
-.channel-legend .channel-total-key i {width:17px;height:0;border-radius:0;border-top:2.5px solid #172f4a}
+.channel-legend .channel-total-key i {width:17px;height:0;border-radius:0;border-top:2.5px solid #A0C1E8}
 .channel-chart-note {margin:8px 0 0;color:var(--muted);font-size:var(--font-caption);line-height:1.65}
 .channel-chart-empty {min-height:280px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;border:1px dashed var(--line);border-radius:8px;background:var(--surface-muted);text-align:center;color:var(--muted)}
 .channel-chart-empty strong {font-size:var(--font-body);font-weight:600}
@@ -421,8 +424,9 @@ button {
   height:100%;
   display:grid;
   place-items:center;
-  color:#fff;
+  color:#253f59;
   font-size:var(--font-caption);
+  text-shadow:0 1px 0 rgba(255,255,255,.86);
   border-radius:6px;
 }
 
@@ -861,10 +865,11 @@ button {
   display:grid;
   place-items:center;
   min-width:0;
-  color:#fff;
+  color:#253f59;
   font-size:var(--font-caption);
   font-style:normal;
   font-weight:700;
+  text-shadow:0 1px 0 rgba(255,255,255,.86);
 }
 
 .fee-period-chart {
@@ -889,10 +894,11 @@ button {
 .fee-period-stack i {
   display:grid;
   place-items:center;
-  color:#fff;
+  color:#253f59;
   font-size:var(--font-caption);
   font-style:normal;
   font-weight:700;
+  text-shadow:0 1px 0 rgba(255,255,255,.86);
 }
 
 .fee-period-col>b {
@@ -1546,11 +1552,14 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 .pie-slice-label {
-  fill:#fff;
+  fill:#253f59;
   font-size:var(--font-caption);
   font-weight:700;
   font-variant-numeric:tabular-nums;
   dominant-baseline:middle;
+  paint-order:stroke;
+  stroke:rgba(255,255,255,.86);
+  stroke-width:2px;
   pointer-events:none;
 }
 
@@ -1690,11 +1699,11 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   height:2px;
   vertical-align:middle;
   border-radius:0;
-  background:#0070c0;
+  background:#A0C1E8;
 }
 
 .legend i.line-key.purple {
-  background:#0070c0;
+  background:#A0C1E8;
 }
 
 .stacked-chart svg {
@@ -1847,11 +1856,11 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 .rank-grid-rise .rank-card li .rank-bar i {
-  background:#cfe8d7;
+  background:#E2F0D9;
 }
 
 .rank-grid-drop .rank-card li .rank-bar i {
-  background:#f1d0d0;
+  background:#F0C8C8;
 }
 
 .rank-card li .rank-rate {
@@ -2249,7 +2258,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 }
 
 .chart-data-label.total-label {
-  fill:#C00000;
+  fill:#253f59;
 }
 
 .mix-trend-chart .chart-data-label.total-label {fill:#172f4a}
@@ -2269,8 +2278,10 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   font-size:var(--font-caption);
 }
 
+.stacked-chart .chart-data-label.total-label {fill:#172f4a}
+
 .chart-data-label.line-label {
-  fill:#A61B29;
+  fill:#253f59;
 }
 
 .fee-band-chart {
@@ -2406,11 +2417,17 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .rhythm-value-label {
   fill:#253f59;
   font-weight:400;
+  paint-order:stroke;
+  stroke:rgba(255,255,255,.86);
+  stroke-width:2px;
   pointer-events:none;
 }
 
 .rhythm-line-label {
   font-weight:400;
+  paint-order:stroke;
+  stroke:rgba(23,47,74,.7);
+  stroke-width:1.5px;
 }
 
 .rhythm-legend {
@@ -2506,6 +2523,9 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   font-size:var(--font-caption);
   font-weight:400;
   font-variant-numeric:tabular-nums;
+  paint-order:stroke;
+  stroke:rgba(23,47,74,.7);
+  stroke-width:1.5px;
 }
 
 .launch-rate-bound {
@@ -3234,7 +3254,7 @@ body {
 @media (pointer:coarse) {
   .trend-annotation-button {min-height:44px}
 }
-.trend-legend i.line-key {background:var(--primary)}
+.trend-legend i.line-key {background:#A0C1E8}
 @media (min-width:981px) {
   .module-bar {padding-inline:20px}
   .workspace {padding:16px 24px}

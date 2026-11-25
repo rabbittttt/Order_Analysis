@@ -183,11 +183,13 @@ const server=http.createServer(async(req,res)=>{
   check('全期为零的容量不进入图例',!(await battery.locator('.channel-legend').innerText()).includes('130度'));
   const fillColors=await battery.locator('rect[fill]').evaluateAll(bars=>bars.map(bar=>getComputedStyle(bar).fill));
   const legendColors=await battery.locator('.channel-legend span:not(.channel-total-key) i').evaluateAll(keys=>keys.map(key=>getComputedStyle(key).backgroundColor));
-  assert.equal(new Set(fillColors).size,12);
+  const palette=['rgb(255, 242, 204)','rgb(226, 240, 217)','rgb(200, 232, 232)','rgb(168, 216, 234)',
+    'rgb(160, 193, 232)','rgb(220, 197, 237)','rgb(240, 200, 200)','rgb(248, 216, 176)'];
+  assert.deepStrictEqual(legendColors,[...palette,...palette.slice(0,4)]);
   assert.deepStrictEqual(new Set(fillColors),new Set(legendColors));
   assert.deepStrictEqual(await labelText('.total-label'),['1,000','1,234','0']);
-  assert.equal(await battery.locator('.total-label').first().evaluate(node=>getComputedStyle(node).fill),
-    await battery.locator('.channel-total-line').evaluate(node=>getComputedStyle(node).stroke));
+  assert.equal(await battery.locator('.channel-total-line').evaluate(node=>getComputedStyle(node).stroke),palette[4]);
+  assert.equal(await battery.locator('.channel-total-point').first().evaluate(node=>getComputedStyle(node).fill),palette[4]);
   const totalLine=battery.locator('svg path');
   check('电池包总量只画一条线，数据缺失时断开',await totalLine.count()===1&&(await totalLine.getAttribute('d')).split('M').length===3&&await battery.locator('circle').count()===3);
   check('电池包占比与总量分别使用左右轴',await battery.locator('.channel-y-axis.left').count()===1&&await battery.locator('.channel-y-axis.right').count()===1);

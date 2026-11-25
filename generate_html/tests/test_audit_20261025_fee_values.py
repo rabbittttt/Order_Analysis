@@ -85,7 +85,7 @@ const start = source.indexOf('  function ' + name + '(');
 const end = source.indexOf('\n  function ', start + 1);
 if (start < 0 || end < 0) throw new Error('Production renderer not found: ' + name);
 const esc = value => String(value), fmt = value => String(value);
-const chartPalette = {yellow: 'yellow', green: 'green', blue: 'blue', violet: 'violet', rose: 'rose'};
+const stackedTrendPalette = ['yellow', 'green', 'cyan', 'blue', 'grayblue', 'violet', 'rose', 'orange'];
 eval(source.slice(start, end));
 let input = '';
 process.stdin.setEncoding('utf8');

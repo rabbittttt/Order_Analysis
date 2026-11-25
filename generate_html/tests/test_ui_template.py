@@ -480,7 +480,7 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         self.assertIn("stroke:none", label.group(1))
         self.assertNotIn("paint-order", label.group(1))
         self.assertIn("fill:#334155", on_color.group(1))
-        self.assertIn("fill:#C00000", total.group(1))
+        self.assertIn("fill:#253f59", total.group(1))
         self.assertNotRegex(script, r'class="chart-data-label[^\n>]*"[^>]*\sfill=')
 
     def test_chart_labels_have_headroom_and_collision_avoidance(self):

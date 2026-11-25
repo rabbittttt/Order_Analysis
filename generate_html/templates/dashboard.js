@@ -74,7 +74,8 @@
   const esc = value => displayText(value).replace(/[&<>"']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[char]));
   const numberFormatter = new Intl.NumberFormat("zh-CN", {maximumFractionDigits: 1});
   const fmt = value => typeof value === "number" ? numberFormatter.format(value) : esc(value);
-  const colors = {blue:"#2859f5",green:"#249463",orange:"#cd681a",purple:"#7655bb",coral:"#b72d59"};
+  const stackedTrendPalette=["#FFF2CC","#E2F0D9","#C8E8E8","#A8D8EA","#A0C1E8","#DCC5ED","#F0C8C8","#F8D8B0"];
+  const colors = {blue:stackedTrendPalette[4],green:stackedTrendPalette[1],orange:stackedTrendPalette[7],purple:stackedTrendPalette[5],coral:stackedTrendPalette[6]};
   const moduleIcons = {
     overview:"M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
     channel_analysis:"M4 20h16M7 16v-5m5 5V7m5 9V4",
@@ -266,25 +267,12 @@
     }
     return Math.min(Math.max(y,minY),maxY);
   }
-  // 通用浅色图表色板。
-  const chartPalette = {blue:"#BDD7EE",cyan:"#B5DDE5",green:"#C6E0B4",yellow:"#FFE699",orange:"#F8CBAD",rose:"#F0CCCC",violet:"#CCC0DA"};
-  // 留存大定/锁单堆叠趋势图按系列出现顺序取色，不按能源类型固定颜色。
-  const stackedTrendPalette=["#FFF2CC","#E2F0D9","#C8E8E8","#A8D8EA","#A0C1E8","#DCC5ED","#F0C8C8","#F8D8B0"];
-  // 选配电池容量需要跨周期保持同色，扩展柔和色板避免多容量回到前三色循环。
-  const optionColorPalette=["#6F9FC6","#8DBFA6","#D9A06F","#9C8BC2","#C97878","#75AEB7","#B5A070","#7F89B2","#86B89A","#C28FA8","#B88D70","#7398A8","#A8A06D","#8A9CC7","#C58A7C","#7CABAE","#A789B1","#B99A72","#6F9AAB","#AA8E9A"];
   const optionColorAssignments=new Map();
   const optionColorKey=value=>{
     const key=String(value??"").trim().replace(/\s+/g,"").toLowerCase(),capacity=key.match(/^(\d+(?:\.\d+)?)(?:度|kwh|千瓦时)$/);
     return capacity?`battery:${Number(capacity[1])}`:key;
   };
-  const optionColor=value=>{
-    const key=optionColorKey(value),existing=optionColorAssignments.get(key);
-    if(existing)return existing;
-    const index=optionColorAssignments.size,color=index<optionColorPalette.length
-      ? optionColorPalette[index]
-      : `hsl(${((index*137.508)%360).toFixed(1)}, 36%, 64%)`;
-    optionColorAssignments.set(key,color);return color;
-  };
+  const optionColor=value=>assignedSeriesColor(optionColorAssignments,optionColorKey(value));
   let moduleLabels = DATA.config.module_labels;
   const state = {subject:null,module:"overview",grain:"week",period:null,rawFile:0,rawSheet:0,rawQuery:"",rawOffset:0,rawFreezeRow:true,rawFreezeColumn:false,rawFreezeFirstColumn:true};
   const boardCache={};
@@ -774,12 +762,12 @@
   const channelPanelData=new Map();
   let channelPanelResizeObserver=null;
   const channelKnown=value=>typeof value==='number'&&Number.isFinite(value);
-  const channelColors={"华为授权体验店":"#3173B4","华为智能生活馆":"#218C8C","华为旗舰店":"#C27B38","鸿蒙智行用户中心":"#7B61A8","问界用户中心":"#507F3A","智界用户中心":"#C35A66","享界用户中心":"#88743B","尊界用户中心":"#4D6088","尚界用户中心":"#A55F95","未知门店类型":"#738191","综合店":"#547D9A","尊界体验中心":"#9F5943"};
-  function channelColor(name){
-    if(channelColors[name])return channelColors[name];
-    const hash=Array.from(String(name)).reduce((value,char)=>(value*31+char.charCodeAt(0))>>>0,0);
-    return Object.values(channelColors)[hash%Object.keys(channelColors).length];
+  function assignedSeriesColor(assignments,key){
+    if(!assignments.has(key))assignments.set(key,stackedTrendPalette[assignments.size%stackedTrendPalette.length]);
+    return assignments.get(key);
   }
+  const channelColorAssignments=new Map();
+  const channelColor=name=>assignedSeriesColor(channelColorAssignments,name);
   function channelValue(value,format='number',signed=false){
     if(!channelKnown(value))return '—';
     const prefix=signed&&value>0?'+':'';
@@ -863,7 +851,7 @@
     }
     const xLabels=history.map((entry,index)=>{const x=(index+.5)*g.step,label=String(entry.period).replace(/^20(\d{2})[-/](\d{2})[-/](\d{2})$/,'$2-$3');return `<text class="channel-axis-label" x="${x}" y="${g.bottom+20}" text-anchor="middle">${esc(label)}<title>${esc(entry.period)}</title></text>`}).join('');
     const title=sales?'渠道占比与留存大定总量':stores?'各渠道出单门店比例趋势':'各渠道单店产能趋势',leftUnit=sales?'渠道销量占比（%）':stores?'出单门店比例（%）':'单店产能（单/店/本周期）';
-    return `<section class="channel-chart-block"><div class="channel-subhead"><h3>${title}</h3></div><div class="channel-axis-units"><span>${leftUnit}</span>${sales?'<span>总留存大定（单）</span>':''}</div><div class="channel-chart-frame ${sales?'channel-dual-axis':'channel-single-axis'}" data-channel-chart style="--channel-chart-height:${g.height}px">${channelAxisMarkup(leftMax,sales||stores?'percent':'capacity',g,'left')}<div class="channel-plot-scroll" data-channel-scroll tabindex="0" role="region" aria-label="${title}，左右方向键可查看各周期"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}" role="group" aria-label="${title}"><g class="channel-chart-grid">${grid}</g>${marks}${xLabels}${channelPointOverlays(data,history,names,g)}</svg></div>${sales?channelAxisMarkup(totalMax,'number',g,'right'):''}</div>${channelLegend(names,sales)}<p class="channel-chart-note">${sales?'柱：原始销量占比；线：总留存大定。':'每条线对应一个渠道。'}悬停或聚焦周期查看明细，缺失数据保留空缺。</p><div class="channel-tooltip" data-channel-tooltip hidden role="tooltip"></div></section>`;
+    return `<section class="channel-chart-block"><div class="channel-subhead"><h3>${title}</h3></div><div class="channel-chart-visual"><div class="channel-axis-units"><span>${leftUnit}</span>${sales?'<span>总留存大定（单）</span>':''}</div><div class="channel-chart-frame ${sales?'channel-dual-axis':'channel-single-axis'}" data-channel-chart style="--channel-chart-height:${g.height}px">${channelAxisMarkup(leftMax,sales||stores?'percent':'capacity',g,'left')}<div class="channel-plot-scroll" data-channel-scroll tabindex="0" role="region" aria-label="${title}，左右方向键可查看各周期"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}" role="group" aria-label="${title}"><g class="channel-chart-grid">${grid}</g>${marks}${xLabels}${channelPointOverlays(data,history,names,g)}</svg></div>${sales?channelAxisMarkup(totalMax,'number',g,'right'):''}</div>${channelLegend(names,sales)}</div><p class="channel-chart-note">${sales?'柱：原始销量占比；线：总留存大定。':'每条线对应一个渠道。'}悬停或聚焦周期查看明细，缺失数据保留空缺。</p><div class="channel-tooltip" data-channel-tooltip hidden role="tooltip"></div></section>`;
   }
   function renderChannelPanel(data){
     const id=String(channelPanelData.size),history=channelHistory(data),names=channelNames(data,history);channelPanelData.set(id,data);
@@ -965,8 +953,6 @@
     }
     const lineMax=stackedShares?1:channelAxisMax(series.flatMap(valuesFor));
     const totalMax=showTotals?4*Math.ceil(channelAxisMax(totals)/4):1;
-    const lineColors=['#2866ba','#a5471d','#11735a','#8549a4','#966800','#a03f65','#277685','#5a648a'];
-    const colorFor=(item,index)=>stackedShares?optionColor(item.name):lineColors[index%lineColors.length];
     const describe=(item,i)=>combined
       ?`${esc(periods[i])} · ${esc(item.name)} · 占比 ${channelValue(item.shares?.[i],'percent')} · 数量 ${channelValue(item.counts?.[i])}`
       :`${esc(periods[i])} · ${esc(item.name)} · ${channelValue(item.values?.[i],stackedShares?'percent':'number')}`;
@@ -984,20 +970,20 @@
       occupied.push(y);return y;
     };
     const stacked=periods.map(()=>0),barWidth=stackedBarWidth(g.step);
-    const bars=stackedShares?series.map((item,index)=>valuesFor(item).map((share,i)=>{
+    const bars=stackedShares?series.map(item=>valuesFor(item).map((share,i)=>{
       if(!channelKnown(share)||share<=0)return '';
       stacked[i]+=share;
       const x=(i+.5)*g.step-barWidth/2,y=g.bottom-stacked[i]*plotHeight,height=share*plotHeight;
       const labelY=placeLabel(i,y+height/2);
       barLabels.push(`<text class="chart-data-label stack-segment-label" x="${(i+.5)*g.step}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${esc(shareLabel(share))}</text>`);
-      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${colorFor(item,index)}"><title>${describe(item,i)}</title></rect>`;
+      return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${optionColor(item.name)}"><title>${describe(item,i)}</title></rect>`;
     }).join('')).join(''):'';
     const grid=[0,.25,.5,.75,1].map(ratio=>{
       const y=g.bottom-ratio*plotHeight;
       return `<line x1="0" x2="${g.width}" y1="${y}" y2="${y}"/>`;
     }).join('');
-    const lines=stackedShares?'':series.map((item,index)=>{
-      const color=colorFor(item,index),values=valuesFor(item);
+    const lines=stackedShares?'':series.map(item=>{
+      const color=optionColor(item.name),values=valuesFor(item);
       const points=values.map((value,i)=>{
         if(!channelKnown(value))return '';
         const x=(i+.5)*g.step,y=g.bottom-value/lineMax*plotHeight,labelY=placeLabel(i,y-8);
@@ -1013,7 +999,7 @@
       return `<circle class="channel-total-point" cx="${x}" cy="${y}" r="3.5"><title>${totalDescription(i)}</title></circle>`;
     }).join(''):'';
     const labels=periods.map((period,i)=>`<text class="channel-axis-label" x="${(i+.5)*g.step}" y="${g.bottom+20}" text-anchor="middle">${esc(String(period).replace(/^\d{4}-(\d{2}-\d{2})$/,'$1'))}</text>`).join('');
-    const legend=series.map((item,i)=>`<span><i style="background:${colorFor(item,i)}"></i>${esc(item.name)}</span>`).join('')+(showTotals?'<span class="channel-total-key"><i aria-hidden="true"></i>总量（右轴）</span>':'');
+    const legend=series.map(item=>`<span><i style="background:${optionColor(item.name)}"></i>${esc(item.name)}</span>`).join('')+(showTotals?'<span class="channel-total-key"><i aria-hidden="true"></i>总量（右轴）</span>':'');
     const units=stackedShares?`<div class="channel-axis-units"><span>占比（%）</span>${showTotals?'<span>总量（单）</span>':''}</div>`:'';
     const leftAxis=channelAxisMarkup(lineMax,stackedShares?'percent':'number',g,'left');
     const rightAxis=showTotals?channelAxisMarkup(totalMax,'number',g,'right'):'';
@@ -1064,7 +1050,7 @@
   function renderPieChart(data){
     const source=(data?.rows||[]).map(row=>{const share=Number(row.share),count=Number(row.count),value=Number.isFinite(share)?share:Number.isFinite(count)?count:0;return {...row,value}}).filter(row=>row.value>0),total=source.reduce((sum,row)=>sum+row.value,0);
     if(!source.length||!total)return '<div class="empty-image">暂无可绘制数据</div>';
-    const palette=Object.values(colors),radius=70,circumference=2*Math.PI*radius;let offset=0;
+    const palette=stackedTrendPalette,radius=70,circumference=2*Math.PI*radius;let offset=0;
     const slices=source.map((row,index)=>{const length=row.value/total*circumference,markup=`<circle cx="100" cy="100" r="${radius}" stroke="${palette[index%palette.length]}" stroke-width="30" stroke-dasharray="${length} ${circumference-length}" stroke-dashoffset="${-offset}"/>`;offset+=length;return markup}).join('');
     offset=0;
     const sliceLabels=source.map((row,index)=>{const length=row.value/total*circumference,percent=row.value/total*100,angle=(offset+length/2)/circumference*2*Math.PI-Math.PI/2,x=100+Math.cos(angle)*radius,y=100+Math.sin(angle)*radius;offset+=length;return `<text class="pie-slice-label" x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="middle" aria-label="${esc(row.label)} ${percent.toFixed(1)}%">${percent.toFixed(1)}%</text>`}).join('');
@@ -1072,32 +1058,32 @@
     const legend=source.map((row,index)=>{const percent=row.value/total*100,count=Number.isFinite(Number(row.count))?` · ${fmt(Number(row.count))}单`:'';return `<div class="pie-legend-row"><span><i style="background:${palette[index%palette.length]}"></i><b title="${esc(row.label)}">${esc(row.label)}</b></span><strong>${percent.toFixed(1)}%${count}</strong></div>`}).join('');
     return `<div class="pie-chart"><div class="pie-visual"><svg viewBox="0 0 200 200" role="img" aria-label="占比圆环图"><circle class="pie-track" cx="100" cy="100" r="${radius}"/><g transform="rotate(-90 100 100)">${slices}</g><g class="pie-slice-labels">${sliceLabels}</g><text class="pie-total" x="100" y="96" text-anchor="middle">${totalCount!=null?fmt(totalCount):`${total.toFixed(1)}%`}</text><text class="pie-total-label" x="100" y="113" text-anchor="middle">${totalCount!=null?'合计':'占比'}</text></svg></div><div class="pie-legend">${legend}</div></div>`;
   }
-  function renderStructureCards(groups){return `<div class="structure-grid">${groups.map((group,index)=>{const battery=/电池包/.test(String(group.name||""));return `<section class="structure-card"><h3>${esc(group.name)}</h3><div class="bars">${group.rows.map(row=>{const value=shareValue(row),change=Number(row.change||0)*100,color=battery?optionColor(row.label):Object.values(colors)[index%5];return `<div class="bar-row"><label>${esc(row.label)}<span class="change ${change>=0?"pos":"neg"}">${change>=0?"+":""}${change.toFixed(1)}%</span></label><div class="track"><div class="fill" style="width:${Math.min(value,100)}%;background:${color}"></div></div><b>${value.toFixed(1)}%</b></div>`}).join("")}</div></section>`}).join("")}</div>`}
+  function renderStructureCards(groups){return `<div class="structure-grid">${groups.map((group,index)=>{const battery=/电池包/.test(String(group.name||""));return `<section class="structure-card"><h3>${esc(group.name)}</h3><div class="bars">${group.rows.map(row=>{const value=shareValue(row),change=Number(row.change||0)*100,color=battery?optionColor(row.label):stackedTrendPalette[index%stackedTrendPalette.length];return `<div class="bar-row"><label>${esc(row.label)}<span class="change ${change>=0?"pos":"neg"}">${change>=0?"+":""}${change.toFixed(1)}%</span></label><div class="track"><div class="fill" style="width:${Math.min(value,100)}%;background:${color}"></div></div><b>${value.toFixed(1)}%</b></div>`}).join("")}</div></section>`}).join("")}</div>`}
   function renderFunnel(stages){
-    const palette=Object.values(colors),rate=value=>Number.isFinite(value)?`${(value*100).toFixed(1)}%`:'—',quantity=value=>Number.isFinite(value)?fmt(value):'—';
+    const palette=stackedTrendPalette,rate=value=>Number.isFinite(value)?`${(value*100).toFixed(1)}%`:'—',quantity=value=>Number.isFinite(value)?fmt(value):'—';
     return `<div class="funnel"><div class="funnel-row head"><span>阶段</span><span>规模</span><span>数量</span><span>总占比</span><span>阶段转化</span><span>流失</span></div>${stages.map((stage,index)=>`<div class="funnel-row"><span>${esc(stage.label)}</span><div class="funnel-track">${Number.isFinite(stage.total_rate)?`<div class="funnel-fill" style="width:${Math.max(stage.total_rate*100,1)}%;background:${palette[index%palette.length]}">${rate(stage.total_rate)}</div>`:'<span title="数据缺失或分母为0">—</span>'}</div><b>${quantity(stage.value)}</b><b>${rate(stage.total_rate)}</b><b>${rate(stage.stage_rate)}</b><b>${quantity(stage.loss)}</b></div>`).join("")}</div>`}
   function renderCohortMatrix(cohorts){
     const columns=["大定批次",...cohorts[0].stages.slice(1).map(stage=>stage.label),"大定→锁单","锁单→交付"];
     const rows=cohorts.map(cohort=>[cohort.period,...cohort.stages.slice(1).map(stage=>stage.total_rate),cohort.order_to_lock_days,cohort.lock_to_delivery_days]);
-    return `<div class="table-wrap"><table class="data-table"><thead><tr>${columns.map(column=>`<th>${esc(column)}</th>`).join("")}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map((value,index)=>index>0&&index<row.length-2?(Number.isFinite(value)?`<td class="heat-cell" style="background:rgba(39,133,232,${.05+Math.pow(value,1.6)*.7})">${(value*100).toFixed(1)}%</td>`:'<td title="数据缺失或分母为0">—</td>'):`<td>${index>=row.length-2?(Number.isFinite(value)?fmt(value)+"天":'—'):esc(value)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    return `<div class="table-wrap"><table class="data-table"><thead><tr>${columns.map(column=>`<th>${esc(column)}</th>`).join("")}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map((value,index)=>index>0&&index<row.length-2?(Number.isFinite(value)?`<td class="heat-cell" style="background:rgba(160,193,232,${.05+Math.pow(value,1.6)*.7})">${(value*100).toFixed(1)}%</td>`:'<td title="数据缺失或分母为0">—</td>'):`<td>${index>=row.length-2?(Number.isFinite(value)?fmt(value)+"天":'—'):esc(value)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
   }
   function renderRankCards(cards,kind){const directional=kind==='rise'||kind==='drop',directionalClass=directional?` rank-grid-${kind}`:'';return `<div class="rank-grid${directionalClass}">${Object.entries(cards||{}).map(([name,entry])=>{const rows=Array.isArray(entry)?entry:entry.rows||[];if(!rows.length)return `<article class="rank-card"><h3>${esc(name)} · 暂无上榜车型</h3><p class="empty">${esc(entry.empty_reason||"暂无可比排名")}</p></article>`;const maxRate=Math.max(...rows.map(row=>Math.abs(Number(row.rate)||0)),0);return `<article class="rank-card"><h3>${esc(name)} · TOP${rows.length}</h3><ol>${rows.map(row=>{const meta=[row.rate!=null?`${(Number(row.rate)*100).toFixed(1)}%`:"",row.amount!=null?`${fmt(row.amount)}元`:""].filter(Boolean).join(" · ");if(!directional)return `<li><b>${row.rank}</b><span>${esc(row.label)}${meta?`<small>${esc(meta)}</small>`:""}</span></li>`;const rate=Number(row.rate),rateLabel=row.rate!=null&&Number.isFinite(rate)?`${(rate*100).toFixed(1)}%`:'—',width=maxRate>0&&Number.isFinite(rate)?Math.min(Math.abs(rate)/maxRate*100,100):0,amount=row.amount!=null?`${fmt(row.amount)}元`:'';return `<li><b class="rank-index">${row.rank}</b><span class="rank-name">${esc(row.label)}${amount?`<small>${esc(amount)}</small>`:''}</span><div class="rank-bar" aria-hidden="true"><i style="width:${width.toFixed(1)}%"></i></div><strong class="rank-rate">${rateLabel}</strong></li>`}).join("")}</ol></article>`}).join("")}</div>`}
   function renderRights(data){return `<div class="rights"><strong>权益金额 ${fmt(data.amount)} 元</strong><p>${esc(data.text)}</p></div>`}
   function renderFeeBandStructure(data){
-    const bands=data?.bands||[],rows=data?.rows||[],palette=["#2859f5","#00C2FF","#00B578","#FFB020","#FF4D6D","#7C3AED","#ED7D31","#70AD47","#4472C4"];
+    const bands=data?.bands||[],rows=data?.rows||[],palette=stackedTrendPalette;
     const legend=`<div class="legend fee-legend">${bands.map((band,index)=>`<span><i style="background:${palette[index%palette.length]}"></i>${esc(band)}</span>`).join("")}</div>`;
     const body=rows.map(row=>{const total=row.values.reduce((sum,value)=>sum+Number(value||0),0),denominator=total||1;return `<div class="fee-band-row"><label title="${esc(row.label)}">${esc(row.label)}</label><div class="fee-band-chart"><div class="fee-band-track">${row.values.map((value,index)=>{const share=Number(value||0)/denominator*100;return `<i style="width:${share}%;background:${palette[index%palette.length]}" title="${esc(bands[index])} ${share.toFixed(1)}%"></i>`}).join("")}</div><div class="segment-data-labels">${row.values.map((value,index)=>{const share=Number(value||0)/denominator*100;return `<span><i style="background:${palette[index%palette.length]}"></i>${share.toFixed(1)}%</span>`}).join("")}</div></div><b>${fmt(total)}单</b></div>`}).join("");
     return `${legend}<div class="fee-band-list">${body}</div>`;
   }
   function renderFeePeriodBands(data){
-    const periods=data?.periods||[],series=data?.series||[],palette=[chartPalette.yellow,chartPalette.green,chartPalette.blue,chartPalette.violet,chartPalette.rose];
+    const periods=data?.periods||[],series=data?.series||[],palette=stackedTrendPalette;
     const legend=`<div class="legend fee-legend">${series.map((item,index)=>`<span><i style="background:${palette[index%palette.length]}"></i>${esc(item.name)}</span>`).join("")}</div>`;
     const columns=periods.map((period,index)=>{const actual=Object.prototype.hasOwnProperty.call(data,'actual_totals')?data.actual_totals?.[index]:data.actual_total,amount=actual!==null&&actual!==undefined&&typeof actual!=='boolean'&&String(actual).trim()!==''&&Number.isFinite(Number(actual))?fmt(actual):'\u2014';const total=series.reduce((sum,item)=>sum+Number(item.values[index]||0),0)||1;return `<div class="fee-period-col"><div class="fee-period-stack">${series.map((item,sIndex)=>{const share=Number(item.values[index]||0)/total*100;return `<i style="height:${share}%;background:${palette[sIndex%palette.length]}" title="${esc(item.name)} ${share.toFixed(1)}%"><span>${share.toFixed(1)}%</span></i>`}).join("")}</div><b>${esc(period)}</b><small>实际金额总计 ${amount}元</small></div>`}).join("");
     return `${legend}<div class="fee-period-chart" style="--periods:${Math.max(periods.length,1)}">${columns}</div>`;
   }
   function renderFeeHeatmap(data){
     const periods=data?.periods||[],rows=data?.rows||[],columns=Math.max(periods.length,1);
-    return `<div class="fee-heatmap"><div class="fee-heat-row" style="--cols:${columns}"><div class="heat-head">选配项</div>${periods.map(period=>`<div class="heat-head">${esc(period)}</div>`).join("")}</div>${rows.map(row=>`<div class="fee-heat-row" style="--cols:${columns}"><div class="heat-label" title="${esc(row.group)} · ${esc(row.label)}"><small>${esc(row.group)}</small>${esc(row.label)}</div>${periods.map((_,index)=>{const value=Number(row.values[index]||0);return `<div class="fee-heat-cell" style="background:rgba(22,119,255,${.08+Math.min(value,1)*.68})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div>`;
+    return `<div class="fee-heatmap"><div class="fee-heat-row" style="--cols:${columns}"><div class="heat-head">选配项</div>${periods.map(period=>`<div class="heat-head">${esc(period)}</div>`).join("")}</div>${rows.map(row=>`<div class="fee-heat-row" style="--cols:${columns}"><div class="heat-label" title="${esc(row.group)} · ${esc(row.label)}"><small>${esc(row.group)}</small>${esc(row.label)}</div>${periods.map((_,index)=>{const value=Number(row.values[index]||0);return `<div class="fee-heat-cell" style="background:rgba(160,193,232,${.08+Math.min(value,1)*.68})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div>`;
   }
   function bindSkuHeatmaps(){
     document.querySelectorAll('[data-sku-scroll]').forEach(scroll=>{
@@ -1133,13 +1119,13 @@
   }
   function renderSkuHeatmap(data){
     const periods=data?.periods||[],rows=data?.rows||[],columns=Math.max(periods.length,1);
-    return `<div class="sku-heatmap-scroll" data-sku-scroll tabindex="0" role="region" aria-label="SKU累计锁单占比历史表，首列固定，可左右拖动或使用左右方向键查看全部周期"><div class="heatmap sku-heatmap"><div class="heatmap-row" style="--cols:${columns}"><div class="heat-head">累计锁单</div>${periods.map(p=>`<div class="heat-head" data-sku-period="${esc(p)}">${esc(p)}</div>`).join("")}</div>${rows.map(row=>`<div class="heatmap-row" style="--cols:${columns}"><div class="heat-label">${esc(row.label)}</div>${periods.map((_,index)=>{const raw=row.values[index];if(raw==null||!Number.isFinite(Number(raw)))return '<div title="该周期未提供累计锁单占比">—</div>';const value=Number(raw);return `<div style="background:rgba(0,181,120,${.12+value*.72})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div></div>`;
+    return `<div class="sku-heatmap-scroll" data-sku-scroll tabindex="0" role="region" aria-label="SKU累计锁单占比历史表，首列固定，可左右拖动或使用左右方向键查看全部周期"><div class="heatmap sku-heatmap"><div class="heatmap-row" style="--cols:${columns}"><div class="heat-head">累计锁单</div>${periods.map(p=>`<div class="heat-head" data-sku-period="${esc(p)}">${esc(p)}</div>`).join("")}</div>${rows.map(row=>`<div class="heatmap-row" style="--cols:${columns}"><div class="heat-label">${esc(row.label)}</div>${periods.map((_,index)=>{const raw=row.values[index];if(raw==null||!Number.isFinite(Number(raw)))return '<div title="该周期未提供累计锁单占比">—</div>';const value=Number(raw);return `<div style="background:rgba(200,232,232,${.12+value*.72})">${(value*100).toFixed(1)}%</div>`}).join("")}</div>`).join("")}</div></div>`;
   }
   function renderComboMatrix(data){
     const groups=data?.groups||[];
     if(!groups.length)return '<div class="empty-image">组合Sheet暂无可绘制数据</div>';
     const controls=`<div class="combo-controls" role="group" aria-label="配置组合维度">${groups.map((group,index)=>`<button data-combo-switch="${index}" class="${index===0?"active":""}" aria-pressed="${index===0}">${esc(group.name)}</button>`).join("")}</div>`;
-    const panels=groups.map((group,groupIndex)=>{const columns=Math.max(group.periods.length,1);const rows=group.rows||[];return `<div class="combo-matrix-panel sku-heatmap-scroll" data-combo-panel="${groupIndex}" data-sku-scroll tabindex="0" role="region" aria-label="${esc(group.name)}配置组合历史表，可左右拖动或使用左右方向键查看全部周期" ${groupIndex?"hidden":""}><div class="combo-matrix-grid" style="--cols:${columns}"><div class="combo-matrix-head">组合</div>${group.periods.map(period=>`<div class="combo-matrix-head" data-sku-period="${esc(period)}">${esc(period)}</div>`).join("")}${rows.map(row=>`<div class="combo-matrix-label" title="${esc(row.rank)} · ${esc(row.label)}"><b>${esc(row.rank)}</b><span>${esc(row.label)}</span></div>${row.values.map(value=>{if(value==null||!Number.isFinite(Number(value)))return '<div class="combo-matrix-cell" title="该周期未提供配置组合占比">—</div>';const number=Number(value),alpha=.04+Math.min(number,1)*.6;return `<div class="combo-matrix-cell" style="background:rgba(0,181,120,${alpha.toFixed(2)})"><b>${(number*100).toFixed(1)}%</b></div>`}).join("")}`).join("")}</div></div>`}).join("");
+    const panels=groups.map((group,groupIndex)=>{const columns=Math.max(group.periods.length,1);const rows=group.rows||[];return `<div class="combo-matrix-panel sku-heatmap-scroll" data-combo-panel="${groupIndex}" data-sku-scroll tabindex="0" role="region" aria-label="${esc(group.name)}配置组合历史表，可左右拖动或使用左右方向键查看全部周期" ${groupIndex?"hidden":""}><div class="combo-matrix-grid" style="--cols:${columns}"><div class="combo-matrix-head">组合</div>${group.periods.map(period=>`<div class="combo-matrix-head" data-sku-period="${esc(period)}">${esc(period)}</div>`).join("")}${rows.map(row=>`<div class="combo-matrix-label" title="${esc(row.rank)} · ${esc(row.label)}"><b>${esc(row.rank)}</b><span>${esc(row.label)}</span></div>${row.values.map(value=>{if(value==null||!Number.isFinite(Number(value)))return '<div class="combo-matrix-cell" title="该周期未提供配置组合占比">—</div>';const number=Number(value),alpha=.04+Math.min(number,1)*.6;return `<div class="combo-matrix-cell" style="background:rgba(200,232,232,${alpha.toFixed(2)})"><b>${(number*100).toFixed(1)}%</b></div>`}).join("")}`).join("")}</div></div>`}).join("");
     return `<div class="combo-matrix">${controls}${panels}</div>`;
   }
   function renderTailDistribution(rows){return renderColumns(rows||[],colors.purple)}
@@ -1153,8 +1139,8 @@
       return {label,total,values:{small:small[index],direct:direct[index]},rates:{smallRate:smallRate?.[index],bigRate:bigRate?.[index]},tooltip:known(total)?`${label} · ${unit}直接大定 ${fmt(direct[index])} · ${unit}小订转大 ${fmt(small[index])} · 来源合计 ${fmt(total)}`:`${label} · ${unit}来源数据尚未更新或不完整，不按0绘制`};
     });
     const lines=[];
-    if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:'#A65300',textColor:'#A65300',digits:1});
-    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定占比',color:'#200036',textColor:'#200036',digits:1});
+    if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:colors.orange,digits:1});
+    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定占比',color:colors.purple,digits:1});
     return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:colors.green},{key:'direct',label:unit+'直接大定',color:colors.blue}],lines:[]})+renderLaunchRateTrends(rows,lines);
   }
   function renderSmallOrderRhythm(rows){
@@ -1163,7 +1149,7 @@
       const total=Math.max(Number(row.orders||0),0),retained=Math.max(Number(row.retained||0),0),cancel=Math.max(Number(row.cancel||0),0),retention=Number(row.retention_rate||0);
       return {label:row.period,total,values:{retained,cancel},rates:{retention},tooltip:`${row.period} · 订单 ${fmt(total)} · 留存小订 ${fmt(retained)} · 退订 ${fmt(cancel)} · 留存率 ${(retention*100).toFixed(0)}%`};
     });
-    return renderRhythmChart({kind:'small-day',title:'小订期间订单、留存、退订与留存率趋势',rows:data,maxValue:chartMax(rows.flatMap(row=>[row.orders,row.retained,row.cancel])),series:[{key:'retained',label:'留存小订',color:colors.green},{key:'cancel',label:'退订',color:colors.coral}],lines:[{key:'retention',label:'留存率',color:'#0070C0',textColor:'#075fa8',digits:0}]});
+    return renderRhythmChart({kind:'small-day',title:'小订期间订单、留存、退订与留存率趋势',rows:data,maxValue:chartMax(rows.flatMap(row=>[row.orders,row.retained,row.cancel])),series:[{key:'retained',label:'留存小订',color:colors.green},{key:'cancel',label:'退订',color:colors.coral}],lines:[{key:'retention',label:'留存率',color:colors.blue,digits:0}]});
   }
   function renderTrend(rows){return renderColumns(rows.map(row=>({label:row.period,value:row.daily||0})),colors.coral)}
   function renderDailyCancel(rows){
@@ -1173,7 +1159,7 @@
       const rateText=value=>rhythmKnown(value)?(value*100).toFixed(1)+'%':'—';
       return {label:row.period,total:small+big,values:{small,big},rates:{small_rate,big_rate},tooltip:`${row.period} · 当日小订退 ${fmt(small)} · 当日大定退 ${fmt(big)} · 退订合计 ${fmt(small+big)} · 小订退率 ${rateText(small_rate)} · 大定退率 ${rateText(big_rate)}`};
     });
-    return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:colors.coral},{key:'big',label:'当日大定退',color:colors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:'#0070C0',textColor:'#075fa8',digits:1},{key:'big_rate',label:'大定退率',color:colors.purple,textColor:'#6930bd',digits:1}]});
+    return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:colors.coral},{key:'big',label:'当日大定退',color:colors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:colors.blue,digits:1},{key:'big_rate',label:'大定退率',color:colors.purple,digits:1}]});
   }
   function renderHourlyChart(rows,day){
     const filtered=day==="总计"?(rows||[]):(rows||[]).filter(row=>String(row.period||"")===day);
