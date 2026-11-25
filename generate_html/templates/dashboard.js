@@ -287,27 +287,21 @@
   }
   function subject(){return DATA.subjects.find(item=>item.id===state.subject)}
   const annotationStorageKey = 'order-dashboard.trend-annotations.v1';
-  const annotationVisibilityKey = 'order-dashboard.trend-annotations.visible';
-  let trendAnnotationState = readTrendAnnotations(), refreshAnnotationCharts=()=>{}, refreshAnnotationList=()=>{};
+  const trendAnnotationState = {visible:true,entries:DYNAMIC?[]:localAnnotationEntries()};
+  let refreshAnnotationCharts=()=>{}, refreshAnnotationList=()=>{};
   let annotationReadRevision=0;
-  function localTrendAnnotations(){
+  function localAnnotationEntries(){
     try {
       const saved=JSON.parse(localStorage.getItem(annotationStorageKey));
-      if(Array.isArray(saved?.entries))return {visible:saved.visible!==false,entries:saved.entries.filter(note=>note&&typeof note.id==='string'&&typeof note.subject==='string'&&typeof note.text==='string'&&window.TrendAnnotations.dateKey(note.date,'day'))};
+      if(Array.isArray(saved?.entries))return saved.entries.filter(note=>note&&typeof note.id==='string'&&typeof note.subject==='string'&&typeof note.text==='string'&&window.TrendAnnotations.dateKey(note.date,'day'));
     } catch {}
-    return {visible:true,entries:[]};
+    return [];
   }
-  function readTrendAnnotations(){
-    const local=localTrendAnnotations();
-    if(!DYNAMIC)return local;
-    let visible=local.visible;
-    try { const saved=localStorage.getItem(annotationVisibilityKey); if(saved!==null)visible=saved==='true'; } catch {}
-    return {visible,entries:[]};
-  }
-  function saveTrendAnnotations(next){
-    try { localStorage.setItem(DYNAMIC?annotationVisibilityKey:annotationStorageKey,DYNAMIC?String(next.visible):JSON.stringify(next)); }
-    catch { if(!DYNAMIC)return false; }
-    trendAnnotationState=next; return true;
+  function saveLocalAnnotationEntries(entries){
+    try { localStorage.setItem(annotationStorageKey,JSON.stringify({entries})); }
+    catch { return false; }
+    trendAnnotationState.entries=entries;
+    return true;
   }
   function annotationScopes(subjectId){
     const allowed=new Set(['*',...DATA.subjects.filter(item=>item.type==='group').map(item=>item.id)]),seen=new Set();
@@ -355,7 +349,7 @@
           if(busy||!window.confirm('删除这条批注？'))return;
           await mutate(async()=>{
             if(DYNAMIC)await apiJson('annotations/'+encodeURIComponent(note.id),{version:note.version},{method:'DELETE'});
-            else if(!saveTrendAnnotations({...localTrendAnnotations(),entries:localTrendAnnotations().entries.filter(entry=>entry.id!==note.id)}))throw new Error('无法保存批注，请检查浏览器存储权限。');
+            else if(!saveLocalAnnotationEntries(localAnnotationEntries().filter(entry=>entry.id!==note.id)))throw new Error('无法保存批注，请检查浏览器存储权限。');
             if(editingId===note.id)resetForm();
           });
         };
@@ -380,10 +374,10 @@
           const options={method:editingId?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(editingId?{...note,version:editingVersion}:note)};
           await apiJson(editingId?'annotations/'+encodeURIComponent(editingId):'annotations',{},options);
         }else{
-          const latest=localTrendAnnotations(),id=editingId||window.crypto.randomUUID?.()||Date.now()+'-'+Math.random().toString(36).slice(2);
-          if(!saveTrendAnnotations({visible:true,entries:[...latest.entries.filter(entry=>entry.id!==id),{...note,id}]}))throw new Error('无法保存批注，请检查浏览器存储权限。');
+          const latest=localAnnotationEntries(),id=editingId||window.crypto.randomUUID?.()||Date.now()+'-'+Math.random().toString(36).slice(2);
+          if(!saveLocalAnnotationEntries([...latest.filter(entry=>entry.id!==id),{...note,id}]))throw new Error('无法保存批注，请检查浏览器存储权限。');
         }
-        saveTrendAnnotations({...trendAnnotationState,visible:true});resetForm();
+        trendAnnotationState.visible=true;resetForm();
       });
     };
     let importButton=$('#importLocalTrendAnnotations');
@@ -391,10 +385,10 @@
       importButton=document.createElement('button');importButton.id='importLocalTrendAnnotations';importButton.className='trend-annotation-button';importButton.type='button';importButton.textContent='导入本机批注';form.after(importButton);
     }
     if(importButton){
-      importButton.hidden=!localTrendAnnotations().entries.length;
+      importButton.hidden=!localAnnotationEntries().length;
       importButton.onclick=()=>mutate(async()=>{
         await refreshSharedAnnotations();
-        for(const note of localTrendAnnotations().entries){
+        for(const note of localAnnotationEntries()){
           if(trendAnnotationState.entries.some(saved=>saved.date===note.date&&saved.subject===note.subject&&saved.text===note.text))continue;
           const saved=await apiJson('annotations',{}, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:note.date,subject:note.subject,text:note.text})});
           trendAnnotationState.entries.push(saved);
@@ -476,7 +470,7 @@
       for(const button of toggles){button.textContent=trendAnnotationState.visible?'隐藏批注':'显示批注';button.setAttribute('aria-expanded',String(trendAnnotationState.visible));}
     };
     refreshAnnotationCharts=refreshCharts;
-    for(const button of toggles)button.onclick=()=>{const next={...trendAnnotationState,visible:!trendAnnotationState.visible};if(!saveTrendAnnotations(next))trendAnnotationState=next;refreshCharts();};
+    for(const button of toggles)button.onclick=()=>{trendAnnotationState.visible=!trendAnnotationState.visible;refreshCharts();};
     document.querySelectorAll('[data-trend-annotation-manage]').forEach(button=>{button.onclick=()=>openTrendAnnotationEditor(refreshCharts)});
   }
   const quickBrandOrder=['问界','智界','享界','尊界','尚界'];
@@ -1029,8 +1023,8 @@
     const points=totals.map((value,index)=>`${left+index*step+step/2},${bottom-Number(value)/maxTotal*plotH}`).join(" ");
     const values=totals.map((value,index)=>{const baseY=bottom-Number(value)/maxTotal*plotH-8,labelY=avoidLabelY(baseY,segmentLabelYs[index],12,bottom-8);return `<text class="chart-data-label total-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${fmt(value)}</text>`}).join("");
     const legend=series.map((item,index)=>`<span><i style="background:${seriesFill(index)}"></i>${esc(item.name)}</span>`).join("")+`<span><i class="line-key"></i>总计</span>`;
-    const annotationOffset=Math.max(0,annotations.height-plotTop),height=H+annotationOffset;
-    return `<div class="stacked-chart" style="height:${H}px"><svg viewBox="0 0 ${W} ${height}" style="width:${W}px;height:${height}px">${annotations.markup}<g transform="translate(0 ${annotationOffset})"><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
+    const annotationOffset=Math.max(0,annotations.height-plotTop),height=H+annotationOffset,containerHeight=state.module==='overview'?'auto':H+'px';
+    return `<div class="stacked-chart" style="height:${containerHeight}"><svg viewBox="0 0 ${W} ${height}" style="width:${W}px;height:${height}px">${annotations.markup}<g transform="translate(0 ${annotationOffset})"><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
   }
   function renderTable(data){
     if(!data?.columns)return '<div class="empty-image">暂无表格数据</div>';

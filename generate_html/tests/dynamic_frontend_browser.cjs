@@ -9,7 +9,7 @@ const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixtur
 const header=['序号','格式值'],allRows=Array.from({length:450},(_,i)=>[i+1,`${i%2?'odd':'even'} 12.30%`]),xlsx=Buffer.from('fixture-original-xlsx');
 let currentVersion='fixture-v1',failNewBoard=false,syncPhase='idle';
 let notes=[{id:'group',subject:'g',date:'2026-11-10',text:'集团事件',version:1},{id:'brand',subject:'b',date:'2026-11-10',text:'问界事件',version:1}],failSubject='other',requests=[],nextId=1;
-const view={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[{label:'合计',value:123,unit:'辆'}],sections:[{title:'留存大定趋势',kind:'stacked_trend',data:{periods:['26WK46'],totals:[123],series:[{name:'增程',values:[1]}]},source:{file:'fixture.xlsx',sheet:'数据'}}]}}};
+const view={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[{label:'合计',value:123,unit:'辆'}],sections:[{title:'留存大定趋势',kind:'stacked_trend',width:'half',data:{periods:['26WK46'],totals:[123],series:[{name:'增程',values:[1]}]},source:{file:'fixture.xlsx',sheet:'数据'}}]}}};
 const batteryPeriods=['26WK42','26WK43','26WK44','26WK45','26WK46'];
 const batterySection={
   kind:'mix_combo_trend',title:'电池包度数 · 数量与占比',
@@ -56,6 +56,7 @@ const server=http.createServer(async(req,res)=>{
  const browser=await chromium.launch({headless:true,channel:'msedge'}),ctx=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'}),page=await ctx.newPage(),errors=[],checks=[];
  page.on('pageerror',e=>errors.push(e.message));const check=(label,v)=>{assert(v,label);checks.push(label);console.log('PASS',label)};
  try{
+  await page.addInitScript(()=>localStorage.setItem('order-dashboard.trend-annotations.visible','false'));
   await page.goto(base+'?subject=m');await page.waitForSelector('.kpi');
   check('桌面顶部显示当前批次生成时间',await page.locator('#syncStatus').isVisible()&&await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
   check('首屏仅请求当前看板，未请求底表或Excel',requests.filter(r=>r.path.endsWith('/dashboard')).length===1&&!requests.some(r=>/\/(raw|workbook)$/.test(r.path)));
@@ -83,8 +84,13 @@ const server=http.createServer(async(req,res)=>{
   const annotated=await chartHeights();
   assert(annotated.bars.some(height=>height>0));
   await page.locator('[data-trend-annotation-toggle]').click();assert.equal(await page.locator('.trend-annotation').count(),0);
-  assert.deepStrictEqual(await chartHeights(),annotated,'显示与隐藏批注时，卡片和柱子的高度一致');
+  const hidden=await chartHeights();
+  assert.deepStrictEqual(hidden.bars,annotated.bars,'显示批注时保持柱高');
+  check('批注展开时卡片增高',annotated.card>hidden.card);
   await page.locator('[data-trend-annotation-toggle]').click();await page.waitForSelector('.trend-annotation');
+  await page.locator('[data-trend-annotation-toggle]').click();
+  await page.reload();await page.waitForSelector('.trend-annotation');
+  check('刷新后批注默认展开',await page.locator('[data-trend-annotation-toggle]').getAttribute('aria-expanded')==='true');
   check('集团和品牌批注继承到车型',(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('集团事件')&&(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('问界事件'));
   await page.locator('#subjectSelect').selectOption('other');await page.waitForSelector('[data-page-retry]');
   check('失败请求显示重试',await page.locator('#page [role="alert"]').textContent().then(s=>s.includes('看板读取失败')));
