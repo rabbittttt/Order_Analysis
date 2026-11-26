@@ -55,7 +55,7 @@ const server=http.createServer(async(req,res)=>{
 });
 (async()=>{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${server.address().port}/orderiq/`;
- const browser=await chromium.launch({headless:true,channel:'msedge'}),ctx=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'}),page=await ctx.newPage(),errors=[],checks=[];
+ const browser=await chromium.launch({headless:true,channel:'msedge',ignoreDefaultArgs:['--hide-scrollbars'],args:['--disable-features=OverlayScrollbar,FluentOverlayScrollbar']}),ctx=await browser.newContext({viewport:{width:1440,height:1000},reducedMotion:'reduce'}),page=await ctx.newPage(),errors=[],checks=[];
  page.on('pageerror',e=>errors.push(e.message));const check=(label,v)=>{assert(v,label);checks.push(label);console.log('PASS',label)};
  try{
   await page.addInitScript(()=>localStorage.setItem('order-dashboard.trend-annotations.visible','false'));
@@ -130,6 +130,11 @@ const server=http.createServer(async(req,res)=>{
   }
   await page.locator('#moduleSelect').selectOption('overview');await page.waitForSelector('.kpi');
   check('手机批注按钮与来源数据使用相同样式',await actionsMatchSource());
+  const trendScroll=page.locator('[data-trend-chart] .stacked-chart').first();
+  check('窄屏趋势图可横向滚动，图形完整且无纵向溢出',await trendScroll.evaluate(chart=>
+    chart.scrollWidth>chart.clientWidth && chart.scrollHeight===chart.clientHeight &&
+    chart.querySelector('svg').getBoundingClientRect().height<=chart.clientHeight
+  ));
   await page.setViewportSize({width:1440,height:1000});
   await page.evaluate(()=>{window.__syncSentinel=42;document.activeElement?.blur()});
   await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');

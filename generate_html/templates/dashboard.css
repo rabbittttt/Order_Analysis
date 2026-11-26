@@ -594,7 +594,20 @@ button {
   white-space:nowrap;
 }
 
-.stacked-chart,.original-chart {
+.stacked-chart {
+  /* Share the legend gap with the horizontal scrollbar on non-overlay systems. */
+  min-height:calc(var(--trend-plot-height) + 8px);
+  overflow-x:auto;
+  overflow-y:hidden;
+}
+
+@supports selector(::-webkit-scrollbar) {
+  .stacked-chart {scrollbar-width:auto;scrollbar-color:auto}
+}
+
+.stacked-chart + .trend-legend {margin-top:0}
+
+.original-chart {
   overflow:auto;
 }
 

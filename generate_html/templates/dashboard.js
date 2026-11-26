@@ -1024,7 +1024,7 @@
     const points=totals.map((value,index)=>`${left+index*step+step/2},${bottom-Number(value)/maxTotal*plotH}`).join(" ");
     const values=totals.map((value,index)=>{const baseY=bottom-Number(value)/maxTotal*plotH-8,labelY=avoidLabelY(baseY,segmentLabelYs[index],12,bottom-8);return `<text class="chart-data-label total-label" x="${left+index*step+step/2}" y="${labelY}" text-anchor="middle">${fmt(value)}</text>`}).join("");
     const legend=series.map((item,index)=>`<span><i style="background:${seriesFill(index)}"></i>${esc(item.name)}</span>`).join("")+`<span><i class="line-key"></i>总计</span>`;
-    return `<div class="stacked-chart" style="height:${H}px;max-height:${H}px"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px">${annotations.markup}<g><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
+    return `<div class="stacked-chart" style="--trend-plot-height:${H}px"><svg viewBox="0 0 ${W} ${H}" style="width:${W}px;height:${H}px">${annotations.markup}<g><line x1="${left}" y1="${bottom}" x2="${W-20}" y2="${bottom}" stroke="#e6ebf1"/>${bars}<polyline points="${points}" fill="none" stroke="${trendLine}" stroke-width="2.5"/>${values}</g></svg></div><div class="legend trend-legend">${legend}</div>`;
   }
   function renderTable(data){
     if(!data?.columns)return '<div class="empty-image">暂无表格数据</div>';
