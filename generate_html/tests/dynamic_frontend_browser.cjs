@@ -208,8 +208,9 @@ const server=http.createServer(async(req,res)=>{
   assert.deepStrictEqual(legendColors,[...palette,...palette.slice(0,4)]);
   assert.deepStrictEqual(new Set(fillColors),new Set(legendColors));
   assert.deepStrictEqual(await labelText('.total-label'),['1,000','1,234','0']);
-  assert.equal(await battery.locator('.channel-total-line').evaluate(node=>getComputedStyle(node).stroke),'rgb(192, 0, 0)');
-  assert.equal(await battery.locator('.channel-total-key i').evaluate(node=>getComputedStyle(node).borderTopColor),'rgb(192, 0, 0)');
+  assert.equal(await battery.locator('.channel-total-line').evaluate(node=>getComputedStyle(node).stroke),'rgb(40, 89, 245)');
+  assert.equal(await battery.locator('.channel-total-key i').evaluate(node=>getComputedStyle(node).borderTopColor),'rgb(40, 89, 245)');
+  assert.equal(await battery.locator('.total-label').first().evaluate(node=>getComputedStyle(node).fill),'rgb(192, 0, 0)');
   assert.equal(await battery.locator('.channel-plot-scroll').evaluate(node=>getComputedStyle(node).borderTopWidth),'0px');
   const totalLine=battery.locator('svg path');
   check('电池包总量线无节点，数据缺失时断开',await totalLine.count()===1&&(await totalLine.getAttribute('d')).split('M').length===3&&await battery.locator('circle').count()===0);

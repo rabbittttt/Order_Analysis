@@ -255,8 +255,8 @@ button {
 .mix-trend-chart .channel-legend {justify-content:center}
 .mix-trend-chart .channel-plot-scroll svg {margin-inline:auto}
 .mix-trend-chart .channel-plot-scroll {border:0;border-radius:0}
-.mix-trend-chart .channel-total-line {stroke:#C00000}
-.mix-trend-chart .channel-legend .channel-total-key i {border-top-color:#C00000}
+.mix-trend-chart .channel-total-line {stroke:var(--primary)}
+.mix-trend-chart .channel-legend .channel-total-key i {border-top-color:var(--primary)}
 .channel-dual-axis {grid-template-columns:45px minmax(0,1fr) 58px}
 .channel-single-axis {grid-template-columns:52px minmax(0,1fr)}
 .channel-y-axis {position:relative;height:var(--channel-chart-height);font-size:var(--font-caption);color:var(--muted)}
@@ -1727,6 +1727,8 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   border-radius:12px;
 }
 
+.stacked-chart polyline {stroke:var(--primary)}
+
 .hourly-wrap {
   min-width:0;
   max-width:100%;
@@ -2277,7 +2279,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   fill:#253f59;
 }
 
-.mix-trend-chart .chart-data-label.total-label {fill:#172f4a}
+.mix-trend-chart .chart-data-label.total-label {fill:#C00000}
 
 .chart-data-label.stack-segment-label {
   font-size:var(--font-caption);
@@ -2294,7 +2296,7 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   font-size:var(--font-caption);
 }
 
-.stacked-chart .chart-data-label.total-label {fill:#172f4a}
+.stacked-chart .chart-data-label.total-label {fill:#C00000}
 
 .chart-data-label.line-label {
   fill:#253f59;
@@ -3273,7 +3275,7 @@ body {
 @media (pointer:coarse) {
   .trend-annotation-button {min-height:44px}
 }
-.trend-legend i.line-key {background:#A0C1E8}
+.trend-legend i.line-key {background:var(--primary)}
 @media (min-width:981px) {
   .module-bar {padding-inline:20px}
   .workspace {padding:16px 24px}
