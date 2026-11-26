@@ -177,6 +177,19 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');
   await page.locator('[data-quick-generation="aggregate0"]').click();await page.waitForFunction(()=>new URL(location).searchParams.get('subject')==='aggregate0');
   check('零锁单的汇总代际可从新车型栏打开',await page.locator('.kpi').count()>0&&await page.locator('#subjectSelect').inputValue()==='aggregate0');
+  const shortcuts=page.locator('.quick-generation-list');
+  const pressed=shortcuts.locator('[aria-pressed="true"]');
+  check('当前新车型使用灰底蓝字',await pressed.count()===1&&await pressed.evaluate(button=>{
+    const style=getComputedStyle(button);
+    return style.backgroundColor==='rgb(228, 230, 233)'&&style.color==='rgb(32, 73, 212)';
+  }));
+  check('新车型整组共用外框，未选中按钮白底',await shortcuts.evaluate(list=>{
+    const buttons=[...list.querySelectorAll('button')];
+    return getComputedStyle(list).borderTopWidth==='1px'&&buttons.every(button=>{
+      const style=getComputedStyle(button);
+      return style.borderTopWidth==='0px'&&(button.getAttribute('aria-pressed')==='true'||style.backgroundColor==='rgb(255, 255, 255)');
+    });
+  }));
   await page.goto(base+'?subject=m&module=order_mix&grain=week');
   const battery=page.locator('[data-section-kind="mix_combo_trend"]');
   await battery.waitFor();
