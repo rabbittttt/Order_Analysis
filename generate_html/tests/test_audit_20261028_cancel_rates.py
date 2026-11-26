@@ -38,7 +38,7 @@ class CancellationUnknownRateTests(unittest.TestCase):
 const fs=require('fs'),vm=require('vm');
 const source=fs.readFileSync('templates/dashboard.js','utf8');
 const start=source.indexOf('  function renderDailyCancel('),end=source.indexOf('  function renderHourlyChart(',start);
-const ctx={colors:{coral:'red',orange:'orange',purple:'purple'},fmt:String,chartMax:()=>1,
+const ctx={rhythmColors:{coral:'red',orange:'orange',purple:'purple'},fmt:String,chartMax:()=>1,
  rhythmKnown:v=>typeof v==='number'&&Number.isFinite(v),renderRhythmChart:spec=>spec};
 vm.createContext(ctx);vm.runInContext(source.slice(start,end)+';globalThis.render=renderDailyCancel;',ctx);
 console.log(JSON.stringify(ctx.render(JSON.parse(process.argv[1]))));

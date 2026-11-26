@@ -254,6 +254,9 @@ button {
 .mix-trend-chart {width:min(100%,var(--mix-chart-width));min-width:0;margin-inline:auto}
 .mix-trend-chart .channel-legend {justify-content:center}
 .mix-trend-chart .channel-plot-scroll svg {margin-inline:auto}
+.mix-trend-chart .channel-plot-scroll {border:0;border-radius:0}
+.mix-trend-chart .channel-total-line {stroke:#C00000}
+.mix-trend-chart .channel-legend .channel-total-key i {border-top-color:#C00000}
 .channel-dual-axis {grid-template-columns:45px minmax(0,1fr) 58px}
 .channel-single-axis {grid-template-columns:52px minmax(0,1fr)}
 .channel-y-axis {position:relative;height:var(--channel-chart-height);font-size:var(--font-caption);color:var(--muted)}
@@ -2430,17 +2433,11 @@ button:focus-visible,select:focus-visible,input:focus-visible {
 .rhythm-value-label {
   fill:#253f59;
   font-weight:400;
-  paint-order:stroke;
-  stroke:rgba(255,255,255,.86);
-  stroke-width:2px;
   pointer-events:none;
 }
 
 .rhythm-line-label {
   font-weight:400;
-  paint-order:stroke;
-  stroke:rgba(23,47,74,.7);
-  stroke-width:1.5px;
 }
 
 .rhythm-legend {
@@ -2536,9 +2533,6 @@ button:focus-visible,select:focus-visible,input:focus-visible {
   font-size:var(--font-caption);
   font-weight:400;
   font-variant-numeric:tabular-nums;
-  paint-order:stroke;
-  stroke:rgba(23,47,74,.7);
-  stroke-width:1.5px;
 }
 
 .launch-rate-bound {

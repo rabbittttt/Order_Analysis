@@ -14,10 +14,11 @@ const batteryPeriods=['26WK42','26WK43','26WK44','26WK45','26WK46'];
 const batterySection={
   kind:'mix_combo_trend',title:'电池包度数 · 数量与占比',
   data:{periods:batteryPeriods,series:[
-    {name:'80度',shares:[.59,0,.6,0,null],counts:[590,0,740,0,null]},
-    {name:'100度',shares:[.4,1,.4,0,null],counts:[400,null,494,0,null]},
+    {name:'80度',shares:[.582,0,.6,0,null],counts:[582,0,740,0,null]},
+    {name:'100度',shares:[.4,1,.30,0,null],counts:[400,null,374,0,null]},
     {name:'130度',shares:[0,0,0,0,null],counts:[0,0,0,0,null]},
-    ...Array.from({length:10},(_,i)=>({name:`${40+i}度`,shares:[.001],counts:[1]}))
+    {name:'40度',shares:[.009,0,.01],counts:[9,0,12]},
+    ...Array.from({length:9},(_,i)=>({name:`${41+i}度`,shares:[.001,0,.01],counts:[1,0,12]}))
   ]}
 };
 const batteryView={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[],sections:[batterySection]}}};
@@ -183,8 +184,9 @@ const server=http.createServer(async(req,res)=>{
     Array.from(node.childNodes).filter(child=>child.nodeType===Node.TEXT_NODE).map(child=>child.textContent).join('')
   ));
   const shares=await labelText('.stack-segment-label');
-  assert.deepStrictEqual(shares.sort(),['59%','60%','40%','100%','40%',...Array(10).fill('<1%')].sort());
-  check('电池包省略零占比，悬停可查看数量',await battery.locator('rect[fill]').count()===shares.length&&(await battery.locator('rect[fill] title').first().textContent()).includes('数量 590'));
+  assert.deepStrictEqual(shares.sort(),['58%','60%','40%','100%','30%',...Array(10).fill('1%')].sort());
+  check('小于1%的电池包保留柱段和悬停明细',await battery.locator('rect[fill]').count()===shares.length+10
+    &&await battery.locator('rect[fill] title').filter({hasText:'数量 9'}).count()===1);
   check('全期为零的容量不进入图例',!(await battery.locator('.channel-legend').innerText()).includes('130度'));
   const fillColors=await battery.locator('rect[fill]').evaluateAll(bars=>bars.map(bar=>getComputedStyle(bar).fill));
   const legendColors=await battery.locator('.channel-legend span:not(.channel-total-key) i').evaluateAll(keys=>keys.map(key=>getComputedStyle(key).backgroundColor));
@@ -193,10 +195,18 @@ const server=http.createServer(async(req,res)=>{
   assert.deepStrictEqual(legendColors,[...palette,...palette.slice(0,4)]);
   assert.deepStrictEqual(new Set(fillColors),new Set(legendColors));
   assert.deepStrictEqual(await labelText('.total-label'),['1,000','1,234','0']);
-  assert.equal(await battery.locator('.channel-total-line').evaluate(node=>getComputedStyle(node).stroke),palette[4]);
-  assert.equal(await battery.locator('.channel-total-point').first().evaluate(node=>getComputedStyle(node).fill),palette[4]);
+  assert.equal(await battery.locator('.channel-total-line').evaluate(node=>getComputedStyle(node).stroke),'rgb(192, 0, 0)');
+  assert.equal(await battery.locator('.channel-total-key i').evaluate(node=>getComputedStyle(node).borderTopColor),'rgb(192, 0, 0)');
+  assert.equal(await battery.locator('.channel-plot-scroll').evaluate(node=>getComputedStyle(node).borderTopWidth),'0px');
   const totalLine=battery.locator('svg path');
-  check('电池包总量只画一条线，数据缺失时断开',await totalLine.count()===1&&(await totalLine.getAttribute('d')).split('M').length===3&&await battery.locator('circle').count()===3);
+  check('电池包总量线无节点，数据缺失时断开',await totalLine.count()===1&&(await totalLine.getAttribute('d')).split('M').length===3&&await battery.locator('circle').count()===0);
+  check('总量数字与同周期占比标签不重叠',await battery.evaluate(chart=>{
+    const shares=[...chart.querySelectorAll('.stack-segment-label')].map(node=>node.getBBox());
+    return [...chart.querySelectorAll('.total-label')].every(node=>{
+      const total=node.getBBox();
+      return shares.every(share=>share.x>=total.x+total.width||total.x>=share.x+share.width||share.y>=total.y+total.height||total.y>=share.y+share.height);
+    });
+  }));
   check('电池包占比与总量分别使用左右轴',await battery.locator('.channel-y-axis.left').count()===1&&await battery.locator('.channel-y-axis.right').count()===1);
   check('无浏览器异常',errors.length===0);await ctx2.close();
  }finally{await browser.close();await new Promise(r=>server.close(r));}

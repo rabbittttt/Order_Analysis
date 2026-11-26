@@ -95,6 +95,7 @@
   // One pixel-space renderer for all daily/hourly rhythm charts. Adapters below
   // retain their existing quantities, aggregation and formatting contracts.
   const RHYTHM_LAYOUT=Object.freeze({height:224,frameHeight:240,top:30,bottom:190,left:30,right:30,barWidth:28,minStep:40,lineWidth:2,pointRadius:3,fontSize:12,minFontSize:12,lineLabelMaxOffset:24,defaultWidth:960});
+  const rhythmColors={blue:"#2859f5",green:"#249463",orange:"#cd681a",purple:"#7655bb",coral:"#b72d59"};
   const rhythmKnown=value=>typeof value==='number'&&Number.isFinite(value);
   function rhythmGeometry(count,availableWidth=RHYTHM_LAYOUT.defaultWidth,labelWidth=0){
     // Keep the plot's natural density; a wide viewport must not stretch the gaps.
@@ -941,6 +942,26 @@
       return total;
     });
   }
+  function renderMixLabels(labels,total,x,top,bottom,gap){
+    labels.sort((a,b)=>a.y-b.y);
+    let totalSlot=-1;
+    if(total){
+      // Reserve the slot above the line before fitting the percentages around it.
+      const anchor=Math.max(top,Math.min(bottom,total.y));
+      const below=Math.floor((bottom-anchor)/gap),above=Math.floor((anchor-top)/gap);
+      totalSlot=Math.max(0,labels.length-below,Math.min(above,labels.filter(label=>label.y<anchor).length));
+      total.y=Math.max(top+totalSlot*gap,Math.min(bottom-(labels.length-totalSlot)*gap,anchor));
+      labels.splice(totalSlot,0,total);
+    }
+    let limit=bottom;
+    for(let i=labels.length-1;i>=0;i--){
+      const label=labels[i];
+      const floor=total&&i>=totalSlot?total.y+(i-totalSlot)*gap:top+i*gap;
+      label.y=Math.max(floor,Math.min(label.y,limit));
+      limit=label.y-gap;
+    }
+    return labels.map(label=>`<text class="chart-data-label ${label.css}" x="${x}" y="${label.y}" text-anchor="middle"><title>${label.tip}</title>${label.text}</text>`).join('');
+  }
   function renderMixTrend({periods,series,metric}){
     const g=channelChartGeometry(periods,series,false);
     // Older share-only payloads have values; they contain no quantity to display.
@@ -957,25 +978,27 @@
       ?`${esc(periods[i])} · ${esc(item.name)} · 占比 ${channelValue(item.shares?.[i],'percent')} · 数量 ${channelValue(item.counts?.[i])}`
       :`${esc(periods[i])} · ${esc(item.name)} · ${channelValue(item.values?.[i],stackedShares?'percent':'number')}`;
     const totalDescription=i=>`${esc(periods[i])} · 电池包总量 ${channelValue(totals[i])} 单`;
-    const shareLabel=value=>value>0&&value<0.005?'<1%':`${(value*100).toFixed(0)}%`;
-    const labelWidths=series.flatMap(item=>valuesFor(item).flatMap((value,i)=>channelKnown(value)?[stackedShares?rhythmTextWidth(shareLabel(value),12)+12:fmt(value).length*8+12]:[]));
+    const shareLabel=value=>value>=0.01?`${(value*100).toFixed(0)}%`:'';
+    const labelWidths=series.flatMap(item=>valuesFor(item).flatMap((value,i)=>channelKnown(value)&&(!stackedShares||value>=0.01)?[stackedShares?rhythmTextWidth(shareLabel(value),12)+12:fmt(value).length*8+12]:[]));
     const labelStep=Math.max(42,...periods.map(period=>rhythmTextWidth(rhythmAxisText(period),12)+8),...labelWidths,...totals.filter(channelKnown).map(value=>fmt(value).length*8+12));
     g.width=Math.max(periods.length,1)*labelStep;g.step=labelStep;
-    const plotHeight=g.bottom-g.top,labelYs=periods.map(()=>[]),barLabels=[],lineLabels=[];
-    const placeLabel=(index,baseY)=>{
-      const occupied=labelYs[index],min=16,max=g.bottom-8,gap=18;
-      const candidates=[Math.max(min,Math.min(Math.round(baseY),max)),...occupied.flatMap(y=>[y-gap,y+gap])]
-        .filter(y=>y>=min&&y<=max&&occupied.every(other=>Math.abs(other-y)>=gap));
-      const y=candidates.sort((a,b)=>Math.abs(a-baseY)-Math.abs(b-baseY))[0]??avoidLabelY(baseY,occupied,min,max,gap);
-      occupied.push(y);return y;
-    };
+    const labelGap=18,labelTop=16,labelsByPeriod=periods.map(()=>[]);
+    const labelCounts=periods.map((_,i)=>series.filter(item=>{
+      const v=valuesFor(item)[i];
+      return channelKnown(v)&&(!stackedShares||v>=0.01);
+    }).length+Number(channelKnown(totals[i])));
+    const extraHeight=Math.max(0,labelTop+(Math.max(0,...labelCounts)-1)*labelGap+8-g.bottom);
+    g.height+=extraHeight;g.bottom+=extraHeight;
+    const plotHeight=g.bottom-g.top;
     const stacked=periods.map(()=>0),barWidth=stackedBarWidth(g.step);
     const bars=stackedShares?series.map(item=>valuesFor(item).map((share,i)=>{
       if(!channelKnown(share)||share<=0)return '';
       stacked[i]+=share;
       const x=(i+.5)*g.step-barWidth/2,y=g.bottom-stacked[i]*plotHeight,height=share*plotHeight;
-      const labelY=placeLabel(i,y+height/2);
-      barLabels.push(`<text class="chart-data-label stack-segment-label" x="${(i+.5)*g.step}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${esc(shareLabel(share))}</text>`);
+      const label=shareLabel(share);
+      if(label){
+        labelsByPeriod[i].push({css:'stack-segment-label',y:y+height/2,text:label,tip:describe(item,i)});
+      }
       return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${optionColor(item.name)}"><title>${describe(item,i)}</title></rect>`;
     }).join('')).join(''):'';
     const grid=[0,.25,.5,.75,1].map(ratio=>{
@@ -986,18 +1009,19 @@
       const color=optionColor(item.name),values=valuesFor(item);
       const points=values.map((value,i)=>{
         if(!channelKnown(value))return '';
-        const x=(i+.5)*g.step,y=g.bottom-value/lineMax*plotHeight,labelY=placeLabel(i,y-8);
-        lineLabels.push(`<text class="chart-data-label total-label" x="${x}" y="${labelY}" text-anchor="middle"><title>${describe(item,i)}</title>${fmt(value)}</text>`);
+        const x=(i+.5)*g.step,y=g.bottom-value/lineMax*plotHeight;
+        labelsByPeriod[i].push({css:'total-label',y:y-8,text:fmt(value),tip:describe(item,i)});
         return `<circle cx="${x}" cy="${y}" r="3" fill="${color}"><title>${describe(item,i)}</title></circle>`;
       }).join('');
       return `<path class="channel-series-line" d="${channelLinePath(values,g,lineMax)}" stroke="${color}"/>${points}`;
     }).join('');
-    const totalLine=showTotals?`<path class="channel-total-line" d="${channelLinePath(totals,g,totalMax)}"/>`+totals.map((value,i)=>{
-      if(!channelKnown(value))return '';
-      const x=(i+.5)*g.step,y=g.bottom-value/totalMax*plotHeight,labelY=placeLabel(i,y-8);
-      lineLabels.push(`<text class="chart-data-label total-label" x="${x}" y="${labelY}" text-anchor="middle"><title>${totalDescription(i)}</title>${fmt(value)}</text>`);
-      return `<circle class="channel-total-point" cx="${x}" cy="${y}" r="3.5"><title>${totalDescription(i)}</title></circle>`;
-    }).join(''):'';
+    const totalLine=showTotals?`<path class="channel-total-line" d="${channelLinePath(totals,g,totalMax)}"><title>电池包总量</title></path>`:'';
+    const dataLabels=labelsByPeriod.map((shares,i)=>{
+      const value=totals[i],total=channelKnown(value)?{
+        css:'total-label',y:g.bottom-value/totalMax*plotHeight-18,text:fmt(value),tip:totalDescription(i)
+      }:null;
+      return renderMixLabels(shares,total,(i+.5)*g.step,labelTop,g.bottom-8,labelGap);
+    }).join('');
     const labels=periods.map((period,i)=>`<text class="channel-axis-label" x="${(i+.5)*g.step}" y="${g.bottom+20}" text-anchor="middle">${esc(String(period).replace(/^\d{4}-(\d{2}-\d{2})$/,'$1'))}</text>`).join('');
     const legend=series.map(item=>`<span><i style="background:${optionColor(item.name)}"></i>${esc(item.name)}</span>`).join('')+(showTotals?'<span class="channel-total-key"><i aria-hidden="true"></i>总量（右轴）</span>':'');
     const units=stackedShares?`<div class="channel-axis-units"><span>占比（%）</span>${showTotals?'<span>总量（单）</span>':''}</div>`:'';
@@ -1007,7 +1031,7 @@
     const axisColumns=showTotals?`grid-template-columns:52px minmax(0,1fr) ${rightAxisWidth}px;`:'grid-template-columns:52px minmax(0,1fr);';
     const clipId='mixPlot'+(renderMixTrend.nextId=(renderMixTrend.nextId||0)+1);
     const clippedBars=stackedShares?`<defs><clipPath id="${clipId}"><rect x="0" y="${g.top}" width="${g.width}" height="${plotHeight}"/></clipPath></defs><g clip-path="url(#${clipId})">${bars}</g>`:'';
-    return `<div class="mix-trend-chart" style="--mix-chart-width:${chartWidth}px">${units}<div class="channel-chart-frame ${showTotals?'channel-dual-axis':'channel-single-axis'}" style="${axisColumns}--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${clippedBars}${lines}${totalLine}${barLabels.join('')}${lineLabels.join('')}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div></div>`;
+    return `<div class="mix-trend-chart" style="--mix-chart-width:${chartWidth}px">${units}<div class="channel-chart-frame ${showTotals?'channel-dual-axis':'channel-single-axis'}" style="${axisColumns}--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${clippedBars}${lines}${totalLine}${dataLabels}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div></div>`;
   }
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';
@@ -1044,7 +1068,8 @@
   function formatTableCell(value,type){if(["number","percent","signed_percent"].includes(type)&&(value==null||typeof value==="string"&&!value.trim()))return '—';const number=Number(value);if(type==="percent"&&Number.isFinite(number))return `${(number*100).toFixed(1)}%`;if(type==="signed_percent"&&Number.isFinite(number)){const result=number*100;return `<span class="change ${result>=0?"pos":"neg"}">${result>=0?"+":""}${result.toFixed(1)}%</span>`}if(type==="number"&&Number.isFinite(number))return number.toLocaleString("zh-CN",{maximumFractionDigits:1});return fmt(value)}
   function shareValue(row){const value=Number(row.share??row.value??0);return Math.abs(value)<=1.5?value*100:value}
   function renderBars(data){
-    const rows=data?.rows||[],max=Math.max(...rows.map(shareValue),1),color=colors[data.color]||colors.blue;
+    const palette=state.module==='cancellation'?rhythmColors:colors;
+    const rows=data?.rows||[],max=Math.max(...rows.map(shareValue),1),color=palette[data.color]||palette.blue;
     return `<div class="bars">${rows.map(row=>{const value=shareValue(row);return `<div class="bar-row"><label title="${esc(row.label)}">${esc(row.label)}</label><div class="track"><div class="fill" style="width:${Math.max(value/max*100,1)}%;background:${color}"></div></div><b>${value.toFixed(1)}%${row.count!=null?` (${fmt(row.count)})`:""}</b></div>`}).join("")}</div>`;
   }
   function renderPieChart(data){
@@ -1139,9 +1164,9 @@
       return {label,total,values:{small:small[index],direct:direct[index]},rates:{smallRate:smallRate?.[index],bigRate:bigRate?.[index]},tooltip:known(total)?`${label} · ${unit}直接大定 ${fmt(direct[index])} · ${unit}小订转大 ${fmt(small[index])} · 来源合计 ${fmt(total)}`:`${label} · ${unit}来源数据尚未更新或不完整，不按0绘制`};
     });
     const lines=[];
-    if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:colors.orange,digits:1});
-    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定占比',color:colors.purple,digits:1});
-    return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:colors.green},{key:'direct',label:unit+'直接大定',color:colors.blue}],lines:[]})+renderLaunchRateTrends(rows,lines);
+    if(Array.isArray(smallRate)&&smallRate.length)lines.push({key:'smallRate',label:'累计小转大率（累计小转大÷总小订）',color:'#A65300',textColor:'#A65300',digits:1});
+    if(Array.isArray(bigRate)&&bigRate.length)lines.push({key:'bigRate',label:'累计直接大定占比',color:'#200036',textColor:'#200036',digits:1});
+    return renderRhythmChart({kind:'launch-day',title:`首销期${unit}订单来源`,rows,maxValue:chartMax(rows.map(row=>row.total)),series:[{key:'small',label:unit+'小订转大',color:rhythmColors.green},{key:'direct',label:unit+'直接大定',color:rhythmColors.blue}],lines:[]})+renderLaunchRateTrends(rows,lines);
   }
   function renderSmallOrderRhythm(rows){
     if(!rows?.length)return '<div class="empty-image">暂无小订期节奏数据</div>';
@@ -1149,7 +1174,7 @@
       const total=Math.max(Number(row.orders||0),0),retained=Math.max(Number(row.retained||0),0),cancel=Math.max(Number(row.cancel||0),0),retention=Number(row.retention_rate||0);
       return {label:row.period,total,values:{retained,cancel},rates:{retention},tooltip:`${row.period} · 订单 ${fmt(total)} · 留存小订 ${fmt(retained)} · 退订 ${fmt(cancel)} · 留存率 ${(retention*100).toFixed(0)}%`};
     });
-    return renderRhythmChart({kind:'small-day',title:'小订期间订单、留存、退订与留存率趋势',rows:data,maxValue:chartMax(rows.flatMap(row=>[row.orders,row.retained,row.cancel])),series:[{key:'retained',label:'留存小订',color:colors.green},{key:'cancel',label:'退订',color:colors.coral}],lines:[{key:'retention',label:'留存率',color:colors.blue,digits:0}]});
+    return renderRhythmChart({kind:'small-day',title:'小订期间订单、留存、退订与留存率趋势',rows:data,maxValue:chartMax(rows.flatMap(row=>[row.orders,row.retained,row.cancel])),series:[{key:'retained',label:'留存小订',color:rhythmColors.green},{key:'cancel',label:'退订',color:rhythmColors.coral}],lines:[{key:'retention',label:'留存率',color:'#0070C0',textColor:'#075fa8',digits:0}]});
   }
   function renderTrend(rows){return renderColumns(rows.map(row=>({label:row.period,value:row.daily||0})),colors.coral)}
   function renderDailyCancel(rows){
@@ -1159,7 +1184,7 @@
       const rateText=value=>rhythmKnown(value)?(value*100).toFixed(1)+'%':'—';
       return {label:row.period,total:small+big,values:{small,big},rates:{small_rate,big_rate},tooltip:`${row.period} · 当日小订退 ${fmt(small)} · 当日大定退 ${fmt(big)} · 退订合计 ${fmt(small+big)} · 小订退率 ${rateText(small_rate)} · 大定退率 ${rateText(big_rate)}`};
     });
-    return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:colors.coral},{key:'big',label:'当日大定退',color:colors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:colors.blue,digits:1},{key:'big_rate',label:'大定退率',color:colors.purple,digits:1}]});
+    return renderRhythmChart({kind:'cancel-day',title:'日度退订与退订率趋势',rows:data,maxValue:chartMax(rows.map(row=>Number(row.daily||0)+Number(row.big_daily||0))),series:[{key:'small',label:'当日小订退',color:rhythmColors.coral},{key:'big',label:'当日大定退',color:rhythmColors.orange}],lines:[{key:'small_rate',label:'累计小订退率',color:'#0070C0',textColor:'#075fa8',digits:1},{key:'big_rate',label:'大定退率',color:rhythmColors.purple,textColor:'#6930bd',digits:1}]});
   }
   function renderHourlyChart(rows,day){
     const filtered=day==="总计"?(rows||[]):(rows||[]).filter(row=>String(row.period||"")===day);
@@ -1169,7 +1194,7 @@
       const count=Number(row.count||0),cancel=Number(row.cancel||0),kept=Math.max(count-cancel,0);
       return {label:row.hour+'时',total:count,values:{kept,cancel},tips:{kept:`小订留存 ${fmt(kept)}`,cancel:`退订 ${fmt(cancel)} · 总计 ${fmt(count)}`},tooltip:`${row.hour}时 · 小订留存 ${fmt(kept)} · 退订 ${fmt(cancel)} · 总计 ${fmt(count)}`};
     });
-    return renderRhythmChart({kind:'small-hour',title:'分时小订与退订节奏',rows:points,maxValue:chartMax(data.map(row=>row.count)),series:[{key:'kept',label:'留存小订',color:colors.green},{key:'cancel',label:'退订',color:colors.coral}]});
+    return renderRhythmChart({kind:'small-hour',title:'分时小订与退订节奏',rows:points,maxValue:chartMax(data.map(row=>row.count)),series:[{key:'kept',label:'留存小订',color:rhythmColors.green},{key:'cancel',label:'退订',color:rhythmColors.coral}]});
   }
   function renderHourly(rows){
     const days=[...new Set((rows||[]).map(row=>String(row.period||"")).filter(Boolean))];
@@ -1184,7 +1209,7 @@
       const orders=Number(row.orders||0),small=Number(row.small||0),direct=Number(row.direct||0);
       return {label:row.hour+'时',total:orders,values:{small,direct},tips:{small:`小订转大 ${fmt(small)}`,direct:`直接大定 ${fmt(direct)} · 总计 ${fmt(orders)}`},tooltip:`${row.hour}时 · 小订转大 ${fmt(small)} · 直接大定 ${fmt(direct)} · 总计 ${fmt(orders)}`};
     });
-    return renderRhythmChart({kind:'launch-hour',title:'分时首销节奏',rows:points,maxValue:chartMax(data.map(row=>row.orders)),series:[{key:'small',label:'小订转大',color:colors.green},{key:'direct',label:'直接大定',color:colors.blue}]});
+    return renderRhythmChart({kind:'launch-hour',title:'分时首销节奏',rows:points,maxValue:chartMax(data.map(row=>row.orders)),series:[{key:'small',label:'小订转大',color:rhythmColors.green},{key:'direct',label:'直接大定',color:rhythmColors.blue}]});
   }
   function renderLaunchHourly(rows){
     const days=[...new Set((rows||[]).map(row=>String(row.period||"")).filter(Boolean))];
