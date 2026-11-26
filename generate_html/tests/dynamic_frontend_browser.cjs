@@ -2,7 +2,7 @@ const fs=require('fs'),path=require('path'),http=require('http'),assert=require(
 const project=path.resolve(__dirname,'../../..'),root=path.resolve(__dirname,'..');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||path.join(project,'.test_runtime/node_modules/playwright'));
 const aggregateNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界 Z7&Z7T 2026款','享界 S9&S9T 2026款'];
-const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,has_lock_orders:true,modules:s.id==='m'?['overview','order_mix','raw']:['overview','raw']}));
+const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,has_lock_orders:s.id!=='aggregate0',modules:s.id==='m'?['overview','order_mix','raw']:['overview','raw']}));
 const generatedTimes={'fixture-v1':'2026-11-10T10:00:00','fixture-v2':'2026-11-10T10:01:00','fixture-v3':'2026-11-10T10:02:00','fixture-v4':'2026-11-10T10:03:00'};
 const generationLabel=version=>'生成时间 '+generatedTimes[version].replace('T',' ');
 const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','order_mix','raw'],module_labels:{overview:'订单总览',order_mix:'大定选配',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
@@ -169,8 +169,8 @@ const server=http.createServer(async(req,res)=>{
     check('组合快捷名称不追加汇总 '+name,(await shortcut.textContent()).includes('&')&&!(await shortcut.textContent()).includes('汇总'));
   }
   await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');
-  await page.locator('#subjectSelect').selectOption('aggregate0');await page.waitForFunction(()=>new URL(location).searchParams.get('subject')==='aggregate0');
-  check('组合代际可选择并加载',await page.locator('.kpi').count()>0&&await page.locator('#subjectSelect').inputValue()==='aggregate0');
+  await page.locator('[data-quick-generation="aggregate0"]').click();await page.waitForFunction(()=>new URL(location).searchParams.get('subject')==='aggregate0');
+  check('零锁单的汇总代际可从新车型栏打开',await page.locator('.kpi').count()>0&&await page.locator('#subjectSelect').inputValue()==='aggregate0');
   await page.goto(base+'?subject=m&module=order_mix&grain=week');
   const battery=page.locator('[data-section-kind="mix_combo_trend"]');
   await battery.waitFor();

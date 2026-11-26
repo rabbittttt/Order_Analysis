@@ -26,9 +26,13 @@ const names = [
   '智界 RX 盲订 2027款', '智界 RX 2027款盲订', '智界 RX 2027款',
 ];
 const subjects = names.map((name, index) => ({id: String(index), name, parent: name.slice(0, 2), type: 'generation'}));
-subjects.forEach(item=>item.has_lock_orders=true);
+
 const actual = select({subjects});
-assert.deepStrictEqual(select({subjects:[{...subjects[0],has_lock_orders:false}]}),[]);
+const sameModel = [
+  {name:'问界 M8 2026款',type:'generation',parent:'问界',has_lock_orders:true},
+  {name:'问界 M8 2027款',type:'generation',parent:'问界',has_lock_orders:false},
+];
+assert.deepStrictEqual(select({subjects:sameModel}),['问界 M8 2027款']);
 const expected = [
   '问界 F2N 2026款汇总', '尚界 X6M 2026款汇总', '尚界 SHB 2026款汇总',
   '问界 M5 2025款', '问界 M8 2025款', '问界 M9 2026款',
