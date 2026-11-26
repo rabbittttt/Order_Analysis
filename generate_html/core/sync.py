@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from .data_paths import dynamic_log_directory
+from .model_identity import PINNED_CAMPAIGN, STAGE_SOURCE_NAME, campaign_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_SECONDS = 300
@@ -82,15 +83,22 @@ def source_signature(source: Path) -> dict:
     if not source.is_dir():
         raise FileNotFoundError("订单 Excel 输入目录不存在")
     entries = []
+    campaign = campaign_snapshot(source)
     for path in sorted(source.iterdir(), key=lambda p: p.name):
+        if campaign and path.name == STAGE_SOURCE_NAME:
+            continue
         if path.suffix.lower() != ".xlsx" or path.name.startswith("~$"):
             continue
         if not path.is_file() or path.is_symlink():
             raise ValueError("Excel 输入必须是普通文件")
         stat = path.stat()
         entries.append([path.name, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns])
-    return {"directory": str(source.resolve()), "files": entries,
-            "calculation_revision": calculation_revision()}
+    signature = {"directory": str(source.resolve()), "files": entries,
+                 "calculation_revision": calculation_revision()}
+    if campaign:
+        stat = campaign.stat()
+        signature["campaign"] = [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+    return signature
 
 
 def published_signature(runtime: Path) -> dict | None:
@@ -136,6 +144,11 @@ class RefreshSchedule:
 def copy_stable_inputs(source: Path, destination: Path, expected: dict) -> None:
     if source_signature(source) != expected:
         raise RuntimeError("Excel 已变化，等待下一次稳定后更新")
+    if "campaign" in expected:
+        campaign = campaign_snapshot(source)
+        if campaign is None:
+            raise RuntimeError("小订与首销发布数据发生变化，请重试")
+        shutil.copy2(campaign, destination / PINNED_CAMPAIGN)
     for name, size, *_ in expected["files"]:
         shutil.copy2(source / name, destination / name)
         if (destination / name).stat().st_size != size:

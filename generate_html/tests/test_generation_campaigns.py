@@ -120,6 +120,29 @@ class GenerationCampaignTests(TestCase):
             self.assertEqual([stage_name(row) for row in generation_records(Path(first))], [ULTRA, PRO])
             self.assertEqual(generation_records(Path(second)), [])
 
+    def test_web_snapshot_without_workbook_and_batch_pin(self):
+        from core.sync import source_signature, copy_stable_inputs
+        from core.model_identity import PINNED_CAMPAIGN
+        import json
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            shared, snapshot = root / "shared" / "订单汇总", root / "batch"
+            published = root / "database/vehicle-config/campaigns/published.json"
+            shared.mkdir(parents=True)
+            published.parent.mkdir(parents=True)
+            snapshot.mkdir()
+            rows = [["代际名", "二级代际名", "开始大定日期"], [PARENT, ULTRA, "2024-05-03"]]
+            data = {"schemaVersion": 1, "revision": 2, "sheets": [{"name": "车型汇总", "rows": rows}]}
+            published.write_text(json.dumps(data), encoding="utf-8")
+            with patch.dict("os.environ", {"PLANHUB_DATA_ROOT": str(root), "SHARED_DATA_ROOT": str(root / "shared")}):
+                signature = source_signature(shared)
+                copy_stable_inputs(shared, snapshot, signature)
+                published.unlink()
+                self.assertTrue((snapshot / PINNED_CAMPAIGN).exists())
+                result = generation_records(snapshot)
+                self.assertEqual(stage_name(result[0]), ULTRA)
+                self.assertEqual(result[0]["开始大定日期"], datetime(2024, 5, 3))
+
     def test_primary_selector_and_exact_secondary_sheet_pairing(self):
         book = Workbook(); book.remove(book.active)
         # Deliberately reverse file order: hourly sheets must pair by edition.
