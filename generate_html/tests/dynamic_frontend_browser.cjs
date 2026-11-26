@@ -179,9 +179,9 @@ const server=http.createServer(async(req,res)=>{
   check('零锁单的汇总代际可从新车型栏打开',await page.locator('.kpi').count()>0&&await page.locator('#subjectSelect').inputValue()==='aggregate0');
   const shortcuts=page.locator('.quick-generation-list');
   const pressed=shortcuts.locator('[aria-pressed="true"]');
-  check('当前新车型使用灰底蓝字',await pressed.count()===1&&await pressed.evaluate(button=>{
+  check('当前新车型使用蓝字且底色与上方车型选择框一致',await pressed.count()===1&&await pressed.evaluate(button=>{
     const style=getComputedStyle(button);
-    return style.backgroundColor==='rgb(228, 230, 233)'&&style.color==='rgb(32, 73, 212)';
+    return style.backgroundColor===getComputedStyle(document.querySelector('#subjectSelect')).backgroundColor&&style.color==='rgb(32, 73, 212)';
   }));
   check('新车型整组共用外框，未选中按钮白底',await shortcuts.evaluate(list=>{
     const buttons=[...list.querySelectorAll('button')];

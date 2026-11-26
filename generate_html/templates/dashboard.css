@@ -3048,7 +3048,7 @@ button,select,input {font-family:inherit}
   box-shadow:none;
 }
 .topbar .quick-generation-button:hover {color:var(--primary-strong)}
-.topbar .quick-generation-button.active {background:#e4e6e9;color:var(--primary-strong)}
+.topbar .quick-generation-button.active {background:var(--surface-muted);color:var(--primary-strong)}
 .topbar .segments button {color:var(--muted);border-radius:999px}
 .topbar .segments button:disabled {color:var(--muted)}
 .topbar .segments button.active {
