@@ -255,7 +255,7 @@ button {
 .mix-trend-chart .channel-legend {justify-content:center}
 .mix-trend-chart .channel-plot-scroll svg {margin-inline:auto}
 .mix-trend-chart .channel-plot-scroll {border:0;border-radius:0}
-.mix-trend-chart .channel-total-line {stroke:var(--primary)}
+.mix-trend-chart .channel-total-line {stroke:var(--primary);filter:none}
 .mix-trend-chart .channel-legend .channel-total-key i {border-top-color:var(--primary)}
 .channel-dual-axis {grid-template-columns:45px minmax(0,1fr) 58px}
 .channel-single-axis {grid-template-columns:52px minmax(0,1fr)}
