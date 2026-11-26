@@ -3037,7 +3037,7 @@ button,select,input {font-family:inherit}
 .topbar .filters span,.topbar .quick-generation-filter>span {color:var(--muted)}
 .topbar .quick-generation-list {
   padding:1px;
-  border:1px solid var(--line);
+  border:1px solid transparent;
   border-radius:14px;
   background:var(--card);
 }

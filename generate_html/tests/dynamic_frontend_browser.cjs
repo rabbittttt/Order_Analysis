@@ -183,9 +183,9 @@ const server=http.createServer(async(req,res)=>{
     const style=getComputedStyle(button);
     return style.backgroundColor===getComputedStyle(document.querySelector('#subjectSelect')).backgroundColor&&style.color==='rgb(32, 73, 212)';
   }));
-  check('新车型整组共用外框，未选中按钮白底',await shortcuts.evaluate(list=>{
+  check('新车型组无可见外框，未选中按钮白底',await shortcuts.evaluate(list=>{
     const buttons=[...list.querySelectorAll('button')];
-    return getComputedStyle(list).borderTopWidth==='1px'&&buttons.every(button=>{
+    return getComputedStyle(list).borderTopColor==='rgba(0, 0, 0, 0)'&&buttons.every(button=>{
       const style=getComputedStyle(button);
       return style.borderTopWidth==='0px'&&(button.getAttribute('aria-pressed')==='true'||style.backgroundColor==='rgb(255, 255, 255)');
     });
