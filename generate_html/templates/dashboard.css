@@ -3069,6 +3069,8 @@ button,select,input {font-family:inherit}
 #moduleNav button[aria-current="page"] {font-weight:700;border-bottom-color:var(--primary)}
 #moduleNav button:focus-visible {outline:2px solid var(--primary);outline-offset:-2px}
 #moduleNav button:disabled {color:var(--muted);opacity:.55}
+/* Reserve the selected text width for tabs containing Latin letters or digits. */
+#moduleNav [data-tab-label]::after {content:attr(data-tab-label);display:block;height:0;overflow:hidden;visibility:hidden;font-weight:700}
 #moduleNav .module-icon {opacity:.8}
 #moduleNav [aria-current="page"] .module-icon {opacity:1}
 .module-icon,.kpi-icon {

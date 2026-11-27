@@ -619,7 +619,9 @@
       const available=moduleAvailable(item,id),active=state.module===id;
       const hint="当前主体没有对应Sheet";
       const icon=outlineIcon(moduleIcons[id]||"M4 6h16M4 12h16M4 18h16M9 6v12");
-      return '<button data-module="'+id+'" class="'+(active?'active':'')+'" '+(active?'aria-current="page" ':'')+(available?'':'disabled ')+'title="'+(available?moduleLabels[id]:hint)+'">'+icon+moduleLabels[id]+'</button>';
+      const label=esc(moduleLabels[id]);
+      const labelHtml=/[A-Za-z0-9]/.test(moduleLabels[id]) ? `<span data-tab-label="${label}">${label}</span>` : label;
+      return '<button data-module="'+id+'" class="'+(active?'active':'')+'" '+(active?'aria-current="page" ':'')+(available?'':'disabled ')+'title="'+(available?label:hint)+'">'+icon+labelHtml+'</button>';
     }).join("");
     $("#moduleNav").onclick=async event=>{
       const button=event.target.closest("[data-module]");
