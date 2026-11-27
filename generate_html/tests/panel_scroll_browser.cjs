@@ -54,7 +54,7 @@ function checkPanel(m){
    for(const module of modules){
     const subject=subjects.find(s=>s.modules.includes(module));if(!subject)continue;
     if(await page.locator('#subjectSelect').inputValue()!==subject.id){await page.locator('#subjectSelect').selectOption(subject.id);await page.waitForFunction(id=>document.querySelector('#page')?.dataset.viewKey?.startsWith(id+'|')&&document.querySelector('#page').getAttribute('aria-busy')==='false',subject.id);}
-    if(await page.locator('#page').getAttribute('data-view-key')!==subject.id+'|'+module){const button=page.locator(`[data-module="${module}"]`);if(await button.isVisible())await button.click();else await page.locator('#moduleSelect').selectOption(module);}
+    if(await page.locator('#page').getAttribute('data-view-key')!==subject.id+'|'+module){const button=page.locator(`[data-module="${module}"]`);await button.click();}
     await page.waitForFunction(key=>document.querySelector('#page')?.dataset.viewKey===key&&document.querySelector('#page').getAttribute('aria-busy')==='false',subject.id+'|'+module);
     for(const panel of await page.locator('#page .panel').all()){
      const m=await verifyPanel(panel);checkPanel(m);report.push({width,module,...m});

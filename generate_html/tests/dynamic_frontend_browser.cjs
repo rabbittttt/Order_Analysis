@@ -129,7 +129,7 @@ const server=http.createServer(async(req,res)=>{
     await page.waitForFunction(text=>document.querySelector('#syncStatus').textContent===text,expected);
     check('手机生成时间旁按后台状态显示 '+phase,await page.locator('#syncStatus').isVisible());
   }
-  await page.locator('#moduleSelect').selectOption('overview');await page.waitForSelector('.kpi');
+  await page.locator('[data-module="overview"]').click();await page.waitForSelector('.kpi');
   check('手机批注按钮与来源数据使用相同样式',await actionsMatchSource());
   const trendScroll=page.locator('[data-trend-chart] .stacked-chart').first();
   check('窄屏趋势图可横向滚动，图形完整且无纵向溢出',await trendScroll.evaluate(chart=>

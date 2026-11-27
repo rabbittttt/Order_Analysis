@@ -615,9 +615,6 @@
   function renderNav(){
     const item=subject();
     const navigationModules=DATA.config.module_order;
-    $('#moduleSelect').innerHTML=navigationModules.map(id=>`<option value="${esc(id)}" ${moduleAvailable(item,id)?'':'disabled'}>${esc(moduleLabels[id])}${moduleAvailable(item,id)?'':'（当前主体不可用）'}</option>`).join('');
-    $('#moduleSelect').value=state.module;
-    $('#moduleSelect').onchange=event=>$('#moduleNav').querySelector(`[data-module="${event.target.value}"]`)?.click();
     $("#moduleNav").innerHTML=navigationModules.map(id=>{
       const available=moduleAvailable(item,id),active=state.module===id;
       const hint="当前主体没有对应Sheet";
