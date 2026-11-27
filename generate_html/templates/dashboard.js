@@ -1000,7 +1000,7 @@
       }
       return `<rect x="${x}" y="${y}" width="${barWidth}" height="${height}" fill="${optionColor(item.name)}"><title>${describe(item,i)}</title></rect>`;
     }).join('')).join(''):'';
-    const grid=[0,.25,.5,.75,1].map(ratio=>{
+    const grid=combined?'':[0,.25,.5,.75,1].map(ratio=>{
       const y=g.bottom-ratio*plotHeight;
       return `<line x1="0" x2="${g.width}" y1="${y}" y2="${y}"/>`;
     }).join('');
@@ -1022,15 +1022,14 @@
       return renderMixLabels(shares,total,(i+.5)*g.step,labelTop,g.bottom-8,labelGap);
     }).join('');
     const labels=periods.map((period,i)=>`<text class="channel-axis-label" x="${(i+.5)*g.step}" y="${g.bottom+20}" text-anchor="middle">${esc(String(period).replace(/^\d{4}-(\d{2}-\d{2})$/,'$1'))}</text>`).join('');
-    const legend=series.map(item=>`<span><i style="background:${optionColor(item.name)}"></i>${esc(item.name)}</span>`).join('')+(showTotals?'<span class="channel-total-key"><i aria-hidden="true"></i>总量（右轴）</span>':'');
-    const units=stackedShares?`<div class="channel-axis-units"><span>占比（%）</span>${showTotals?'<span>总量（单）</span>':''}</div>`:'';
-    const leftAxis=channelAxisMarkup(lineMax,stackedShares?'percent':'number',g,'left');
-    const rightAxis=showTotals?channelAxisMarkup(totalMax,'number',g,'right'):'';
-    const rightAxisWidth=showTotals?Math.max(58,fmt(totalMax).length*8+12):0,chartWidth=g.width+54+rightAxisWidth;
-    const axisColumns=showTotals?`grid-template-columns:52px minmax(0,1fr) ${rightAxisWidth}px;`:'grid-template-columns:52px minmax(0,1fr);';
+    const legend=series.map(item=>`<span><i style="background:${optionColor(item.name)}"></i>${esc(item.name)}</span>`).join('')+(showTotals?'<span class="channel-total-key"><i aria-hidden="true"></i>总量（单）</span>':'');
+    const units=metric==='share'?'<div class="channel-axis-units"><span>占比（%）</span></div>':'';
+    const leftAxis=combined?'':channelAxisMarkup(lineMax,stackedShares?'percent':'number',g,'left');
+    const chartWidth=combined?g.width:g.width+54;
+    const axisColumns=combined?'minmax(0,1fr)':'52px minmax(0,1fr)';
     const clipId='mixPlot'+(renderMixTrend.nextId=(renderMixTrend.nextId||0)+1);
     const clippedBars=stackedShares?`<defs><clipPath id="${clipId}"><rect x="0" y="${g.top}" width="${g.width}" height="${plotHeight}"/></clipPath></defs><g clip-path="url(#${clipId})">${bars}</g>`:'';
-    return `<div class="mix-trend-chart" style="--mix-chart-width:${chartWidth}px">${units}<div class="channel-chart-frame ${showTotals?'channel-dual-axis':'channel-single-axis'}" style="${axisColumns}--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}"><g class="channel-chart-grid">${grid}</g>${clippedBars}${lines}${totalLine}${dataLabels}${labels}</svg></div>${rightAxis}</div><div class="channel-legend">${legend}</div></div>`;
+    return `<div class="mix-trend-chart" style="--mix-chart-width:${chartWidth}px">${units}<div class="channel-chart-frame" style="grid-template-columns:${axisColumns};--channel-chart-height:${g.height}px">${leftAxis}<div class="channel-plot-scroll" tabindex="0"><svg width="${g.width}" height="${g.height}" viewBox="0 0 ${g.width} ${g.height}">${grid?`<g class="channel-chart-grid">${grid}</g>`:''}${clippedBars}${lines}${totalLine}${dataLabels}${labels}</svg></div></div><div class="channel-legend">${legend}</div></div>`;
   }
   function renderStackedTrend(data){
     if(!data?.periods?.length)return '<div class="empty-image">图表Sheet暂无可绘制数据</div>';

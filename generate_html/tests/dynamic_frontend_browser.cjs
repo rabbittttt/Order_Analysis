@@ -221,7 +221,8 @@ const server=http.createServer(async(req,res)=>{
       return shares.every(share=>share.x>=total.x+total.width||total.x>=share.x+share.width||share.y>=total.y+total.height||total.y>=share.y+share.height);
     });
   }));
-  check('电池包占比与总量分别使用左右轴',await battery.locator('.channel-y-axis.left').count()===1&&await battery.locator('.channel-y-axis.right').count()===1);
+  check('电池包组合图隐藏纵轴和水平网格线，保留周期标签',await battery.locator('.channel-y-axis,.channel-axis-units,.channel-chart-grid line').count()===0
+    &&await battery.locator('.channel-axis-label').count()>0);
   check('无浏览器异常',errors.length===0);await ctx2.close();
  }finally{await browser.close();await new Promise(r=>server.close(r));}
  console.log(JSON.stringify({checks:checks.length,errors}));
