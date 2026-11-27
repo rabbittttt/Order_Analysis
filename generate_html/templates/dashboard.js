@@ -328,8 +328,11 @@
     trendAnnotationState.entries=result.entries||[];
     if(changed){refreshAnnotationCharts();refreshAnnotationList();}
   }
+  function annotationScopeId(subjectId){
+    return subjectId==='*'?(DATA.subjects.find(item=>item.type==='group')?.id||subjectId):subjectId;
+  }
   function annotationOptions(){
-    return [new Option('所有主体','*'),...DATA.subjects.map(item=>new Option(item.name,item.id))];
+    return DATA.subjects.map(item=>new Option(item.name,item.id));
   }
   async function openTrendAnnotationEditor(refreshCharts){
     const dialog=$('#trendAnnotationEditor'),form=$('#trendAnnotationForm'),list=$('#trendAnnotationList'),error=$('#trendAnnotationError');
@@ -343,12 +346,12 @@
       const notes=trendAnnotationsFor(subjectId).sort((a,b)=>b.date.localeCompare(a.date));
       list.replaceChildren(...notes.map(note=>{
         const item=document.createElement('li'),heading=document.createElement('small'),content=document.createElement('strong');
-        heading.textContent=note.date+' · '+(note.subject==='*'?'所有主体':DATA.subjects.find(item=>item.id===note.subject)?.name||note.subject);
+        heading.textContent=note.date+' · '+(DATA.subjects.find(item=>item.id===annotationScopeId(note.subject))?.name||note.subject);
         content.textContent=note.text;
         const edit=document.createElement('button'),remove=document.createElement('button');
         edit.className=remove.className='trend-annotation-button';edit.type=remove.type='button';edit.textContent='编辑';remove.textContent='删除';
         edit.disabled=remove.disabled=busy;
-        edit.onclick=()=>{resetForm();editingId=note.id;editingVersion=note.version;date.value=note.date;scope.value=note.subject;text.value=note.text;submit.textContent='保存修改';cancel.hidden=false;text.focus()};
+        edit.onclick=()=>{resetForm();editingId=note.id;editingVersion=note.version;date.value=note.date;scope.value=annotationScopeId(note.subject);text.value=note.text;submit.textContent='保存修改';cancel.hidden=false;text.focus()};
         remove.onclick=async()=>{
           if(busy||!window.confirm('删除这条批注？'))return;
           await mutate(async()=>{
@@ -393,8 +396,8 @@
       importButton.onclick=()=>mutate(async()=>{
         await refreshSharedAnnotations();
         for(const note of localAnnotationEntries()){
-          if(trendAnnotationState.entries.some(saved=>saved.date===note.date&&saved.subject===note.subject&&saved.text===note.text))continue;
-          const saved=await apiJson('annotations',{}, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:note.date,subject:note.subject,text:note.text})});
+          if(trendAnnotationState.entries.some(saved=>saved.date===note.date&&annotationScopeId(saved.subject)===annotationScopeId(note.subject)&&saved.text===note.text))continue;
+          const saved=await apiJson('annotations',{}, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({date:note.date,subject:annotationScopeId(note.subject),text:note.text})});
           trendAnnotationState.entries.push(saved);
         }
         importButton.hidden=true;

@@ -8,7 +8,7 @@ const generationLabel=version=>'生成时间 '+generatedTimes[version].replace('
 const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','order_mix','raw'],module_labels:{overview:'订单总览',order_mix:'大定选配',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
 const header=['序号','格式值'],allRows=Array.from({length:450},(_,i)=>[i+1,`${i%2?'odd':'even'} 12.30%`]),xlsx=Buffer.from('fixture-original-xlsx');
 let currentVersion='fixture-v1',failNewBoard=false,syncPhase='idle';
-let notes=[{id:'group',subject:'g',date:'2026-11-10',text:'集团事件',version:1},{id:'brand',subject:'b',date:'2026-11-10',text:'问界事件',version:1}],failSubject='other',requests=[],nextId=1;
+let notes=[{id:'group',subject:'*',date:'2026-11-10',text:'集团事件',version:1},{id:'brand',subject:'b',date:'2026-11-10',text:'问界事件',version:1}],failSubject='other',requests=[],nextId=1;
 const view={periods:['26WK46'],default_period:'26WK46',pages:{'26WK46':{kpis:[{label:'合计',value:123,unit:'辆'}],sections:[{title:'留存大定趋势',kind:'stacked_trend',width:'half',data:{periods:['26WK46'],totals:[123],series:[{name:'增程',values:[1]}]},source:{file:'fixture.xlsx',sheet:'数据'}}]}}};
 const batteryPeriods=['26WK42','26WK43','26WK44','26WK45','26WK46'];
 const batterySection={
@@ -100,7 +100,24 @@ const server=http.createServer(async(req,res)=>{
   await page.locator('[data-page-retry]').click();await page.waitForSelector('.kpi');
   check('品牌批注不跨品牌',(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('集团事件')&&!(await page.locator('.trend-annotation').getAttribute('aria-label')).includes('问界事件'));
   await page.locator('#subjectSelect').selectOption('m');await page.waitForFunction(()=>new URL(location).searchParams.get('subject')==='m');
+  await page.evaluate(()=>localStorage.setItem('order-dashboard.trend-annotations.v1', JSON.stringify({entries:[
+    {id:'local-old',subject:'*',date:'2026-11-10',text:'集团事件'},
+    {id:'local-new',subject:'*',date:'2026-11-10',text:'旧离线批注'}
+  ]})));
   await page.locator('[data-trend-annotation-manage]').click();
+  const scope=page.locator('#trendAnnotationForm [name="subject"]');
+  assert.deepStrictEqual(await scope.locator('option').allTextContents(),subjects.map(s=>s.name));
+  check('集团范围只列鸿蒙智行，车型仍默认选中',await scope.inputValue()==='m');
+  const legacy=page.locator('#trendAnnotationList li').filter({hasText:'集团事件'});
+  check('旧的全局批注显示为鸿蒙智行',(await legacy.locator('small').textContent()).includes('鸿蒙智行'));
+  await legacy.getByRole('button',{name:'编辑',exact:true}).click();
+  assert.equal(await scope.inputValue(),'g');
+  await page.locator('#trendAnnotationForm button[type="submit"]').click();
+  await page.waitForFunction(()=>document.querySelector('#cancelTrendAnnotationEdit').hidden);
+  check('编辑原全局批注时保留原记录',notes.some(n=>n.id==='group'&&n.subject==='g'&&n.version===2));
+  await page.locator('#importLocalTrendAnnotations').click();
+  await page.waitForSelector('#importLocalTrendAnnotations',{state:'hidden'});
+  check('导入旧全局批注时复用集团范围并跳过重复',notes.filter(n=>n.text==='集团事件').length===1&&notes.some(n=>n.text==='旧离线批注'&&n.subject==='g'));
   await page.locator('#trendAnnotationForm [name="date"]').fill('2026-11-10');await page.locator('#trendAnnotationForm [name="subject"]').selectOption('g');await page.locator('#trendAnnotationForm [name="text"]').fill('共享新增 <b>');await page.locator('#trendAnnotationForm button[type="submit"]').click();
   await page.waitForFunction(()=>document.querySelector('#trendAnnotationList').textContent.includes('共享新增 <b>'));
   check('共享批注写后台且文本转义',notes.some(n=>n.text==='共享新增 <b>')&&await page.locator('#trendAnnotationList b').count()===0);
