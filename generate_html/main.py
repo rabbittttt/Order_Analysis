@@ -20,7 +20,7 @@ from core.config import load_config
 from core.data_paths import PROJECT_ROOT, orders_input_directory, dynamic_log_directory
 from core.discovery import catalog_subjects, discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
-from core.model_identity import STAGE_SOURCE_NAME
+from core.model_identity import STAGE_SOURCE_NAME, campaign_batch
 from core.renderer import b64gzip, render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard
 from core.validation import validate_manifest
 from modules.registry import MODULES
@@ -214,6 +214,11 @@ def raw_tables(store: WorkbookStore, *, additional_items=()) -> tuple[list[dict[
 
 
 def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None, source_signature: dict | None = None, static: bool = False) -> tuple[dict[str, Any], list[str]]:
+    with campaign_batch(input_dir):
+        return _build(input_dir, output_file, runtime_dir=runtime_dir, source_signature=source_signature, static=static)
+
+
+def _build(input_dir, output_file, *, runtime_dir, source_signature, static):
     runtime_dir = runtime_dir or output_file.parent / "runtime"
     build_started = perf_counter()
     LOGGER.info("开始生成订单分析看板")

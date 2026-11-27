@@ -39,8 +39,8 @@ class XxxModule:
 - 销量预测已迁至同级独立项目。订单入口仅构建订单模块，不注册销量预测、不刷新预测汇总、不输出预测 HTML 或 forecast_assets。两边使用独立文件，禁止跨项目 import、软链接或代码自动同步。
 - 预测专属模块、工具、计算脚本、模板分支和回归测试已从本仓库移除，不保留停用副本。公共阶段身份读取仍用于小订、首销实际节奏；不得因整理表同时供预测使用而删除订单仍依赖的读取逻辑。
 - 本仓库仅维护订单分析。旧 `销量规律/` 目录及其专属日历、测试引用已移除；维护和 Git 发布范围均为当前 `scripts` 仓库。
-- 输入由 `core/data_paths.py` 默认选择 `../工作台数据/shared/订单汇总`；`--input`、`ORDER_DASHBOARD_INPUT` 可明确指定目录，显式 `SHARED_DATA_ROOT` 仍支持。缺失时不回退项目旧副本。后台每 300 秒检查，八份指定 Excel 中任一份修改时间变化，再确认稳定 60 秒后由独立进程计算，前台每 15 秒同步版本；详见 SERVER.md。共享输入只读。WorkbookStore 缓存必须显式传入本项目输出目录，不能写入或清理共享目录。
-- 车型配置网页首次发布后，阶段身份读取 `database/vehicle-config/campaigns/published.json`（可通过 `VEHICLE_CONFIG_CAMPAIGN_SNAPSHOT` 指定），随订单批次固定版本；首次发布前仍兼容原小订首销整理表。`鸿蒙智行销量数据汇总.xlsx` 作为只读底表随批次发布，供查询和下载。
+- 输入由 `core/data_paths.py` 默认选择 `../工作台数据/shared/订单汇总`；`--input`、`ORDER_DASHBOARD_INPUT` 可明确指定目录，显式 `SHARED_DATA_ROOT` 仍支持。缺失时不回退项目旧副本。后台每 300 秒检查，八份指定 Excel 中任一份修改时间或小订首销发布修订变化，再确认稳定 60 秒后由独立进程计算，前台每 15 秒同步版本；详见 SERVER.md。共享输入只读。WorkbookStore 缓存必须显式传入本项目输出目录，不能写入或清理共享目录。
+- 共享订单输入的阶段身份从 `database/vehicle-config/campaigns/campaigns.sqlite3` 只读当前已发布版本，首次使用须先发布。生成期间固定同一版本，自动批次复制该版本为“小订首销发布.json”。`VEHICLE_CONFIG_CAMPAIGN_SNAPSHOT` 可显式指定 JSON，`VEHICLE_CONFIG_CAMPAIGN_DB` 可指定车型配置数据库。自定义订单目录支持其本地固定版或历史整理表。`鸿蒙智行销量数据汇总.xlsx` 作为只读底表随批次发布，供查询和下载。
 
 - 集团固定为“鸿蒙智行”，品牌和代际动态识别。
 - 代际名含 ASCII `&` 即视为汇总代际，如 `问界 M9&M9U 2026款`，无需“汇总”后缀；兼容旧“总计/汇总/合计”名称。品牌和集团按明细代际统计时必须排除此类代际，避免重复计数。保持 Excel 内 Sheet、图表数据及相关映射的主体名称一致。

@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from .data_paths import dynamic_log_directory
-from .model_identity import PINNED_CAMPAIGN, STAGE_SOURCE_NAME, campaign_snapshot
+from .model_identity import PINNED_CAMPAIGN, STAGE_SOURCE_NAME, CampaignNotPublished, campaign_edition
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_SECONDS = 300
@@ -83,7 +83,7 @@ def source_signature(source: Path) -> dict:
     if not source.is_dir():
         raise FileNotFoundError("订单 Excel 输入目录不存在")
     entries = []
-    campaign = campaign_snapshot(source)
+    campaign = campaign_edition(source)
     for path in sorted(source.iterdir(), key=lambda p: p.name):
         if campaign and path.name == STAGE_SOURCE_NAME:
             continue
@@ -96,8 +96,7 @@ def source_signature(source: Path) -> dict:
     signature = {"directory": str(source.resolve()), "files": entries,
                  "calculation_revision": calculation_revision()}
     if campaign:
-        stat = campaign.stat()
-        signature["campaign"] = [stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+        signature["campaign"] = campaign.signature()
     return signature
 
 
@@ -118,7 +117,7 @@ def refresh_key(signature):
         return None
     # Compare mtimes by filename, including catalogs published by older services.
     files = sorted((row[0], row[2]) for row in signature["files"] if row[0] in BATCH_WORKBOOKS)
-    return signature["directory"], files, signature.get("calculation_revision")
+    return signature["directory"], files, signature.get("calculation_revision"), signature.get("campaign")
 
 
 class RefreshSchedule:
@@ -145,10 +144,10 @@ def copy_stable_inputs(source: Path, destination: Path, expected: dict) -> None:
     if source_signature(source) != expected:
         raise RuntimeError("Excel 已变化，等待下一次稳定后更新")
     if "campaign" in expected:
-        campaign = campaign_snapshot(source)
-        if campaign is None:
+        campaign = campaign_edition(source)
+        if campaign is None or campaign.signature() != expected["campaign"]:
             raise RuntimeError("小订与首销发布数据发生变化，请重试")
-        shutil.copy2(campaign, destination / PINNED_CAMPAIGN)
+        (destination / PINNED_CAMPAIGN).write_bytes(campaign.payload)
     for name, size, *_ in expected["files"]:
         shutil.copy2(source / name, destination / name)
         if (destination / name).stat().st_size != size:
@@ -262,9 +261,10 @@ class AutoSync:
                     self.phase, self.error = "idle", None
                     # Immediately observe again after a long build; changes coalesce.
                     delay = 0
-            except Exception:
+            except Exception as exc:
                 self._terminate_worker()
                 LOG.exception("订单自动同步失败；保留上一批可用数据")
-                self.phase, self.error = "error", "更新失败，当前显示上次数据"
+                self.phase = "error"
+                self.error = str(exc) if isinstance(exc, CampaignNotPublished) else "更新失败，当前显示上次数据"
                 self.schedule.pending = None
                 delay = self.schedule.check_seconds

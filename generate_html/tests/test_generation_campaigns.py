@@ -120,28 +120,68 @@ class GenerationCampaignTests(TestCase):
             self.assertEqual([stage_name(row) for row in generation_records(Path(first))], [ULTRA, PRO])
             self.assertEqual(generation_records(Path(second)), [])
 
-    def test_web_snapshot_without_workbook_and_batch_pin(self):
-        from core.sync import source_signature, copy_stable_inputs
-        from core.model_identity import PINNED_CAMPAIGN
+    def test_published_database_and_batch_pin(self):
         import json
+        import sqlite3
+        from contextlib import closing
+        from core.model_identity import CampaignNotPublished, PINNED_CAMPAIGN, campaign_batch
+        from core.sync import source_signature, copy_stable_inputs, refresh_key
         with TemporaryDirectory() as folder:
             root = Path(folder)
-            shared, snapshot = root / "shared" / "订单汇总", root / "batch"
-            published = root / "database/vehicle-config/campaigns/published.json"
+            shared, batch = root / "shared/订单汇总", root / "batch"
+            database = root / "database/vehicle-config/campaigns/campaigns.sqlite3"
             shared.mkdir(parents=True)
-            published.parent.mkdir(parents=True)
-            snapshot.mkdir()
-            rows = [["代际名", "二级代际名", "开始大定日期"], [PARENT, ULTRA, "2024-05-03"]]
-            data = {"schemaVersion": 1, "revision": 2, "sheets": [{"name": "车型汇总", "rows": rows}]}
-            published.write_text(json.dumps(data), encoding="utf-8")
-            with patch.dict("os.environ", {"PLANHUB_DATA_ROOT": str(root), "SHARED_DATA_ROOT": str(root / "shared")}):
-                signature = source_signature(shared)
-                copy_stable_inputs(shared, snapshot, signature)
-                published.unlink()
-                self.assertTrue((snapshot / PINNED_CAMPAIGN).exists())
-                result = generation_records(snapshot)
+            database.parent.mkdir(parents=True)
+            batch.mkdir()
+            # Neither the old workbook nor a stale derived snapshot is a default source.
+            self.make_source(shared)
+            database.with_name("published.json").write_text("stale", encoding="utf-8")
+            env = {"PLANHUB_DATA_ROOT": str(root), "SHARED_DATA_ROOT": str(root / "shared"),
+                   "VEHICLE_CONFIG_CAMPAIGN_SNAPSHOT": "", "VEHICLE_CONFIG_CAMPAIGN_DB": ""}
+            with patch.dict("os.environ", env):
+                with self.assertRaisesRegex(CampaignNotPublished, "请先.*发布"):
+                    source_signature(shared)
+                self.assertFalse(database.exists())
+                with closing(sqlite3.connect(database)) as db:
+                    db.executescript("""
+                        CREATE TABLE draft(id INTEGER PRIMARY KEY, published_revision INTEGER, data TEXT);
+                        CREATE TABLE publications(revision INTEGER PRIMARY KEY, data TEXT);
+                        INSERT INTO draft VALUES(1,0,'unpublished');
+                    """)
+                    with self.assertRaisesRegex(CampaignNotPublished, "请先.*发布"):
+                        generation_records(shared)
+                    headers = ["代际名", "二级代际名", "开始大定日期"]
+                    for revision, stage in [(1, ULTRA), (2, PRO)]:
+                        rows = [headers, [PARENT, stage, "2024-05-03"]]
+                        data = {"sheets": [{"name": "车型汇总", "rows": rows}]}
+                        db.execute("INSERT INTO publications VALUES(?,?)", (revision, json.dumps(data)))
+                    db.execute("UPDATE draft SET published_revision=1")
+                    db.commit()
+                    sig = source_signature(shared)
+                    copy_stable_inputs(shared, batch, sig)
+                    self.assertEqual(json.loads((batch / PINNED_CAMPAIGN).read_bytes())["revision"], 1)
+                    self.assertFalse((batch / "小订及首销数据整理.xlsx").exists())
+                    with campaign_batch(shared):
+                        db.execute("UPDATE draft SET published_revision=2")
+                        db.commit()
+                        self.assertEqual(source_signature(shared), sig)
+                        self.assertEqual(stage_name(generation_records(shared)[0]), ULTRA)
+                    next_sig = source_signature(shared)
+                    self.assertNotEqual(refresh_key(next_sig), refresh_key(sig))
+                    self.assertEqual(stage_name(generation_records(shared)[0]), PRO)
+                    db.execute("UPDATE draft SET data='new draft'")
+                    db.commit()
+                    self.assertEqual(source_signature(shared), next_sig)
+                    with self.assertRaisesRegex(RuntimeError, "已变化"):
+                        copy_stable_inputs(shared, batch, sig)
+                relocated = database.rename(root / "custom.sqlite3")
+                with patch.dict("os.environ", {"VEHICLE_CONFIG_CAMPAIGN_DB": str(relocated)}):
+                    self.assertEqual(stage_name(generation_records(shared)[0]), PRO)
+                result = generation_records(batch)
                 self.assertEqual(stage_name(result[0]), ULTRA)
                 self.assertEqual(result[0]["开始大定日期"], datetime(2024, 5, 3))
+                with patch.dict("os.environ", {"VEHICLE_CONFIG_CAMPAIGN_SNAPSHOT": str(batch / PINNED_CAMPAIGN)}):
+                    self.assertEqual(generation_records(shared), result)
 
     def test_primary_selector_and_exact_secondary_sheet_pairing(self):
         book = Workbook(); book.remove(book.active)
