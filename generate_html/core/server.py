@@ -10,6 +10,7 @@ import os
 import re
 import zlib
 from functools import lru_cache
+from itertools import islice
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 from urllib.parse import quote
@@ -132,8 +133,12 @@ def cell_text(value: Any) -> str:
 
 def matching_rows(rows: list[list[Any]], query: str) -> Iterator[list[Any]]:
     keyword = query.strip().lower()
-    for row in rows[1:]:
-        if not keyword or any(keyword in cell_text(value).lower() for value in row):
+    data_rows = islice(rows, 1, None)
+    if not keyword:
+        yield from data_rows
+        return
+    for row in data_rows:
+        if any(keyword in cell_text(value).lower() for value in row):
             yield row
 
 
@@ -345,11 +350,17 @@ def create_app(
         limit: int = Query(default=200, ge=1, le=500),
     ):
         rows = store.rows(dataset, file, sheet)
-        page_rows, total = [], 0
-        for row in matching_rows(rows, q):
-            if offset <= total < offset + limit:
-                page_rows.append(row)
-            total += 1
+        if q.strip():
+            page_rows, total = [], 0
+            end = offset + limit
+            for row in matching_rows(rows, q):
+                if offset <= total < end:
+                    page_rows.append(row)
+                total += 1
+        else:
+            total = max(0, len(rows) - 1)
+            start = offset + 1  # The header is returned separately on every page.
+            page_rows = rows[start:start + limit]
         return {
             "rows": rows[:1] + page_rows,
             "total": total,

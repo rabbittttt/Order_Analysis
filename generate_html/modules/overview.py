@@ -254,57 +254,48 @@ def _lock_trend(lock_data: dict, periods: list[str], subject: Subject, grain: st
     }
 
 
-def _period_metric_values(
-    order_data: dict,
-    lock_data: dict,
-    period: str,
-    order_chart: dict | None = None,
-    lock_chart: dict | None = None,
-    use_chart_totals: bool = False,
-) -> list[float]:
-    """大定/已交付取数据Sheet，留存大定/交车锁单按图表Sheet标题覆盖。"""
-    order_row = order_data[period]["metrics"]
-    lock_row = lock_data[period]["metrics"]
-    values = {
-        "大定": order_row.get("大定", 0),
-        "留存大定": _metric_value(order_row, "留存大定", "净大定"),
-        "交车锁单": lock_row.get("交车锁单", 0),
-        "已交付": lock_row.get("已交付", 0),
-    }
-    if use_chart_totals:
-        order_metric = "留存大定" if any(name in str((order_chart or {}).get("headline") or "") for name in ("留存大定", "净大定")) else _chart_metric(order_chart, ("大定",))
-        lock_metric = _chart_metric(lock_chart, ("交车锁单", "已交付"))
-        if order_metric and period in (totals := _chart_totals(order_chart)):
-            values[order_metric] = totals[period]
-        if lock_metric and period in (totals := _chart_totals(lock_chart)):
-            values[lock_metric] = totals[period]
-    return [values["大定"], values["留存大定"], values["交车锁单"], values["已交付"]]
-
-
-def _history_rows(
+def _metrics_by_period(
     order_data: dict,
     lock_data: dict,
     periods: list[str],
-    order_chart: dict | None = None,
-    lock_chart: dict | None = None,
-    use_chart_totals: bool = False,
-) -> list[list]:
+    order_chart: dict | None,
+    lock_chart: dict | None,
+) -> dict[str, dict]:
+    """每个明细周期计算一次经营指标，供 KPI 和环比历史表共用。"""
+    result = {}
+    for period in periods:
+        order_row = order_data[period]["metrics"]
+        lock_row = lock_data[period]["metrics"]
+        result[period] = {
+            "大定": order_row.get("大定", 0),
+            "留存大定": _metric_value(order_row, "留存大定", "净大定"),
+            "交车锁单": lock_row.get("交车锁单", 0),
+            "已交付": lock_row.get("已交付", 0),
+        }
+    order_metric = _chart_metric(order_chart, ("留存大定", "净大定", "大定"))
+    if order_metric == "净大定":
+        order_metric = "留存大定"
+    lock_metric = _chart_metric(lock_chart, ("交车锁单", "已交付"))
+    for metric, chart in ((order_metric, order_chart), (lock_metric, lock_chart)):
+        if metric:
+            for period, total in _chart_totals(chart).items():
+                if period in result:
+                    result[period][metric] = total
+    return result
+
+
+def _history_rows(metrics_by_period: dict[str, dict]) -> list[list]:
     """按当前主体的图表与数据Sheet生成明细周期经营表现行。"""
-    previous_values = None
+    previous_values = {}
     rows = []
-    for name in periods:
-        metric_values = _period_metric_values(
-            order_data, lock_data, name, order_chart, lock_chart, use_chart_totals,
-        )
-        row = [name]
-        for index, value in enumerate(metric_values):
+    for period, values in metrics_by_period.items():
+        row = [period]
+        for metric, value in values.items():
+            previous = previous_values.get(metric)
             row.append(value)
-            if previous_values is not None and previous_values[index]:
-                row.append((value - previous_values[index]) / abs(previous_values[index]))
-            else:
-                row.append("—")
+            row.append((value - previous) / abs(previous) if previous else "—")
         rows.append(row)
-        previous_values = metric_values
+        previous_values = values
     return rows
 
 
@@ -495,13 +486,13 @@ class OverviewModule:
             lock_source = SourceRef(lock_item.path.name, lock_sheet.title, "交车锁单与已交付")
             order_chart_source = SourceRef(order_chart[0].path.name, order_chart[1].title, "留存大定趋势") if order_chart else order_source
             lock_chart_source = SourceRef(lock_chart[0].path.name, lock_chart[1].title, "交车锁单趋势") if lock_chart else lock_source
+            lock_chart_data = lock_chart[2] if lock_chart else _lock_trend(lock_data, periods, subject, grain)
             grains_data[grain] = {
                 "periods": periods,
-                "order": order_data,
+                "metrics_by_period": _metrics_by_period(order_data, lock_data, periods, order_chart_data, lock_chart_data),
                 "lock": lock_data,
-                "order_chart": order_chart_data,
                 "order_trend": trend_data,
-                "lock_chart": lock_chart[2] if lock_chart else _lock_trend(lock_data, periods, subject, grain),
+                "lock_chart": lock_chart_data,
                 "order_chart_source": order_chart_source,
                 "lock_chart_source": lock_chart_source,
                 "order_source": order_source,
@@ -521,11 +512,7 @@ class OverviewModule:
             grain: {
                 "columns": HISTORY_COLUMNS,
                 "formats": HISTORY_FORMATS,
-                "rows": _history_rows(
-                    gd["order"], gd["lock"], gd["periods"],
-                    gd["order_chart"], gd["lock_chart"],
-                    True,
-                ),
+                "rows": _history_rows(gd["metrics_by_period"]),
             }
             for grain, gd in grains_data.items()
         }
@@ -533,22 +520,13 @@ class OverviewModule:
         views = {}
         for grain, gd in grains_data.items():
             periods = gd["periods"]
-            order_data = gd["order"]
             lock_data = gd["lock"]
             model_series = _group_model_series(store, grain) if subject.type == "group" else {}
             pages = {}
             lock_share_issues: list[tuple[str, str, tuple[str, ...]]] = []
             for period in periods:
-                order = order_data[period]
                 lock = lock_data[period]
-                values = list(zip(
-                    ("大定", "留存大定", "交车锁单", "已交付"),
-                    _period_metric_values(
-                        order_data, lock_data, period,
-                        gd["order_chart"], gd["lock_chart"],
-                        True,
-                    ),
-                ))
+                values = gd["metrics_by_period"][period].items()
                 channels = lock["structures"].get("门店类型", [])
                 channel_counts = [row.get("count") for row in channels]
                 channel_total = (

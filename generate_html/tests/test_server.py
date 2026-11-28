@@ -141,6 +141,23 @@ class OrderDashboardServerTests(unittest.TestCase):
         self.assertEqual(empty["rows"], [["车型", "数量"]])
         self.assertEqual(empty["total"], 0)
 
+    def test_raw_unfiltered_pages_use_row_offsets(self):
+        header = [["车型", "数量"]]
+        with patch("core.server.matching_rows", side_effect=AssertionError("unfiltered page scanned rows")):
+            for offset, expected in ((0, [["M7", 0]]), (2, [["M7 旗舰", 25]]), (4, []), (99, [])):
+                params = {"dataset": "first", "q": "　 ", "offset": offset, "limit": 1}
+                with self.subTest(offset=offset):
+                    result = self.client.get("/api/raw", params=params).json()
+                    self.assertEqual(result["rows"], header + expected)
+                    self.assertEqual(result["total"], 4)
+
+    def test_raw_empty_sheets_preserve_any_header(self):
+        for rows in ([], [["车型", "数量"]]):
+            with self.subTest(rows=rows), patch.object(SnapshotStore, "rows", return_value=rows):
+                result = self.client.get("/api/raw", params={"dataset": "first"}).json()
+                self.assertEqual(result["rows"], rows)
+                self.assertEqual(result["total"], 0)
+
     def test_csv_exports_every_match_and_quotes_cell_content(self):
         response = self.client.get("/api/export/csv", params={"dataset": "first", "q": "m7"})
         self.assertEqual(response.status_code, 200)

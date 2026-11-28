@@ -7,6 +7,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import TestCase, skipUnless
+from unittest.mock import MagicMock, patch
 
 from openpyxl import Workbook, load_workbook
 from main import raw_tables
@@ -46,6 +47,26 @@ class RawWorkbookSnapshotTests(TestCase):
             self.assertEqual(loaded['明细']['B1'].value, '=SUM(1,2)')
             self.assertEqual(loaded['并排区块']['E3'].number_format, '0.0%')
             self.assertEqual(loaded['隐藏辅助表'].sheet_state, 'hidden')
+
+    def test_failed_source_read_in_dynamic_snapshot_only_skips_the_download(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            book = Workbook()
+            self.addCleanup(book.close)
+            book.active.append(['名称', '数量'])
+            path = root / '原表.xlsx'
+            store = SimpleNamespace(items=[SimpleNamespace(path=path, workbook=book)])
+            reader = MagicMock()
+            reader.read.side_effect = [b'partial', OSError('source read failed')]
+            original_open = Path.open
+            def partial_source(target, *args, **kwargs):
+                return reader if target == path else original_open(target, *args, **kwargs)
+            with patch.object(Path, 'open', partial_source), self.assertLogs('order_analysis', level='WARNING'):
+                files, blocks = raw_tables(store, snapshot=root)
+            self.assertNotIn('workbook_key', files[0])
+            self.assertEqual(blocks, {})
+            self.assertTrue((root / 'raw/0_0.json.gz').exists())
+            self.assertFalse((root / 'workbooks/0.xlsx').exists())
 
     def test_unreadable_source_does_not_break_the_raw_table(self):
         with TemporaryDirectory() as folder:

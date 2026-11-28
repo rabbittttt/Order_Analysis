@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import re
+import uuid
 from time import perf_counter
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -25,9 +26,13 @@ def _write_text_atomic(output_file: Path, text: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def gzip_text(text: str) -> bytes:
+    return gzip.compress(text.encode("utf-8"), compresslevel=6, mtime=0)
+
+
 def b64gzip(text: str) -> str:
     """压缩 JSON 文本为 base64,供前端 DecompressionStream 解压。"""
-    return base64.b64encode(gzip.compress(text.encode("utf-8"), compresslevel=6, mtime=0)).decode("ascii")
+    return base64.b64encode(gzip_text(text)).decode("ascii")
 
 
 def pack_dashboard(board: dict[str, Any]) -> dict[str, Any]:
@@ -136,14 +141,23 @@ def render_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: 
     )
 
 
-def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: Path, *, runtime_dir: Path | None = None) -> None:
+def create_dynamic_snapshot(runtime: Path) -> Path:
+    # The HTTP service exposes a batch only after its catalog is committed.
+    # No populated-directory rename is needed on Windows.
+    snapshot = runtime / "datasets" / uuid.uuid4().hex
+    snapshot.parent.mkdir(parents=True, exist_ok=True)
+    snapshot.mkdir()
+    return snapshot
+
+
+def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, output_file: Path, *,
+                             runtime_dir: Path | None = None, snapshot: Path | None = None) -> None:
     """Publish an immutable dataset, then atomically switch the current pointer.
 
     Runtime is private: only the HTTP service exposes selected data and assets.
     Older datasets remain available to pages which already pinned their version.
     """
     import hashlib
-    import uuid
     from urllib.parse import urlencode
 
     runtime = runtime_dir or output_file.parent / "runtime"
@@ -154,23 +168,17 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
                         and entry.is_file() and output_file.read_bytes() == entry.read_bytes())
     assets = runtime / "assets"
     assets.mkdir(parents=True, exist_ok=True)
-    dataset_id = uuid.uuid4().hex
-    datasets = runtime / "datasets"
-    datasets.mkdir(exist_ok=True)
-    # A unique directory remains unpublished until its catalog and current
-    # pointer are committed. Windows can deny renaming a populated directory
-    # even after every file has been closed, so publish without that operation.
-    snapshot = datasets / dataset_id
-    snapshot.mkdir()
+    snapshot = snapshot if snapshot is not None else create_dynamic_snapshot(runtime)
+    dataset_id = snapshot.name
 
     def json_text(value):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
     for directory in ("boards", "raw", "workbooks", "charts"):
-        (snapshot / directory).mkdir()
+        (snapshot / directory).mkdir(exist_ok=True)
     for key, board in manifest.get("dashboards", {}).items():
         name = hashlib.sha256(key.encode("utf-8")).hexdigest() + ".json.gz"
-        (snapshot / "boards" / name).write_bytes(gzip.compress(json_text(pack_dashboard(board)).encode("utf-8"), mtime=0))
+        (snapshot / "boards" / name).write_bytes(gzip_text(json_text(pack_dashboard(board))))
     for key, value in manifest.get("raw_blocks", {}).items():
         file_id, sheet_id = key.split("|")
         if not file_id.isdigit() or (sheet_id != "xlsx" and not sheet_id.isdigit()):
@@ -207,7 +215,6 @@ def render_dynamic_dashboard(manifest: dict[str, Any], template_dir: Path, outpu
 def render_dynamic_shell(template_dir: Path, runtime: Path) -> str:
     """Prepare the small web shell even before the first Excel batch is ready."""
     import hashlib
-    import uuid
     assets = runtime / "assets"
     assets.mkdir(parents=True, exist_ok=True)
     entry = runtime / "index.html"

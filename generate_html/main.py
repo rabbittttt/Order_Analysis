@@ -21,7 +21,8 @@ from core.data_paths import PROJECT_ROOT, orders_input_directory, dynamic_log_di
 from core.discovery import catalog_subjects, discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
 from core.model_identity import STAGE_SOURCE_NAME, campaign_batch
-from core.renderer import b64gzip, render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard
+from core.renderer import (b64gzip, create_dynamic_snapshot, gzip_text,
+                           render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard)
 from core.validation import validate_manifest
 from modules.registry import MODULES
 
@@ -153,10 +154,36 @@ def split_parallel_blocks(name: str, rows: list[list]) -> list[dict[str, Any]]:
     return blocks
 
 
-def raw_tables(store: WorkbookStore, *, additional_items=()) -> tuple[list[dict[str, Any]], dict[str, str]]:
+def copy_raw_workbook(path: Path, target: Path) -> bool:
+    """Skip a missing/unreadable original, but fail publication on any destination error."""
+    try:
+        source = path.open("rb")
+    except OSError as exc:
+        LOGGER.warning("底表整表导出不可用: %s | %s", path.name, exc)
+        return False
+    with source, target.open("wb") as output:
+        while True:
+            try:
+                chunk = source.read(1024 * 1024)
+            except OSError as exc:
+                LOGGER.warning("底表整表导出不可用: %s | %s", path.name, exc)
+                break
+            if not chunk:
+                return True
+            output.write(chunk)
+    target.unlink()
+    return False
+
+
+def raw_tables(
+    store: WorkbookStore, *, additional_items=(), snapshot: Path | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """按需加载的底表行块及原始 XLSX 快照；下载快照保留全部 Sheet 和格式。"""
     files = []
     blocks: dict[str, str] = {}
+    if snapshot is not None:
+        (snapshot / "raw").mkdir()
+        (snapshot / "workbooks").mkdir()
     for file_index, item in enumerate((*store.items, *additional_items)):
         sheets = []
         for sheet in item.workbook.worksheets:
@@ -190,7 +217,12 @@ def raw_tables(store: WorkbookStore, *, additional_items=()) -> tuple[list[dict[
                 ):
                     block_rows = block_rows[1:]
                 key = f"{file_index}|{len(sheets)}"
-                blocks[key] = b64gzip(json.dumps({"rows": block_rows}, ensure_ascii=False, separators=(",", ":")))
+                payload = json.dumps({"rows": block_rows}, ensure_ascii=False, separators=(",", ":"))
+                if snapshot is None:
+                    blocks[key] = b64gzip(payload)
+                else:
+                    target = snapshot / "raw" / f"{file_index}_{len(sheets)}.json.gz"
+                    target.write_bytes(gzip_text(payload))
                 sheets.append({
                     "name": block["name"],
                     "total_rows": len(block_rows),
@@ -198,27 +230,35 @@ def raw_tables(store: WorkbookStore, *, additional_items=()) -> tuple[list[dict[
                     "source_sheet": sheet.title,
                 })
         file_info = {"name": item.path.name, "sheets": sheets}
-        # Embed the original file once, not a CSV reconstruction of the split
-        # display blocks. This also works when the HTML is copied elsewhere or
-        # opened offline, and preserves formulas, merged cells and hidden tabs.
-        try:
-            workbook_bytes = item.path.read_bytes()
-        except OSError as exc:
-            LOGGER.warning("底表整表导出不可用: %s | %s", item.path.name, exc)
+        workbook_key = f"{file_index}|xlsx"
+        if snapshot is not None:
+            # Keep the original bytes, including formulas, formatting and hidden sheets.
+            if copy_raw_workbook(item.path, snapshot / "workbooks" / f"{file_index}.xlsx"):
+                file_info["workbook_key"] = workbook_key
         else:
-            workbook_key = f"{file_index}|xlsx"
-            blocks[workbook_key] = base64.b64encode(workbook_bytes).decode("ascii")
-            file_info["workbook_key"] = workbook_key
+            try:
+                workbook_bytes = item.path.read_bytes()
+            except OSError as exc:
+                LOGGER.warning("底表整表导出不可用: %s | %s", item.path.name, exc)
+            else:
+                blocks[workbook_key] = base64.b64encode(workbook_bytes).decode("ascii")
+                file_info["workbook_key"] = workbook_key
         files.append(file_info)
     return files, blocks
 
 
-def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None, source_signature: dict | None = None, static: bool = False) -> tuple[dict[str, Any], list[str]]:
+def build(input_dir: Path, output_file: Path, *, runtime_dir: Path | None = None, source_signature: dict | None = None,
+          static: bool = False, publish_only: bool = False) -> tuple[dict[str, Any], list[str]]:
+    """Publish a dashboard, optionally skipping the reusable Excel cache and embedded return payload.
+
+    Static exports and configured JSON manifests always retain their embedded raw blocks.
+    """
     with campaign_batch(input_dir):
-        return _build(input_dir, output_file, runtime_dir=runtime_dir, source_signature=source_signature, static=static)
+        return _build(input_dir, output_file, runtime_dir=runtime_dir, source_signature=source_signature,
+                      static=static, publish_only=publish_only)
 
 
-def _build(input_dir, output_file, *, runtime_dir, source_signature, static):
+def _build(input_dir, output_file, *, runtime_dir, source_signature, static, publish_only):
     runtime_dir = runtime_dir or output_file.parent / "runtime"
     build_started = perf_counter()
     LOGGER.info("开始生成订单分析看板")
@@ -234,7 +274,8 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static):
         # A manual dynamic publication is also the baseline for the next batch.
         from core.sync import source_signature as input_signature
         source_signature = input_signature(input_dir)
-    store = WorkbookStore(input_dir, cache_dir=output_file.parent / ".cache" / "excel")
+    cache_dir = None if publish_only else output_file.parent / ".cache" / "excel"
+    store = WorkbookStore(input_dir, cache_dir=cache_dir)
     stage_started = perf_counter()
     store.load(exclude_names={STAGE_SOURCE_NAME}, raw_only_names={"鸿蒙智行销量数据汇总.xlsx"},
                data_only_view=config.get("chart_render_mode") == "generated")
@@ -246,6 +287,7 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static):
         store.close()
         details = "；".join(store.load_errors) if store.load_errors else "目录中没有xlsx文件"
         raise RuntimeError(f"没有成功读取任何Excel，无法生成看板：{details}")
+    snapshot = None
     try:
         stage_started = perf_counter()
         subjects = discover_subjects(store)
@@ -297,7 +339,9 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static):
             LOGGER.info("多文件来源：%d类，共%d个文件匹配项参与合并；详细文件名可使用 --debug 查看",
                         len(store.multi_source_groups), sum(store.multi_source_groups.values()))
         stage_started = perf_counter()
-        raw_files, raw_blocks = raw_tables(store, additional_items=store.raw_only_items)
+        if not static and publish_only and manifest_mode == "off":
+            snapshot = create_dynamic_snapshot(runtime_dir)
+        raw_files, raw_blocks = raw_tables(store, additional_items=store.raw_only_items, snapshot=snapshot)
         raw_seconds = perf_counter() - stage_started
         manifest = {
             "meta": {
@@ -325,6 +369,9 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static):
             manifest["source_signature"] = source_signature
         if static:
             render_static_dashboard(manifest, ROOT / "templates", output_file)
+        elif snapshot is not None:
+            render_dashboard(manifest, ROOT / "templates", output_file, runtime_dir=runtime_dir, snapshot=snapshot)
+            snapshot = None
         elif runtime_dir == output_file.parent / "runtime":
             render_dashboard(manifest, ROOT / "templates", output_file)
         else:
@@ -384,6 +431,10 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static):
         return manifest, warnings
     finally:
         store.close()
+        # Only discard our new, unpublished batch. After catalog creation a reader
+        # may already hold its ID, including if the pointer switch was interrupted.
+        if snapshot is not None and not (snapshot / "catalog.json").exists():
+            shutil.rmtree(snapshot, ignore_errors=True)
 
 
 def parse_args() -> argparse.Namespace:
@@ -488,7 +539,7 @@ def main() -> int:
                 if static_mode:
                     manifest, warnings = build(args.input, args.output, static=True)
                 else:
-                    manifest, warnings = build(args.input, args.output)
+                    manifest, warnings = build(args.input, args.output, publish_only=True)
             finally:
                 cleanup_input_cache(args.output.parent)
     except Exception:

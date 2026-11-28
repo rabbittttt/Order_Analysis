@@ -85,6 +85,42 @@ class OrderProjectIsolationTests(TestCase):
             for name, sheet in auxiliaries.items():
                 self.assertEqual((root / name).read_bytes(), original_bytes[name])
 
+    def test_dynamic_raw_blocks_stream_to_unpublished_snapshot(self):
+        with TemporaryDirectory() as folder, ExitStack() as stack:
+            root = Path(folder)
+            source = root / 'in'
+            source.mkdir()
+            path = source / '订单分析.xlsx'
+            self.write_book(path, '鸿蒙智行')
+            output = root / 'out' / '订单.html'
+            config = dict(title='测试', chart_render_mode='generated',
+                          build_manifest_mode='off', module_order=['raw'])
+            stack.enter_context(patch.object(generator, 'load_config', return_value=config))
+            stack.enter_context(patch.object(generator, 'MODULES', []))
+            stack.enter_context(patch('core.discovery.generation_records', return_value=[]))
+            stack.enter_context(patch.object(generator, 'b64gzip', side_effect=AssertionError('embedded raw data')))
+            manifest, _ = generator.build(source, output, publish_only=True)
+            self.assertEqual(manifest['raw_blocks'], {})
+            self.assertFalse((output.parent / '.cache' / 'excel').exists())
+            runtime = output.parent / 'runtime'
+            pointer = (runtime / 'current.json').read_bytes()
+            dataset = runtime / 'datasets' / json.loads(pointer)['dataset_id']
+            catalog = json.loads((dataset / 'catalog.json').read_text(encoding='utf-8'))
+            self.assertEqual(catalog['raw_files'], manifest['raw_files'])
+            self.assertEqual(json.loads(gzip.decompress((dataset / 'raw/0_0.json.gz').read_bytes())),
+                             {'rows': [['指标', '数量'], ['留存大定', '3']]})
+            self.assertEqual((dataset / 'workbooks/0.xlsx').read_bytes(), path.read_bytes())
+            original_open = Path.open
+            def reject_download_write(target, *args, **kwargs):
+                if target.parent.name == 'workbooks':
+                    raise OSError('disk full')
+                return original_open(target, *args, **kwargs)
+            with patch.object(Path, 'open', reject_download_write):
+                with self.assertRaisesRegex(OSError, 'disk full'):
+                    generator.build(source, output, publish_only=True)
+            self.assertEqual((runtime / 'current.json').read_bytes(), pointer)
+            self.assertEqual(list((runtime / 'datasets').iterdir()), [dataset])
+
     def test_auxiliary_workbooks_alone_do_not_count_as_analysis_inputs(self):
         with TemporaryDirectory() as folder, ExitStack() as stack:
             root = Path(folder)

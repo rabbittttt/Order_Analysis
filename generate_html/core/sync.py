@@ -172,7 +172,7 @@ def run_worker(source: Path, runtime: Path, expected: dict) -> None:
             generator.configure_runtime(runtime.parent, False, dynamic=True)
             try:
                 generator.build(snapshot, runtime.parent / "鸿蒙智行订单分析汇总.html",
-                                runtime_dir=runtime, source_signature=expected)
+                                runtime_dir=runtime, source_signature=expected, publish_only=True)
             finally:
                 generator.cleanup_input_cache(runtime.parent)
 

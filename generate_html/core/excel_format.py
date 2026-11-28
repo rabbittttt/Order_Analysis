@@ -1,6 +1,7 @@
 """Display source-cell text, dates and number formats for order workbooks."""
 import re
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Any
 
 from openpyxl.styles.numbers import is_date_format
@@ -41,6 +42,21 @@ def _format_date(value: date | datetime, number_format: str) -> str:
     return result
 
 
+@lru_cache(maxsize=512)
+def _numeric_style(number_format: str) -> tuple[str, str, str] | None:
+    """Resolve the prefix, Python format spec and suffix once per Excel format."""
+    fmt = clean_text(number_format or "General")
+    if fmt.lower() == "general" or fmt == "@":
+        return None
+    if is_date_format(fmt):
+        return "", "", ""
+    if "%" in fmt:
+        return "", f",.{_format_precision(fmt, '%')}f", "%"
+    grouping = "," if "," in fmt.split(";", 1)[0] else ""
+    currency = next((symbol for symbol in ("￥", "¥", "$", "€", "£") if symbol in fmt), "")
+    return currency, f"{grouping}.{_format_precision(fmt)}f", ""
+
+
 def format_excel_value(value: Any, number_format: str = "General") -> str:
     """Render common Excel formats without assuming fixed precision or date syntax."""
     if value is None:
@@ -51,19 +67,12 @@ def format_excel_value(value: Any, number_format: str = "General") -> str:
         return "TRUE" if value else "FALSE"
     if not isinstance(value, (int, float)):
         return clean_text(value)
-    fmt = clean_text(number_format or "General")
-    if fmt.lower() == "general" or fmt == "@":
+    style = _numeric_style(number_format)
+    if style is None:
         return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
-    if is_date_format(fmt):
-        return str(value)
-    if "%" in fmt:
-        precision = _format_precision(fmt, "%")
-        return f"{value * 100:,.{precision}f}%"
-    precision = _format_precision(fmt)
-    grouping = "," in fmt.split(";", 1)[0]
-    rendered = f"{value:,.{precision}f}" if grouping else f"{value:.{precision}f}"
-    currency = next((symbol for symbol in ("￥", "¥", "$", "€", "£") if symbol in fmt), "")
-    return f"{currency}{rendered}"
+    prefix, spec, suffix = style
+    display_value = value * 100 if suffix == "%" else value
+    return f"{prefix}{display_value:{spec}}{suffix}"
 
 
 def format_excel_cell(cell: Any) -> str:

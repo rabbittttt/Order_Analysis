@@ -308,7 +308,7 @@ def load_data_workbook(path: Path, cache_dir: Path | None = None):
             write(["sheet", sheet.title, sheet.sheet_state])
             # Iterate stored cells, never materialize a huge styled blank grid.
             for row_number, cells in groupby(raw._cells.values(), key=lambda cell: cell.row):
-                entries = []
+                entries = [] if writer is not None else None
                 for cell in cells:
                     column, value = cell.column, cell.value
                     if value is None:
@@ -316,6 +316,8 @@ def load_data_workbook(path: Path, cache_dir: Path | None = None):
                     dest = sheet.cell(row_number, column, value)
                     dest.data_type = cell.data_type
                     dest.number_format = cell.number_format
+                    if entries is None:
+                        continue
                     kind = ""
                     if isinstance(value, datetime):
                         value, kind = value.isoformat(), "datetime"
