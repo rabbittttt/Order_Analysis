@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import csv
-from contextlib import asynccontextmanager
+from contextlib import ExitStack, asynccontextmanager
 import gzip
 import hashlib
 import io
@@ -12,6 +12,8 @@ import zlib
 from functools import lru_cache
 from itertools import islice
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from threading import Lock
 from typing import Any, Iterator, Sequence
 from urllib.parse import quote
 
@@ -22,12 +24,17 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from core.sync import BATCH_WORKBOOKS, CHECK_SECONDS, STABLE_SECONDS
 from core.revision import source_commit
 from core.annotations import create_annotations_router
+from core.config import apply_display_config, load_config
 
 
 DATASET_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
 ROOT = Path(__file__).resolve().parents[1]
 SERVICE_COMMIT = source_commit(ROOT)
-SERVICE_SOURCE_FILES = ("core/revision.py", "server.py", "core/server.py", "core/annotations.py", "core/sync.py", "core/renderer.py", "core/data_paths.py", "main.py", "config.json", "requirements.txt")
+SERVICE_SOURCE_FILES = (
+    "server.py", "main.py", "requirements.txt", "core/revision.py", "core/server.py",
+    "core/annotations.py", "core/sync.py", "core/config.py", "core/renderer.py",
+    "core/web_shell.py", "core/data_paths.py",
+)
 # Keep the running process identity fixed even when a newer release is written.
 SERVICE_FINGERPRINT = hashlib.sha256(
     b"".join((ROOT / name).read_bytes() for name in SERVICE_SOURCE_FILES)
@@ -91,9 +98,12 @@ class SnapshotStore:
         return self._catalog(dataset or self.current_id())
 
     def dashboard_file(self, dataset: str, subject: str, module: str) -> Path:
-        subjects = self.catalog(dataset).get("subjects", [])
+        catalog = self.catalog(dataset)
+        subjects = catalog.get("subjects", [])
         selected = next((item for item in subjects if item.get("id") == subject), None)
-        if selected is None or module not in selected.get("modules", []):
+        # A module hidden by the batch's original menu can still have a published board.
+        if selected is None or (module not in selected.get("modules", [])
+                                and module in catalog.get("config", {}).get("module_order", [])):
             raise HTTPException(404, "当前主体没有该看板")
         key = hashlib.sha256((subject + "|" + module).encode("utf-8")).hexdigest()
         return self.dataset_file(dataset, "boards", key + ".json.gz")
@@ -205,18 +215,35 @@ def create_app(
     from core.sync import AutoSync
     sync = AutoSync(Path(input_dir), store.data_dir, check_seconds, stable_seconds) if input_dir is not None else None
 
+    shell_lock = Lock()
+    shell_revision = None
+
+    def refresh_source_shell():
+        nonlocal shell_revision
+        if web_dir is not None:
+            return
+        templates = ROOT / "templates"
+        with shell_lock:
+            # Checked when entering the page, independently of Excel polling.
+            revision = tuple((path.name, path.stat().st_mtime_ns) for path in sorted(templates.iterdir()) if path.is_file())
+            if revision != shell_revision:
+                from core.web_shell import render_dynamic_shell
+                render_dynamic_shell(templates, web_root)
+                shell_revision = revision
+
     @asynccontextmanager
     async def lifespan(app):
-        if sync:
-            from core.renderer import render_dynamic_shell
-            if web_dir is None:
-                render_dynamic_shell(ROOT / "templates", store.data_dir)
-            sync.start()
-        try:
-            yield
-        finally:
+        nonlocal web_root, shell_revision
+        with ExitStack() as stack:
+            if web_dir is None and sync is None:
+                # --no-sync can serve a read-only dataset directory.
+                web_root = Path(stack.enter_context(TemporaryDirectory(prefix="order-web-")))
+            shell_revision = None
+            refresh_source_shell()
             if sync:
-                sync.stop()
+                sync.start()
+                stack.callback(sync.stop)
+            yield
 
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.sync = sync
@@ -295,7 +322,19 @@ def create_app(
 
     @app.api_route("/api/catalog", methods=["GET", "HEAD"])
     def catalog():
-        return JSONResponse(store.catalog(), headers={"Cache-Control": "no-store"})
+        batch = store.catalog()
+
+        def has_dashboard(subject: str, module: str) -> bool:
+            try:
+                store.dashboard_file(batch["dataset_id"], subject, module)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                return False
+            return True
+
+        display = apply_display_config(batch, load_config(ROOT / "config.json"), has_dashboard=has_dashboard)
+        return JSONResponse(display, headers={"Cache-Control": "no-store"})
 
     @app.api_route("/api/dashboard", methods=["GET", "HEAD"])
     def dashboard(
@@ -406,6 +445,7 @@ def create_app(
     @app.api_route("/index.html", methods=["GET", "HEAD"])
     @app.api_route("/" + LEGACY_ENTRY, methods=["GET", "HEAD"])
     def index():
+        refresh_source_shell()
         return FileResponse(
             contained_file(web_root, "index.html"),
             media_type="text/html",

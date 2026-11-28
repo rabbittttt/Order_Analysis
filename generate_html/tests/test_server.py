@@ -72,6 +72,33 @@ class OrderDashboardServerTests(unittest.TestCase):
         self.assertEqual(health["service_fingerprint"], SERVICE_FINGERPRINT)
         self.assertNotIn(str(self.data), json.dumps(health))
 
+    def test_live_display_config_reuses_published_boards_and_generation_time(self):
+        folder = self.data / "datasets" / "first"
+        catalog_file = folder / "catalog.json"
+        stored = json.loads(catalog_file.read_text(encoding="utf-8"))
+        stored["meta"] = {"title": "原标题", "generated_at": "2026-11-27T10:20:30"}
+        stored["config"] = {"module_order": ["overview", "raw"], "chart_render_mode": "original"}
+        stored["subjects"][0]["modules"].append("raw")
+        catalog_file.write_text(json.dumps(stored), encoding="utf-8")
+        original_bytes = catalog_file.read_bytes()
+        restored_module = hashlib.sha256(b"group|sku").hexdigest()
+        (folder / "boards" / (restored_module + ".json.gz")).write_bytes(gzip.compress(b'{"marker":"sku"}'))
+
+        config = {"title": "新标题", "module_order": ["sku", "overview", "raw"],
+                  "module_labels": {"overview": "总览"}, "grain_labels": {"day": "按日"},
+                  "chart_render_mode": "generated"}
+        with patch("core.server.load_config", return_value=config):
+            result = self.client.get("/api/catalog").json()
+        self.assertEqual(result["dataset_id"], "first")
+        self.assertEqual(result["meta"], {**stored["meta"], "title": "新标题"})
+        self.assertEqual(result["config"], {**config, "chart_render_mode": "original"})
+        self.assertEqual(result["subjects"][0]["modules"], ["sku", "overview", "raw"])
+        self.assertEqual(result["subjects"][1]["modules"], ["overview"])
+        params = {"dataset": "first", "subject": "group", "module": "sku"}
+        self.assertEqual(self.client.get("/api/dashboard", params=params).json(), {"marker": "sku"})
+        self.assertEqual(catalog_file.read_bytes(), original_bytes)
+        self.assertEqual(self.app.state.snapshots.catalog()["meta"], stored["meta"])
+
     def test_running_service_fingerprint_does_not_reread_source(self):
         with patch.object(Path, "read_bytes", side_effect=AssertionError("health must not rehash source")):
             response = self.client.get("/health")
@@ -194,6 +221,34 @@ class OrderDashboardServerTests(unittest.TestCase):
         ):
             self.assertEqual(self.client.get("/api/raw", params=params).status_code, 422)
         self.assertEqual(self.client.get("/assets/%2e%2e/current.json").status_code, 404)
+
+    def test_source_page_updates_css_without_publishing_a_new_dataset(self):
+        import shutil
+        from core.server import ROOT
+        source = self.root / "source"
+        templates = source / "templates"
+        shutil.copytree(ROOT / "templates", templates)
+        snapshot = self.data / "datasets" / "first" / "catalog.json"
+        catalog = snapshot.read_bytes()
+        pointer = (self.data / "current.json").read_bytes()
+        # No-sync mode must keep serving data from its read-only location.
+        with patch("core.server.ROOT", source):
+            app = create_app(self.data, self.state)
+            with TestClient(app, base_url="http://localhost") as client:
+                first = client.get("/")
+                self.assertEqual(first.status_code, 200)
+                css = templates / "dashboard.css"
+                css.write_bytes(css.read_bytes() + b"\n/* updated without importing Excel */")
+                second = client.get("/index.html")
+                self.assertEqual(second.status_code, 200)
+                self.assertNotEqual(first.content, second.content)
+                asset_name = hashlib.sha256(css.read_bytes()).hexdigest() + ".css"
+                self.assertIn(asset_name, second.text)
+                self.assertEqual(client.get("/assets/" + asset_name).content, css.read_bytes())
+                self.assertEqual(client.get("/health").json()["dataset_id"], "first")
+        self.assertFalse((self.data / "assets").exists())
+        self.assertEqual(snapshot.read_bytes(), catalog)
+        self.assertEqual((self.data / "current.json").read_bytes(), pointer)
 
     def test_frontend_aliases_assets_head_and_iframe_headers(self):
         for route in ("/", "/index.html", "/鸿蒙智行订单分析汇总.html"):

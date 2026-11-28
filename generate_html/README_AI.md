@@ -8,7 +8,7 @@
 2. `modules/`：一个业务标签一个文件，看板口径和排布都在这里。
 3. `templates/`：页面外壳、样式和通用组件渲染。
 
-`main.py` 只编排订单分析生成流程，`config.json` 放标签顺序和显示名称。`main.py --static` 复用同一业务计算，调用离线渲染器生成单文件 HTML；默认动态模式及自动同步不变。静态生成不得发布或覆盖 runtime 的入口和当前批次。静态网页默认写入订单项目的 `output_file/`，动态批次写入工作台数据的 `database/orderiq/runtime/`。调整输出内容时修改生成器或模板。
+`main.py` 只编排订单分析生成流程，`config.json` 放标签顺序和显示名称。`main.py --static` 复用同一业务计算，调用离线渲染器生成单文件 HTML；默认动态模式及自动同步不变。静态生成不得发布或覆盖 runtime 的入口和当前批次。静态网页默认写入订单项目的 `output_file/`，动态批次写入工作台数据的 `database/orderiq/runtime/`。修改界面时，用 main.py --ui-only（离线版加 --static）重新渲染现有数据。网页和资源拼装逻辑放在 core/web_shell.py，业务快照打包与发布放在 core/renderer.py。
 
 ## 常见修改
 

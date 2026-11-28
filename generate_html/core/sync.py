@@ -13,6 +13,7 @@ import threading
 import time
 from pathlib import Path
 
+from .config import DISPLAY_CONFIG_KEYS, load_config
 from .data_paths import dynamic_log_directory
 from .model_identity import PINNED_CAMPAIGN, STAGE_SOURCE_NAME, CampaignNotPublished, campaign_edition
 
@@ -66,18 +67,46 @@ class BuildLock:
             self.stream = None
 
 
+# Service and web-shell changes can reuse the current batch. For the config
+# parser, hash the resulting data rules rather than its presentation helpers.
+_NON_DATA_MODULES = {
+    "core/annotations.py", "core/config.py", "core/revision.py",
+    "core/server.py", "core/sync.py", "core/web_shell.py",
+}
+
+
 def calculation_revision(root: Path = ROOT) -> str:
-    """Hash only shipped calculation code, rules and templates, never runtime data."""
-    files = [root / name for name in ("main.py", "server.py", "config.json", "requirements.txt")]
-    for directory in ("core", "modules", "templates"):
+    """Identify the code and rules that produce an immutable dataset."""
+    config = load_config(root / "config.json")
+    rules = {key: value for key, value in config.items() if key not in DISPLAY_CONFIG_KEYS}
+    digest = hashlib.sha256(json.dumps(rules, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    files = [root / "main.py", root / "requirements.txt"]
+    for directory in ("core", "modules"):
         files.extend(path for path in (root / directory).rglob("*")
                      if path.is_file() and "__pycache__" not in path.parts
-                     and path.suffix not in (".pyc", ".pyo"))
-    digest = hashlib.sha256()
+                     and path.suffix not in (".pyc", ".pyo")
+                     and path.relative_to(root).as_posix() not in _NON_DATA_MODULES)
     for path in sorted(files, key=lambda item: item.relative_to(root).as_posix()):
         digest.update(path.relative_to(root).as_posix().encode("utf-8") + b"\0")
-        digest.update(hashlib.sha256(path.read_bytes()).digest())
-    return digest.hexdigest()
+        content = path.read_bytes()
+        if path.suffix in {".py", ".txt"}:
+            content = content.replace(b"\r\n", b"\n")
+        digest.update(hashlib.sha256(content).digest())
+    return "data-v2:" + digest.hexdigest()
+
+
+# The last release with a combined data/UI hash (61e19be) produced the same
+# business payload as the first data-v2 release. These exact legacy digests
+# cover LF, CRLF and the mixed Windows source checkout. Never map an unknown
+# legacy release or derive the destination hash from the currently running code.
+def compatible_signature(signature):
+    if signature and signature.get("calculation_revision") in {
+        "fb4ce718fb91260951d4888f42e559cbb9ce86d5e7ac4cbfa81fb08129c7da74",
+        "2af219c2c7a428751a25087ca021b38dce349e34d8718002f45397b00d524fc3",
+        "e8fca40d73623efd5dcb5d4ac530d8f3cb1b2ed0aaa40696227156559d669abc",
+    }:
+        return {**signature, "calculation_revision": "data-v2:a42880c28cc0cb737ade5eacf88c0449d871ef54a20da55b17064ebeb1269d64"}
+    return signature
 
 
 def source_signature(source: Path) -> dict:
@@ -101,21 +130,28 @@ def source_signature(source: Path) -> dict:
     return signature
 
 
-def published_signature(runtime: Path) -> dict | None:
+def published_catalog(runtime: Path) -> dict | None:
     try:
         dataset = json.loads((runtime / "current.json").read_text(encoding="utf-8"))["dataset_id"]
         # This is internal state, but still contain its lookup.
         catalog = (runtime / "datasets" / dataset / "catalog.json").resolve()
         if not catalog.is_relative_to((runtime / "datasets").resolve()):
             return None
-        return json.loads(catalog.read_text(encoding="utf-8")).get("source_signature")
+        data = json.loads(catalog.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) and data.get("dataset_id", dataset) == dataset else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
+
+
+def published_signature(runtime: Path) -> dict | None:
+    catalog = published_catalog(runtime)
+    return catalog.get("source_signature") if catalog is not None else None
 
 
 def refresh_key(signature):
     if signature is None:
         return None
+    signature = compatible_signature(signature)
     # Compare mtimes by filename, including catalogs published by older services.
     files = sorted((row[0], row[2]) for row in signature["files"] if row[0] in BATCH_WORKBOOKS)
     return signature["directory"], files, signature.get("calculation_revision"), signature.get("campaign")

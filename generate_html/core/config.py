@@ -1,8 +1,40 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+
+DISPLAY_CONFIG_KEYS = frozenset({"title", "module_order", "module_labels", "grain_labels"})
+
+
+def apply_display_config(
+    catalog: dict, config: dict, *, has_dashboard: Callable[[str, str], bool] | None = None,
+) -> dict:
+    """Use the current UI settings while keeping this batch's data and generation time."""
+    original = catalog.get("config", {})
+    display = {key: config[key] for key in DISPLAY_CONFIG_KEYS if key in config}
+    result = {**catalog, "config": {**original, **display}}
+    if "title" in display:
+        result["meta"] = {**catalog.get("meta", {}), "title": display["title"]}
+    order = display.get("module_order")
+    if order is None or order == original.get("module_order"):
+        return result
+
+    # Original catalogs only listed boards visible in the navigation when published.
+    # If a previously hidden module is restored, check for its existing payload.
+    restored = set(order).difference(original.get("module_order", []), {"raw"})
+    subjects = []
+    for subject in catalog.get("subjects", []):
+        available = set(subject.get("modules", []))
+        if has_dashboard:
+            available.update(module for module in restored - available if has_dashboard(subject["id"], module))
+        ordered = [module for module in order if module in available]
+        if "raw" in available and "raw" not in order:
+            ordered.append("raw")
+        subjects.append({**subject, "modules": ordered})
+    return {**result, "subjects": subjects}
 
 
 def strip_json_comments(text: str) -> str:

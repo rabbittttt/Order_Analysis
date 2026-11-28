@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import logging
 import os
 import shutil
 import sys
 import webbrowser
+import zlib
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +18,7 @@ from typing import Any
 
 from core.sync import CHECK_SECONDS, STABLE_SECONDS
 from core.components import add_kpi_comparisons
-from core.config import load_config
+from core.config import apply_display_config, load_config
 from core.data_paths import PROJECT_ROOT, orders_input_directory, dynamic_log_directory
 from core.discovery import catalog_subjects, discover_subjects, set_capabilities
 from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_conflict_diagnostics
@@ -24,6 +26,7 @@ from core.model_identity import STAGE_SOURCE_NAME, campaign_batch
 from core.renderer import (b64gzip, create_dynamic_snapshot, gzip_text,
                            render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard)
 from core.validation import log_import_issues, validate_manifest
+from core.web_shell import read_static_payloads, render_dynamic_shell, write_static_shell
 from modules.registry import MODULES
 
 
@@ -270,8 +273,8 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static, pub
     manifest_mode = config.get("build_manifest_mode", "compact")
     if manifest_mode not in {"compact", "full", "off"}:
         raise ValueError("config.json 的 build_manifest_mode 必须是 compact、full 或 off")
-    if not static and source_signature is None:
-        # A manual dynamic publication is also the baseline for the next batch.
+    if source_signature is None:
+        # Capture inputs and calculation rules together with the results for later reuse.
         from core.sync import source_signature as input_signature
         source_signature = input_signature(input_dir)
     cache_dir = None if publish_only else output_file.parent / ".cache" / "excel"
@@ -364,7 +367,9 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static, pub
         stage_started = perf_counter()
         if DIAGNOSTIC_COUNTS["ERROR"]:
             raise RuntimeError("本批次存在生成错误，保留上一批已发布数据")
-        if source_signature is not None:
+        if static:
+            manifest["static_source_key"] = static_source_key(source_signature)
+        else:
             manifest["source_signature"] = source_signature
         if static:
             render_static_dashboard(manifest, ROOT / "templates", output_file)
@@ -446,11 +451,14 @@ def parse_args() -> argparse.Namespace:
         help="静态模式为 HTML 文件；动态模式使用其所在目录保存 runtime。",
     )
     parser.add_argument("--static", action="store_true", help="生成可离线打开的单文件 HTML，不启动后台服务。")
+    parser.add_argument("--ui-only", action="store_true", help="仅用已有批次或已有静态 HTML 更新页面，保留原数据及生成时间。")
     parser.add_argument("--check", action="store_true", help="Return a non-zero exit code when validation warnings exist.")
     parser.add_argument("--no-open", action="store_true", help="Generate the HTML without opening the default browser.")
     parser.add_argument("--port", type=int, default=8767, help="本地订单服务端口。")
     parser.add_argument("--debug", action="store_true", help="输出调试日志，用于排查数据解析问题。")
     args = parser.parse_args()
+    if args.ui_only and args.check:
+        parser.error("--ui-only 与 --check 不能同时使用")
     if args.output is None:
         filename = "鸿蒙智行订单分析汇总_静态版.html" if args.static else "鸿蒙智行订单分析汇总.html"
         from core.data_paths import persistent_directory
@@ -527,6 +535,48 @@ def open_dynamic_dashboard(data_dir: Path, port: int, *, input_dir: Path | None 
     LOGGER.info("订单看板访问地址: %s/", base)
 
 
+def static_source_key(signature: dict) -> str:
+    # An offline file can travel outside the intranet. Only embed a digest of input metadata.
+    serialized = json.dumps(signature, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(serialized).hexdigest()
+
+
+def reuse_dashboard_data(args, static: bool) -> bool:
+    """Rewrite only the web assets when the requested data is already available."""
+    from core.sync import compatible_signature, published_catalog, source_signature
+    ui_only = getattr(args, "ui_only", False)
+    if not ui_only and (args.check or args.debug):
+        return False
+    templates = ROOT / "templates"
+    if static:
+        if not args.output.is_file():
+            if ui_only:
+                raise FileNotFoundError(f"没有可复用的静态网页：{args.output}")
+            return False
+        try:
+            catalog, raw, boards = read_static_payloads(args.output)
+        except (ValueError, OSError, EOFError, TypeError, zlib.error):
+            if ui_only:
+                raise
+            return False
+        if not ui_only and catalog.get("static_source_key") != static_source_key(source_signature(args.input)):
+            return False
+        config = load_config(ROOT / "config.json")
+        catalog = apply_display_config(catalog, config, has_dashboard=lambda sid, mid: f"{sid}|{mid}" in boards)
+        write_static_shell(catalog, raw, boards, templates, args.output)
+    else:
+        runtime = args.output.parent / "runtime"
+        catalog = published_catalog(runtime)
+        if catalog is None:
+            if ui_only:
+                raise ValueError(f"没有可复用的动态数据批次：{runtime}")
+            return False
+        if not ui_only and compatible_signature(catalog.get("source_signature")) != source_signature(args.input):
+            return False
+        render_dynamic_shell(templates, runtime)
+    return True
+
+
 def main() -> int:
     args = parse_args()
     static_mode = getattr(args, "static", False)
@@ -534,13 +584,16 @@ def main() -> int:
     try:
         from core.sync import BuildLock
         with BuildLock(args.output.parent / "runtime"):
-            try:
-                if static_mode:
-                    manifest, warnings = build(args.input, args.output, static=True)
-                else:
-                    manifest, warnings = build(args.input, args.output, publish_only=True)
-            finally:
-                cleanup_input_cache(args.output.parent)
+            reused = reuse_dashboard_data(args, static_mode)
+            warnings = []
+            if not reused:
+                try:
+                    if static_mode:
+                        manifest, warnings = build(args.input, args.output, static=True)
+                    else:
+                        manifest, warnings = build(args.input, args.output, publish_only=True)
+                finally:
+                    cleanup_input_cache(args.output.parent)
     except Exception:
         LOGGER.exception("生成失败，请根据上方错误和日志排查")
         LOGGER.error("运行日志: %s", log_file)
@@ -552,11 +605,14 @@ def main() -> int:
                      errors, target, extra={"diagnostic_continuation": True})
     else:
         LOGGER.info("生成成功: %s", target)
-    LOGGER.info("汇总: 主体=%d，看板=%d, 问题=%d", len(manifest["subjects"]), len(manifest["dashboards"]), len(warnings))
+    if reused:
+        LOGGER.info("已使用原数据重新生成网页，数据生成时间保持不变")
+    else:
+        LOGGER.info("汇总: 主体=%d，看板=%d, 问题=%d", len(manifest["subjects"]), len(manifest["dashboards"]), len(warnings))
     LOGGER.info("运行日志: %s", log_file)
     if errors:
         return 1
-    if AUTO_OPEN_HTML and not args.no_open:
+    if AUTO_OPEN_HTML and not args.no_open and (static_mode or not getattr(args, "ui_only", False)):
         try:
             if static_mode:
                 webbrowser.open(args.output.resolve().as_uri())

@@ -64,6 +64,12 @@
   document.querySelector('#page').removeAttribute('role');
   DATA.dashboard_blocks=window.DASHBOARD_BLOCKS_B64||DATA.dashboard_blocks||{};
   window.DASHBOARD_DATA = DATA;
+  function updatePageTitle(){
+    const title=DATA.config.title || "订单分析";
+    document.title=title;
+    document.querySelector(".brand strong").textContent=title;
+  }
+  updatePageTitle();
   const RAW_BLOCKS = window.DASHBOARD_RAW_B64 = window.DASHBOARD_RAW_B64 || {};
   window.CHART_RENDER_MODE = DATA.config.chart_render_mode || "generated";
   const $ = selector => document.querySelector(selector);
@@ -1463,6 +1469,7 @@
       clearTimeout(rawSearchTimer);rawRowsCache=[];rawRowsKey=null;
       for(const key of Object.keys(boardCache))delete boardCache[key];
       DATA=catalog;window.DASHBOARD_DATA=DATA;moduleLabels=DATA.config.module_labels;
+      updatePageTitle();
       setSyncStatus(message);
       window.CHART_RENDER_MODE=DATA.config.chart_render_mode||'generated';
       Object.assign(state,nextState);pendingRawPage=raw||null;

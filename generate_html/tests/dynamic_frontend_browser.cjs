@@ -5,7 +5,7 @@ const aggregateNames=['问界 M9&M9U 2026款','尊界 V680&V800 2026款','尚界
 const subjects=[{id:'g',name:'鸿蒙智行',type:'group'},{id:'b',name:'问界',type:'brand',parent:'鸿蒙智行'},{id:'m',name:'问界 M9 2026款',type:'generation',parent:'问界'},{id:'other',name:'智界 R7 2026款',type:'generation',parent:'智界'},...aggregateNames.map((name,index)=>({id:'aggregate'+index,name,type:'generation',parent:name.slice(0,2)}))].map(s=>({...s,has_lock_orders:s.id!=='aggregate0',modules:s.id==='m'?['overview','order_mix','raw']:['overview','raw']}));
 const generatedTimes={'fixture-v1':'2026-11-10T10:00:00','fixture-v2':'2026-11-10T10:01:00','fixture-v3':'2026-11-10T10:02:00','fixture-v4':'2026-11-10T10:03:00'};
 const generationLabel=version=>'生成时间 '+generatedTimes[version].replace('T',' ');
-const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{module_order:['overview','order_mix','raw'],module_labels:{overview:'订单总览',order_mix:'大定选配',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
+const catalog={dataset_id:'fixture-v1',meta:{generated_at:generatedTimes['fixture-v1']},subjects,config:{title:'测试订单看板',module_order:['overview','order_mix','raw'],module_labels:{overview:'订单总览',order_mix:'大定选配',raw:'底表中心'},grain_labels:{day:'日',week:'周',month:'月'}},raw_files:[{name:'fixture.xlsx',workbook_key:'0|xlsx',sheets:[{name:'数据',total_rows:451,total_cols:2}]}]};
 const header=['序号','格式值'],allRows=Array.from({length:450},(_,i)=>[i+1,`${i%2?'odd':'even'} 12.30%`]),xlsx=Buffer.from('fixture-original-xlsx');
 let currentVersion='fixture-v1',failNewBoard=false,syncPhase='idle';
 let notes=[{id:'group',subject:'*',date:'2026-11-10',text:'集团事件',version:1},{id:'brand',subject:'b',date:'2026-11-10',text:'问界事件',version:1}],failSubject='other',requests=[],nextId=1;
@@ -61,6 +61,7 @@ const server=http.createServer(async(req,res)=>{
  try{
   await page.addInitScript(()=>localStorage.setItem('order-dashboard.trend-annotations.visible','false'));
   await page.goto(base+'?subject=m');await page.waitForSelector('.kpi');
+  check('看板标题来自当前展示配置',await page.title()===catalog.config.title && await page.locator('.brand strong').textContent()===catalog.config.title);
   check('桌面顶部显示当前批次生成时间',await page.locator('#syncStatus').isVisible()&&await page.locator('#syncStatus').textContent()===generationLabel('fixture-v1'));
   check('首屏仅请求当前看板，未请求底表或Excel',requests.filter(r=>r.path.endsWith('/dashboard')).length===1&&!requests.some(r=>/\/(raw|workbook)$/.test(r.path)));
   const actionsMatchSource=()=>page.locator('.trend-annotation-actions>button').evaluateAll(buttons=>{

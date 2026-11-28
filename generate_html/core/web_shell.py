@@ -1,0 +1,115 @@
+"""Render dashboard HTML and browser assets independently of order calculations."""
+from __future__ import annotations
+
+import base64
+import gzip
+import json
+import re
+import uuid
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+
+
+def _write_text_atomic(output_file: Path, text: str) -> None:
+    """Write beside the destination, then replace only after the complete write."""
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=output_file.parent, prefix=f".{output_file.name}.",
+                            suffix=".tmp", delete=False) as staging:
+        temporary = Path(staging.name)
+    try:
+        temporary.write_text(text, encoding="utf-8", newline="")
+        temporary.replace(output_file)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def gzip_text(text: str) -> bytes:
+    return gzip.compress(text.encode("utf-8"), compresslevel=6, mtime=0)
+
+
+def b64gzip(text: str) -> str:
+    """压缩 JSON 文本为 base64,供前端 DecompressionStream 解压。"""
+    return base64.b64encode(gzip_text(text)).decode("ascii")
+
+
+def write_static_shell(main_manifest: dict, raw_blocks: dict, dashboard_blocks: dict,
+                       template_dir: Path, output_file: Path) -> None:
+    html = (template_dir / "dashboard.html").read_text(encoding="utf-8")
+    css = (template_dir / "dashboard.css").read_text(encoding="utf-8")
+    javascript = (template_dir / "dashboard.js").read_text(encoding="utf-8")
+    trend_annotations = (template_dir / "trend_annotations.js").read_text(encoding="utf-8")
+    logo_path = template_dir / "brand-logo.png"
+    logo_data = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+    main_payload = b64gzip(json.dumps(main_manifest, ensure_ascii=False, separators=(",", ":")))
+    raw_payload = json.dumps(raw_blocks, ensure_ascii=False, separators=(",", ":"))
+    board_payload = json.dumps(dashboard_blocks, separators=(",", ":")).replace("<", r"\u003c")
+    slots = {
+        "__DASHBOARD_CSS__": css,
+        "__DASHBOARD_DATA__": main_payload,
+        "__DASHBOARD_RAW__": raw_payload.replace("<", r"\u003c"),
+        "__DASHBOARD_BLOCKS__": board_payload.replace("<", r"\u003c"),
+        "__TREND_ANNOTATIONS_JS__": trend_annotations,
+        "__DASHBOARD_JS__": javascript,
+        "__BRAND_LOGO__": f"data:image/png;base64,{logo_data}",
+    }
+    html = re.sub("|".join(slots), lambda match: slots[match[0]], html)
+    # Write on the same volume, and close before replacing (Windows). A disk
+    # write/replace failure must not truncate the previous usable dashboard.
+    _write_text_atomic(output_file, html)
+
+
+def render_dynamic_shell(template_dir: Path, runtime: Path) -> str:
+    """Prepare the small web shell even before the first Excel batch is ready."""
+    import hashlib
+    assets = runtime / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    entry = runtime / "index.html"
+    def json_text(value):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+    def asset(data: bytes, suffix: str) -> str:
+        name = hashlib.sha256(data).hexdigest() + suffix
+        target = assets / name
+        if not target.exists():
+            temporary = assets / ("." + uuid.uuid4().hex + ".tmp")
+            temporary.write_bytes(data)
+            temporary.replace(target)
+        return "assets/" + name
+
+    html = (template_dir / "dashboard.html").read_text(encoding="utf-8")
+    css = asset((template_dir / "dashboard.css").read_bytes(), ".css")
+    javascript = asset((template_dir / "dashboard.js").read_bytes(), ".js")
+    annotations = asset((template_dir / "trend_annotations.js").read_bytes(), ".js")
+    logo = asset((template_dir / "brand-logo.png").read_bytes(), ".png")
+    html = html.replace('<style>__DASHBOARD_CSS__</style>', f'<link rel="stylesheet" href="{css}">')
+    html = html.replace('<script>window.DASHBOARD_DATA_B64="__DASHBOARD_DATA__";</script>', '<script>window.ORDER_DASHBOARD_API_BASE="api/";</script>')
+    html = html.replace('<script>window.DASHBOARD_BLOCKS_B64=__DASHBOARD_BLOCKS__;</script>', '')
+    html = html.replace('<script>window.DASHBOARD_RAW_B64=__DASHBOARD_RAW__;</script>', '')
+    html = html.replace('<script>__TREND_ANNOTATIONS_JS__</script>', f'<script src="{annotations}"></script>')
+    html = html.replace('<script>__DASHBOARD_JS__</script>', f'<script src="{javascript}"></script>')
+    html = html.replace('__BRAND_LOGO__', logo)
+    if '__DASHBOARD_' in html:
+        raise ValueError("Unresolved dynamic template placeholder")
+    build_hashes = {name: hashlib.sha256((template_dir / name).read_bytes()).hexdigest() for name in ("dashboard.html", "dashboard.css", "dashboard.js", "trend_annotations.js", "brand-logo.png")}
+    _write_text_atomic(runtime / "web-build.json", json_text(build_hashes))
+    _write_text_atomic(entry, html)
+    return html
+
+def read_static_payloads(path: Path) -> tuple[dict, dict, dict]:
+    """Read the three JSON assignments generated by the offline exporter, without executing HTML."""
+    payloads = {}
+    pattern = re.compile(r'\s*<script>window\.DASHBOARD_(DATA|RAW|BLOCKS)_B64=(.*);</script>\s*')
+    with path.open(encoding="utf-8") as handle:
+        for line in handle:
+            match = pattern.fullmatch(line)
+            if match:
+                payloads[match[1]] = json.loads(match[2])
+                if len(payloads) == 3:
+                    break
+    if set(payloads) != {"DATA", "RAW", "BLOCKS"}:
+        raise ValueError("缺少离线看板数据，请先从 Excel 生成一次静态网页")
+    catalog = json.loads(gzip.decompress(base64.b64decode(payloads["DATA"], validate=True)))
+    if not (isinstance(catalog, dict) and "subjects" in catalog
+            and isinstance(payloads["RAW"], dict) and isinstance(payloads["BLOCKS"], dict)):
+        raise ValueError("静态网页的数据格式无效")
+    return catalog, payloads["RAW"], payloads["BLOCKS"]

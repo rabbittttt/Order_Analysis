@@ -60,7 +60,7 @@ def choose_input_directory() -> Path | None:
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     command = [sys.executable, str(ROOT / "main.py"), "--static"]
-    if "--help" in argv or "-h" in argv:
+    if "--help" in argv or "-h" in argv or "--ui-only" in argv:
         return subprocess.call([*command, *argv])
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--input", type=Path)
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         print("已取消生成。")
         return 0
     print(f"\n数据来源：{source}")
-    print("正在读取 Excel 并生成订单分析静态网页...")
+    print("正在生成订单分析静态网页...")
     # Pin identity lookups before main imports any business modules.
     environment = dict(os.environ, ORDER_DASHBOARD_INPUT=str(source))
     try:

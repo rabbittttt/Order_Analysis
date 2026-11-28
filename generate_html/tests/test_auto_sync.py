@@ -25,6 +25,19 @@ class AutoSyncTests(unittest.TestCase):
         self.book = self.books[0]
         self.runtime = self.root / 'runtime'
 
+    def test_verified_legacy_upgrade_keeps_batch_until_inputs_or_rules_change(self):
+        original = source_signature(self.source)
+        legacy = dict(original, calculation_revision="e8fca40d73623efd5dcb5d4ac530d8f3cb1b2ed0aaa40696227156559d669abc")
+        equivalent = dict(original, calculation_revision="data-v2:a42880c28cc0cb737ade5eacf88c0449d871ef54a20da55b17064ebeb1269d64")
+        schedule = RefreshSchedule()
+        self.assertEqual(schedule.observe(equivalent, legacy, 0), (False, 300))
+        for before, after in (
+            (legacy, dict(equivalent, calculation_revision="data-v2:changed")),
+            (dict(legacy, calculation_revision="unknown-release"), equivalent),
+            (legacy, dict(equivalent, campaign=[42, "new-publication"])),
+        ):
+            self.assertEqual(RefreshSchedule().observe(after, before, 0), (False, 60))
+
     def test_each_watched_mtime_alone_triggers_after_stability(self):
         old = source_signature(self.source)
         for row in old["files"]:
@@ -209,20 +222,42 @@ class AutoSyncTests(unittest.TestCase):
 
 
 class CalculationRevisionTests(unittest.TestCase):
-    def test_recipe_tracks_code_rules_and_templates_not_path_or_runtime_data(self):
+    def test_calculation_revision_only_tracks_dataset_inputs(self):
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder)/'source';root.mkdir()
-            for name in ('main.py','server.py','config.json','requirements.txt','core/a.py','modules/a.py','templates/dashboard.js'):
-                target=root/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_text('v1')
-            original=calculation_revision(root)
-            (root/'output_file').mkdir();(root/'output_file'/'data.json').write_text('business fixture')
-            self.assertEqual(calculation_revision(root),original)
-            moved=Path(folder)/'moved';shutil.copytree(root,moved)
-            self.assertEqual(calculation_revision(moved),original)
-            for name in ('config.json','core/a.py','modules/a.py','templates/dashboard.js'):
-                target=moved/name;target.write_text('v2')
-                self.assertNotEqual(calculation_revision(moved),original)
-                target.write_text('v1')
+            root = Path(folder) / "source"
+            root.mkdir()
+            business = ("main.py", "requirements.txt", "core/excel.py", "core/renderer.py", "modules/a.py")
+            display = ("server.py", "core/server.py", "core/web_shell.py", "templates/dashboard.js",
+                       "templates/dashboard.html", "templates/dashboard.css", "templates/brand-logo.png",
+                       "templates/trend_annotations.js", "output_file/data.json")
+            for name in (*business, *display):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"v1")
+            (root / "config.json").write_text('{"chart_render_mode":"generated"}', encoding="utf-8")
+            original = calculation_revision(root)
+            moved = Path(folder) / "moved"
+            shutil.copytree(root, moved)
+            self.assertEqual(calculation_revision(moved), original)
+
+            for name in display:
+                with self.subTest(name=name):
+                    (moved / name).write_bytes(b"v2")
+                    self.assertEqual(calculation_revision(moved), original)
+            config = {"title": "changed", "module_order": ["raw"], "grain_labels": {"day": "D"},
+                      "module_labels": {"raw": "R"}, "chart_render_mode": "generated"}
+            config_file = moved / "config.json"
+            config_file.write_text("// comment\n" + json.dumps(config, indent=2), encoding="utf-8")
+            self.assertEqual(calculation_revision(moved), original)
+            for name in business:
+                with self.subTest(name=name):
+                    (moved / name).write_bytes(b"v2")
+                    self.assertNotEqual(calculation_revision(moved), original)
+                    (moved / name).write_bytes(b"v1")
+            for overrides in ({"chart_render_mode": "original"}, {"future_dataset_rule": 1}):
+                with self.subTest(overrides=overrides):
+                    config_file.write_text(json.dumps({**config, **overrides}), encoding="utf-8")
+                    self.assertNotEqual(calculation_revision(moved), original)
 
     def test_code_only_upgrade_refreshes_existing_batch(self):
         old = {"directory": "inputs", "files": [], "calculation_revision": "old"}
