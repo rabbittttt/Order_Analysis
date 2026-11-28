@@ -28,6 +28,7 @@ BATCH_WORKBOOKS = (
     "鸿蒙智行订单7级转化报表.xlsx",
     "鸿蒙智行选配金统计.xlsx",
     "鸿蒙智行SKU收敛度报告.xlsx",
+    "鸿蒙智行销量数据汇总.xlsx",
 )
 LOG = logging.getLogger(__name__)
 

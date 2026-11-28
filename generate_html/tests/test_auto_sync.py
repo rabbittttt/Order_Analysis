@@ -87,10 +87,15 @@ class AutoSyncTests(unittest.TestCase):
             before = source_signature(self.source)
             (self.source / '~$orders.xlsx').write_text('lock')
             self.assertEqual(source_signature(self.source), before)
-            (self.source / '鸿蒙智行销量数据汇总.xlsx').write_bytes(b'raw-only')
+            summary = self.source / '鸿蒙智行销量数据汇总.xlsx'
+            stamp = summary.stat().st_mtime_ns + 2_000_000_000
+            os.utime(summary, ns=(stamp, stamp))
             current = source_signature(self.source)
             self.assertNotEqual(current, before)
-            self.assertEqual(RefreshSchedule().observe(current, before, 0), (False, 300))
+            schedule = RefreshSchedule()
+            self.assertEqual(schedule.observe(current, before, 0), (False, 60))
+            self.assertEqual(schedule.observe(current, before, 60), (True, 0))
+            self.assertEqual(schedule.observe(current, current, 61), (False, 300))
             before = current
             (self.source / 'extra.xlsx').write_text('new')
             self.assertNotEqual(source_signature(self.source), before)
