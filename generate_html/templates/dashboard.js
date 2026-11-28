@@ -1403,8 +1403,10 @@
   function showToast(message){const node=$("#toast");if(!node)return;node.textContent=message;node.classList.add("show");clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>node.classList.remove("show"),4000)}
   let syncBusy=false, interactionRevision=0, lastInteraction=0;
   for(const event of ['click','input','change'])document.addEventListener(event,()=>{interactionRevision++;lastInteraction=performance.now()},true);
+  const dashboardFrame=DYNAMIC && window.frameElement;
+  const dashboardVisible=()=>!document.hidden && !dashboardFrame?.hidden;
   function syncBlocked(){
-    return document.hidden||$('#trendAnnotationEditor')?.open||$('#page')?.getAttribute('aria-busy')==='true'
+    return !dashboardVisible()||$('#trendAnnotationEditor')?.open||$('#page')?.getAttribute('aria-busy')==='true'
       ||Boolean(document.activeElement?.matches('input,textarea')&&performance.now()-lastInteraction<1500);
   }
   function setSyncStatus(message){
@@ -1433,7 +1435,7 @@
     node.hidden=!labels.length;
   }
   async function synchronizeDataset(){
-    if(!DYNAMIC||syncBusy||document.hidden)return;
+    if(!DYNAMIC||syncBusy||!dashboardVisible())return;
     syncBusy=true;
     try{
       const status=await apiJson('sync');
@@ -1486,16 +1488,23 @@
   }
   await init();
   if(DYNAMIC){
-    const refresh=()=>refreshSharedAnnotations().catch(()=>{});
-    refresh();
-    setInterval(()=>{if(!document.hidden)refresh()},30000);
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});
-    window.addEventListener('focus',refresh);
+    let checkingAnnotations=false;
+    async function pollAnnotations(){
+      if(checkingAnnotations||!dashboardVisible())return;
+      checkingAnnotations=true;
+      try{await refreshSharedAnnotations();}catch{}finally{checkingAnnotations=false;}
+    }
+    function checkVisiblePage(){
+      void pollAnnotations();
+      void synchronizeDataset();
+    }
+    if(dashboardFrame)new MutationObserver(checkVisiblePage).observe(dashboardFrame,{attributes:true,attributeFilter:['hidden']});
+    setInterval(pollAnnotations,30000);
     setInterval(synchronizeDataset,15000);
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden)synchronizeDataset()});
-    window.addEventListener('focus',synchronizeDataset);
+    document.addEventListener('visibilitychange',checkVisiblePage);
+    window.addEventListener('focus',checkVisiblePage);
     $('#trendAnnotationEditor')?.addEventListener('close',synchronizeDataset);
-    synchronizeDataset();
+    checkVisiblePage();
   }
 })().catch(error=>{
   const page=document.querySelector('#page');if(!page)return;
