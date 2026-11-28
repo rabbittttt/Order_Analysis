@@ -85,6 +85,33 @@ class OrderProjectIsolationTests(TestCase):
             for name, sheet in auxiliaries.items():
                 self.assertEqual((root / name).read_bytes(), original_bytes[name])
 
+    def test_unmapped_import_is_logged_and_kept_in_raw_for_both_outputs(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            book = root / '区域销售分析.xlsx'
+            self.write_book(book, '问界 M6 2026款_区域分析')
+            for static in (False, True):
+                with self.subTest(static=static), self.assertLogs('core.validation', level='WARNING') as logs:
+                    manifest, _ = generator.build(root, root / '订单.html', static=static, publish_only=not static)
+                self.assertTrue(any(book.name in line and '未识别到专属看板映射' in line for line in logs.output))
+                self.assertNotIn('generic', manifest['config']['module_order'])
+                self.assertNotIn('generic', manifest['config']['module_labels'])
+                self.assertFalse(any(key.endswith('|generic') for key in manifest['dashboards']))
+                self.assertTrue(all('generic' not in subject['modules'] for subject in manifest['subjects']))
+                self.assertEqual([file['name'] for file in manifest['raw_files']], [book.name])
+
+    def test_unreadable_workbook_logs_filename_and_stops_publication(self):
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.write_book(root / '订单分析.xlsx', '鸿蒙智行')
+            invalid = root / '损坏订单.xlsx'
+            invalid.write_bytes(b'invalid workbook')
+            with self.assertLogs('core.excel', level='ERROR') as logs:
+                with self.assertRaisesRegex(RuntimeError, 'Excel 读取不完整'):
+                    generator.build(root, root / '订单.html', publish_only=True)
+            self.assertTrue(any(invalid.name in line and 'Excel读取失败' in line for line in logs.output))
+            self.assertFalse((root / 'runtime/current.json').exists())
+
     def test_dynamic_raw_blocks_stream_to_unpublished_snapshot(self):
         with TemporaryDirectory() as folder, ExitStack() as stack:
             root = Path(folder)

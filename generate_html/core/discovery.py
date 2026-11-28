@@ -13,7 +13,7 @@ from core.excel import parse_metric_sheet, is_aggregate_generation
 
 DEFAULT_MODULE_ORDER = [
     "overview", "channel_analysis", "cancellation", "launch_rhythm", "conversion", "order_mix",
-    "lock_mix", "small_order_mix", "option_fee", "sku", "generic", "raw",
+    "lock_mix", "small_order_mix", "option_fee", "sku", "raw",
 ]
 # 保留旧导入名作为只读兼容别名；运行时排序仍以 config.json 为唯一来源。
 MODULE_ORDER = DEFAULT_MODULE_ORDER

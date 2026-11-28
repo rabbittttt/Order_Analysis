@@ -12,7 +12,7 @@ from core.components import add_kpi_comparisons
 from core.discovery import discover_subjects, is_valid_subject_name, set_capabilities
 from core.excel import WorkbookItem, WorkbookStore, compact_identifier, compact_text, format_excel_value, grain_from_sheet, parse_metric_sheet, safe_number, sheet_subject, subject_parent, subject_type
 from core.models import Subject
-from modules.generic import GenericModule
+from core.validation import log_import_issues
 from modules.launch_rhythm import LaunchRhythmModule
 from modules.option_fee import OptionFeeModule, _option_layout, _period_groups, _version_rows_by_period
 from modules.order_mix import LockMixModule, OrderMixModule, SmallOrderMixModule
@@ -792,18 +792,7 @@ class SubjectParsingTests(unittest.TestCase):
         self.assertIsNotNone(found)
         self.assertEqual(found[0].path.name, "02_鸿蒙智行选配金统计_新版.xlsx")
 
-    def test_generic_analysis_sheet_enables_existing_subject(self):
-        workbook = Workbook()
-        sheet = workbook.active
-        sheet.title = "问界 M6 2026款_区域分析"
-        sheet.append(["区域", "订单量"])
-        sheet.append(["华东", 120])
-        store = WorkbookStore(Path("."))
-        store.items = [WorkbookItem(Path("区域销售分析.xlsx"), workbook)]
-        subject = Subject("generation_test", "问界 M6 2026款", "generation", "问界")
-        self.assertIsNotNone(GenericModule().build(store, subject))
-
-    def test_generic_analysis_separates_routine_and_unmatched_sheets(self):
+    def test_import_issues_locate_unmapped_and_empty_sheets(self):
         routine_book = Workbook()
         routine_book.active.title = "问界 M6 2026款by周"
         unmatched_book = Workbook()
@@ -816,18 +805,17 @@ class SubjectParsingTests(unittest.TestCase):
             WorkbookItem(Path("区域销售分析.xlsx"), unmatched_book),
         ]
         subject = Subject("generation_test", "问界 M6 2026款", "generation", "问界")
-        with self.assertLogs("modules.generic", level="WARNING") as captured:
-            dashboard = GenericModule().build(store, subject)
-        page = dashboard.views["week"]["pages"]["汇总"]
-        self.assertEqual(page["sections"][0]["title"], "待归类数据")
-        self.assertEqual(page["sections"][1]["title"], "已识别数据")
-        self.assertEqual([item["label"] for item in page["kpis"][:3]], ["待归类Sheet", "已识别Sheet", "需核查Sheet"])
-        self.assertEqual(page["kpis"][0]["value"], 1)
-        self.assertEqual(page["kpis"][1]["value"], 1)
-        log_text = "\n".join(captured.output)
-        self.assertIn("[数据诊断]", log_text)
-        self.assertIn("[映射诊断]", log_text)
-        self.assertIn("回退=导入分析通用预览", log_text)
+        with self.assertLogs("core.validation", level="WARNING") as captured:
+            log_import_issues(store, [subject], {})
+        self.assertEqual(len(captured.records), 2)
+        data = next(line for line in captured.output if "[数据诊断]" in line)
+        self.assertIn("鸿蒙智行大定选配比例分析.xlsx", data)
+        self.assertIn("问界 M6 2026款by周", data)
+        self.assertIn("无数值数据", data)
+        mapping = next(line for line in captured.output if "[映射诊断]" in line)
+        self.assertIn("区域销售分析.xlsx", mapping)
+        self.assertIn("问界 M6 2026款_区域分析", mapping)
+        self.assertIn("未识别到专属看板映射", mapping)
 
     def test_small_order_chart_title_does_not_create_extra_subject(self):
         self.assertEqual(sheet_subject("鸿蒙智行净小订by天图表"), "鸿蒙智行")

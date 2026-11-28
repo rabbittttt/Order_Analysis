@@ -9,8 +9,7 @@ from openpyxl import Workbook
 from core.excel import (WorkbookItem, WorkbookStore, _merge_matrix, _merge_partitioned, _merge_records,
                         compact_diagnostic_ranges, _coordinate_ranges, _diagnostic_location, reset_conflict_diagnostics)
 from core.models import Subject
-from core.validation import validate_manifest
-from modules.generic import GenericModule
+from core.validation import log_import_issues, validate_manifest
 import main
 
 
@@ -255,8 +254,8 @@ class LoggingPolicyTests(TestCase):
         sheet = book.create_sheet('其他车型by天'); sheet.cell(1, 1, '其他车型')
         store = WorkbookStore(Path('.')); store.items = [WorkbookItem(Path('大定选配比例.xlsx'), book)]
         subject = Subject('generation_test', '车型', 'generation')
-        with self.assertLogs('modules.generic', level='WARNING') as logs:
-            result = GenericModule().build(store, subject)
+        with self.assertLogs('core.validation', level='WARNING') as logs:
+            log_import_issues(store, [subject], {})
         empty = [line for line in logs.output if '无数值数据' in line and '1行×1列' in line]
         self.assertEqual(len(empty), 1)
         self.assertIn('涉及3个Sheet', empty[0])
@@ -264,7 +263,6 @@ class LoggingPolicyTests(TestCase):
         self.assertEqual(len(logs.records), 2)
         self.assertTrue(any('1行×2列' in line for line in logs.output))
         self.assertNotIn('其他车型', '\n'.join(logs.output))
-        self.assertIsNotNone(result)
 
     def test_source_validation_lists_real_names_and_keeps_all_affected_subjects(self):
         subjects = [{'id': 'generation_hash1', 'name': '车型A'}, {'id': 'generation_hash2', 'name': '车型B'}]

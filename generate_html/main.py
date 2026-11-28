@@ -23,7 +23,7 @@ from core.excel import WorkbookStore, clean_text, format_excel_cell, reset_confl
 from core.model_identity import STAGE_SOURCE_NAME, campaign_batch
 from core.renderer import (b64gzip, create_dynamic_snapshot, gzip_text,
                            render_dynamic_dashboard as render_dashboard, render_dashboard as render_static_dashboard)
-from core.validation import validate_manifest
+from core.validation import log_import_issues, validate_manifest
 from modules.registry import MODULES
 
 
@@ -306,8 +306,6 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static, pub
         for subject in subjects:
             matched_modules = []
             for module in MODULES:
-                if hasattr(module, "set_dashboards"):
-                    module.set_dashboards(dashboards)
                 module_started = perf_counter()
                 try:
                     dashboard = module.build(store, subject)
@@ -357,6 +355,7 @@ def _build(input_dir, output_file, *, runtime_dir, source_signature, static, pub
             "raw_blocks": raw_blocks,
         }
         validation_started = perf_counter()
+        log_import_issues(store, subjects, dashboards)
         validation_warnings = validate_manifest(manifest)
         for warning in validation_warnings:
             LOGGER.warning("[生成校验] %s", warning)

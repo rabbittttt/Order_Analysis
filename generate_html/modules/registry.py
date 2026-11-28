@@ -2,7 +2,6 @@ from modules.base import DashboardModule
 from modules.cancellation import CancellationModule
 from modules.channel_analysis import ChannelAnalysisModule
 from modules.conversion import ConversionModule
-from modules.generic import GenericModule
 from modules.launch_rhythm import LaunchRhythmModule
 from modules.option_fee import OptionFeeModule
 from modules.order_mix import LockMixModule, OrderMixModule, SmallOrderMixModule
@@ -21,5 +20,4 @@ MODULES: list[DashboardModule] = [
     SmallOrderMixModule(),
     OptionFeeModule(),
     SkuModule(),
-    GenericModule(),
 ]

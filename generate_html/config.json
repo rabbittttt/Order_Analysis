@@ -22,7 +22,6 @@
     "order_mix",
     "lock_mix",
     "option_fee",
-    "generic",
     "raw"
   ],
   // 各模块在页面导航栏上的显示名称
@@ -37,7 +36,6 @@
     "sku": "SKU收敛",
     "launch_rhythm": "首销节奏",
     "cancellation": "小订节奏",
-    "generic": "导入分析",
     "raw": "底表中心"
   },
   // 时间粒度切换按钮的显示名称

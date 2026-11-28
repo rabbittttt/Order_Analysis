@@ -404,12 +404,12 @@ assert.equal(JSON.stringify(rows),before,'freezing does not modify cell values')
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_non_temporal_modules_keep_static_time_filter_placeholders(self):
+    def test_raw_center_keeps_static_time_filter_placeholders(self):
         script = (ROOT / "templates" / "dashboard.js").read_text(encoding="utf-8")
         css = (ROOT / "templates" / "dashboard.css").read_text(encoding="utf-8")
         self.assertIn('$("#grainSelect").closest(".filter-group").style.display=""', script)
         self.assertNotIn('$("#grainSelect").closest("label")', script)
-        self.assertIn('["generic","raw"].includes(state.module)', script)
+        self.assertIn('if(state.module==="raw"){', script)
         self.assertIn("Object.entries(DATA.config.grain_labels)", script)
         self.assertIn("按所选表格范围", script)
         self.assertIn('period.disabled=true', script)

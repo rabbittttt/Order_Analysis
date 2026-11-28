@@ -84,7 +84,6 @@
     conversion:"M3 4h18l-7 8v7l-4 2v-9z",
     sku:"M12 3l9 5-9 5-9-5zM3 8v8l9 5 9-5V8m-9 5v8",
     option_fee:"M4 6h16v12H4zM8 12h1m6 0h1m-5 0a1 1 0 1 0 2 0 1 1 0 0 0-2 0",
-    generic:"M5 4h10l4 4v12H5zM14 4v5h5m-7 2v6m-3-3h6",
     raw:"M3 5h18v14H3zM3 10h18M9 5v14"
   };
   const outlineIcon = (path, className="module-icon") =>
@@ -511,7 +510,7 @@
     try{
       const url=new URL(location.href),params=url.searchParams;
       params.set("subject",state.subject||"");params.set("module",state.module);
-      if(!["generic","raw"].includes(state.module)){params.set("grain",state.grain);if(state.period)params.set("period",state.period)}else{params.delete("grain");params.delete("period")}
+      if(state.module!=="raw"){params.set("grain",state.grain);if(state.period)params.set("period",state.period)}else{params.delete("grain");params.delete("period")}
       if(state.module==='raw'){
         params.set('rawFile',DATA.raw_files[state.rawFile]?.name||'');
         params.set('rawSheet',DATA.raw_files[state.rawFile]?.sheets[state.rawSheet]?.name||'');
@@ -660,7 +659,7 @@
     $("#subjectSelect").closest("label").style.display="";
     $("#grainSelect").closest(".filter-group").style.display="";
     $("#periodSelect").closest("label").style.display="";
-    if(["generic","raw"].includes(state.module)){
+    if(state.module==="raw"){
       $('#filters').dataset.mode='window';
       $('#grainSelect').closest('.filter-group').hidden=true;
       $("#grainSelect").innerHTML=Object.entries(DATA.config.grain_labels).map(([id,label])=>`<button data-grain="${id}" disabled>${label}</button>`).join("");
